@@ -6,6 +6,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import { Archive, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
 import { buildShareText, formatElapsedTime } from "@/lib/game";
+import { HowToPlay } from "@/components/HowToPlay";
 import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
 
 type StoredAttempt = {
@@ -267,6 +268,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
         </div>
 
         <nav className="flex items-center gap-2">
+          <HowToPlay />
           <Link
             href="/create"
             aria-label="Make your own"
@@ -425,10 +427,11 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
             )}
 
             <Link
-              href="/admin"
-              className="inline-flex h-11 items-center justify-center rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
+              href="/create"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
             >
-              Editor desk
+              <Sparkles aria-hidden size={16} />
+              Make your own
             </Link>
           </div>
         </aside>
