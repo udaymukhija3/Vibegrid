@@ -54,6 +54,7 @@ func run(logger *slog.Logger) error {
 		Puzzles:        deps.puzzles,
 		Store:          deps.attempts,
 		AdminPuzzles:   deps.adminPuzzles,
+		Community:      deps.community,
 		AdminToken:     adminToken,
 		Clock:          time.Now,
 		TimeZone:       timeZone,
@@ -94,6 +95,7 @@ type deps struct {
 	attempts     vibegrid.Store
 	puzzles      vibegrid.PuzzleSource
 	adminPuzzles vibegrid.AdminPuzzleStore
+	community    vibegrid.CommunityPuzzleStore
 	close        func()
 }
 
@@ -126,6 +128,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		attempts:     vibegrid.NewPostgresAttemptStore(database),
 		puzzles:      puzzleStore,
 		adminPuzzles: puzzleStore,
+		community:    puzzleStore,
 		close: func() {
 			if err := database.Close(); err != nil {
 				logger.Error("closing postgres pool", "error", err)

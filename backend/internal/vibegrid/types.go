@@ -2,6 +2,7 @@ package vibegrid
 
 type Difficulty string
 type PuzzleStatus string
+type PuzzleOrigin string
 
 const (
 	DifficultyEasy   Difficulty = "EASY"
@@ -11,6 +12,11 @@ const (
 	PuzzleStatusDraft     PuzzleStatus = "DRAFT"
 	PuzzleStatusPublished PuzzleStatus = "PUBLISHED"
 	PuzzleStatusArchived  PuzzleStatus = "ARCHIVED"
+
+	// OriginEditorial puzzles are the curated daily/archive set. OriginCommunity
+	// puzzles are user-created and playable only by direct link.
+	OriginEditorial PuzzleOrigin = "EDITORIAL"
+	OriginCommunity PuzzleOrigin = "COMMUNITY"
 
 	GroupSize   = 4
 	MaxMistakes = 4
@@ -35,6 +41,7 @@ type Puzzle struct {
 	PublishDate  string        `json:"publishDate"`
 	Status       PuzzleStatus  `json:"status"`
 	Difficulty   Difficulty    `json:"difficulty"`
+	Origin       PuzzleOrigin  `json:"origin"`
 	Groups       []PuzzleGroup `json:"groups"`
 }
 

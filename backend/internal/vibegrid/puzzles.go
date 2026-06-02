@@ -18,10 +18,13 @@ func FindPuzzleByID(puzzles []Puzzle, puzzleID string) (*Puzzle, error) {
 	return nil, ErrPuzzleNotFound
 }
 
+// PublishedPuzzles returns the editorial daily set in reverse date order.
+// Community (user-created) puzzles are intentionally excluded so they never
+// appear in Today or the Archive; they are reachable only by direct link.
 func PublishedPuzzles(puzzles []Puzzle) []Puzzle {
 	published := make([]Puzzle, 0, len(puzzles))
 	for _, puzzle := range puzzles {
-		if puzzle.Status == PuzzleStatusPublished {
+		if puzzle.Status == PuzzleStatusPublished && puzzle.Origin != OriginCommunity {
 			published = append(published, puzzle)
 		}
 	}

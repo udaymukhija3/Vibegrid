@@ -38,6 +38,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 		Puzzles:      puzzleStore,
 		Store:        NewPostgresAttemptStore(database),
 		AdminPuzzles: puzzleStore,
+		Community:    puzzleStore,
 		AdminToken:   testAdminToken,
 		Clock:        fixedClock,
 	})

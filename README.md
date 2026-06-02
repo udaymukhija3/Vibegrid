@@ -45,7 +45,18 @@ npm run build
   are idempotent and cannot corrupt mistake counts or completion state
 - In-memory store fallback when `DATABASE_URL` is unset (tests, quick local runs)
 - SQL migrations in `backend/db/migrations/`, applied automatically on startup
+- Editor Desk: token-gated admin to author drafts and publish one puzzle per date
+- Community puzzles: anyone can build a grid at `/create` and share a `/p/<id>`
+  link; community puzzles never enter the daily rotation or archive
 - Product decision register and engineering roadmap in `docs/`
+
+## Roles and routes
+
+- `/` — today's editorial puzzle. `/archive` — past editorial puzzles.
+- `/create` — public puzzle builder; returns a shareable `/p/<id>` link.
+- `/admin` — Editor Desk; needs `VIBEGRID_ADMIN_TOKEN` set on the backend, then
+  the token pasted into the UI. Admin and community authoring both require a
+  database.
 
 ## Database
 

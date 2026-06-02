@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PublicPuzzle } from "@/types/puzzle";
+import type { DraftPuzzleInput, PublicPuzzle } from "@/types/puzzle";
 
 // Runtime schemas for the public API surface. Validating responses at the
 // boundary means a contract drift between the Go backend and the UI fails loudly
@@ -33,4 +33,38 @@ export async function fetchTodayPuzzle(): Promise<PublicPuzzle> {
 
 export async function fetchPublishedPuzzles(): Promise<PublicPuzzle[]> {
   return z.array(publicPuzzleSchema).parse(await getJSON("/api/puzzles"));
+}
+
+export async function fetchPuzzleById(id: string): Promise<PublicPuzzle> {
+  return publicPuzzleSchema.parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}`));
+}
+
+const createdPuzzleSchema = z.object({
+  ok: z.literal(true),
+  id: z.string(),
+  puzzleNumber: z.number()
+});
+
+const errorBodySchema = z.object({ error: z.string() });
+
+// createCommunityPuzzle posts a user-authored puzzle and surfaces the server's
+// validation message (e.g. duplicate tiles) so the create page can show why.
+export async function createCommunityPuzzle(
+  input: DraftPuzzleInput
+): Promise<{ id: string; puzzleNumber: number }> {
+  const response = await fetch("/api/community/puzzles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+
+  const payload: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new Error(parsed.success ? parsed.data.error : `Request failed (${response.status})`);
+  }
+
+  const created = createdPuzzleSchema.parse(payload);
+  return { id: created.id, puzzleNumber: created.puzzleNumber };
 }

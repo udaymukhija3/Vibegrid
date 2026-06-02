@@ -8,6 +8,7 @@ func SeedPuzzles() []Puzzle {
 			PublishDate:  "2026-06-02",
 			Status:       PuzzleStatusPublished,
 			Difficulty:   DifficultyMedium,
+			Origin:       OriginEditorial,
 			Groups: []PuzzleGroup{
 				{
 					ID:          "italian-summer",

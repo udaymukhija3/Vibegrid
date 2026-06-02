@@ -43,7 +43,7 @@ func (store *PostgresPuzzleStore) Puzzles(ctx context.Context) ([]Puzzle, error)
 
 func (store *PostgresPuzzleStore) loadPuzzles(ctx context.Context) (map[string]*Puzzle, []string, error) {
 	rows, err := store.db.QueryContext(ctx,
-		`select id, puzzle_number, publish_date, status, difficulty
+		`select id, puzzle_number, publish_date, status, difficulty, origin
 		 from puzzles order by puzzle_number`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query puzzles: %w", err)
@@ -57,7 +57,7 @@ func (store *PostgresPuzzleStore) loadPuzzles(ctx context.Context) (map[string]*
 			puzzle      Puzzle
 			publishDate sql.NullTime
 		)
-		if err := rows.Scan(&puzzle.ID, &puzzle.PuzzleNumber, &publishDate, &puzzle.Status, &puzzle.Difficulty); err != nil {
+		if err := rows.Scan(&puzzle.ID, &puzzle.PuzzleNumber, &publishDate, &puzzle.Status, &puzzle.Difficulty, &puzzle.Origin); err != nil {
 			return nil, nil, fmt.Errorf("scan puzzle: %w", err)
 		}
 		if publishDate.Valid {
@@ -170,6 +170,34 @@ func (store *PostgresPuzzleStore) CreateDraft(ctx context.Context, input AdminPu
 	return puzzle, nil
 }
 
+// CreateCommunityPuzzle persists a user-created puzzle. Unlike an editorial
+// draft it is immediately PUBLISHED (so the share link works right away), has no
+// publish_date, and is tagged COMMUNITY so it stays out of the daily rotation.
+func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (Puzzle, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Puzzle{}, fmt.Errorf("begin community create tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var nextNumber int
+	if err := tx.QueryRowContext(ctx,
+		`select coalesce(max(puzzle_number), 0) + 1 from puzzles`).Scan(&nextNumber); err != nil {
+		return Puzzle{}, fmt.Errorf("next puzzle number: %w", err)
+	}
+
+	puzzle := input.toPuzzle(nextNumber)
+	puzzle.Status = PuzzleStatusPublished
+	puzzle.Origin = OriginCommunity
+	if err := insertPuzzleTx(ctx, tx, puzzle, false); err != nil {
+		return Puzzle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Puzzle{}, fmt.Errorf("commit community create: %w", err)
+	}
+	return puzzle, nil
+}
+
 // Publish sets a draft live for a date. The unique constraint on publish_date
 // turns a same-date collision into ErrPublishDateTaken rather than a duplicate.
 func (store *PostgresPuzzleStore) Publish(ctx context.Context, puzzleID, publishDate string) error {
@@ -197,8 +225,8 @@ func (store *PostgresPuzzleStore) Publish(ctx context.Context, puzzleID, publish
 }
 
 func insertPuzzleTx(ctx context.Context, tx *sql.Tx, puzzle Puzzle, ignoreConflicts bool) error {
-	puzzleInsert := `insert into puzzles (id, puzzle_number, publish_date, status, difficulty)
-	                 values ($1, $2, $3, $4, $5)`
+	puzzleInsert := `insert into puzzles (id, puzzle_number, publish_date, status, difficulty, origin)
+	                 values ($1, $2, $3, $4, $5, $6)`
 	if ignoreConflicts {
 		puzzleInsert += " on conflict (id) do nothing"
 	}
@@ -208,8 +236,13 @@ func insertPuzzleTx(ctx context.Context, tx *sql.Tx, puzzle Puzzle, ignoreConfli
 		publishDate = sql.NullString{String: puzzle.PublishDate, Valid: true}
 	}
 
+	origin := puzzle.Origin
+	if origin == "" {
+		origin = OriginEditorial
+	}
+
 	if _, err := tx.ExecContext(ctx, puzzleInsert,
-		puzzle.ID, puzzle.PuzzleNumber, publishDate, puzzle.Status, puzzle.Difficulty); err != nil {
+		puzzle.ID, puzzle.PuzzleNumber, publishDate, puzzle.Status, puzzle.Difficulty, origin); err != nil {
 		return fmt.Errorf("insert puzzle: %w", err)
 	}
 

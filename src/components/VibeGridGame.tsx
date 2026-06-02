@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, RotateCcw, Send, Share2, Shuffle } from "lucide-react";
+import { Archive, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
 import { buildShareText, formatElapsedTime } from "@/lib/game";
 import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
 
@@ -260,12 +260,21 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           <div>
             <h1 className="text-3xl font-black leading-none sm:text-4xl">VibeGrid</h1>
             <p className="mt-1 text-sm font-semibold text-neutral-600">
-              #{puzzle.puzzleNumber} / {puzzle.publishDate}
+              #{puzzle.puzzleNumber}
+              {puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
             </p>
           </div>
         </div>
 
         <nav className="flex items-center gap-2">
+          <Link
+            href="/create"
+            aria-label="Make your own"
+            title="Make your own"
+            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
+          >
+            <Sparkles aria-hidden size={18} />
+          </Link>
           <Link
             href="/archive"
             aria-label="Archive"

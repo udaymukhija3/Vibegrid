@@ -107,6 +107,7 @@ func (input AdminPuzzleInput) toPuzzle(puzzleNumber int) Puzzle {
 		PuzzleNumber: puzzleNumber,
 		Status:       PuzzleStatusDraft,
 		Difficulty:   difficulty,
+		Origin:       OriginEditorial,
 		Groups:       groups,
 	}
 }
