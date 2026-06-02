@@ -1,0 +1,24 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">VibeGrid mark</title>
+  <desc id="desc">A colorful four by four puzzle grid mark.</desc>
+  <rect width="256" height="256" rx="28" fill="#171717"/>
+  <g transform="translate(36 36)">
+    <rect x="0" y="0" width="38" height="38" rx="8" fill="#2EC4B6"/>
+    <rect x="48" y="0" width="38" height="38" rx="8" fill="#F9C74F"/>
+    <rect x="96" y="0" width="38" height="38" rx="8" fill="#FF6B6B"/>
+    <rect x="144" y="0" width="38" height="38" rx="8" fill="#F8FAFC"/>
+    <rect x="0" y="48" width="38" height="38" rx="8" fill="#F8FAFC"/>
+    <rect x="48" y="48" width="38" height="38" rx="8" fill="#6D5DFC"/>
+    <rect x="96" y="48" width="38" height="38" rx="8" fill="#2EC4B6"/>
+    <rect x="144" y="48" width="38" height="38" rx="8" fill="#F9C74F"/>
+    <rect x="0" y="96" width="38" height="38" rx="8" fill="#FF6B6B"/>
+    <rect x="48" y="96" width="38" height="38" rx="8" fill="#F8FAFC"/>
+    <rect x="96" y="96" width="38" height="38" rx="8" fill="#F9C74F"/>
+    <rect x="144" y="96" width="38" height="38" rx="8" fill="#6D5DFC"/>
+    <rect x="0" y="144" width="38" height="38" rx="8" fill="#6D5DFC"/>
+    <rect x="48" y="144" width="38" height="38" rx="8" fill="#FF6B6B"/>
+    <rect x="96" y="144" width="38" height="38" rx="8" fill="#F8FAFC"/>
+    <rect x="144" y="144" width="38" height="38" rx="8" fill="#2EC4B6"/>
+  </g>
+</svg>
+
