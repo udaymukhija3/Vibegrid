@@ -25,6 +25,34 @@ export type SolvedGroup = {
   tiles: Tile[];
 };
 
+export type AdminGroup = {
+  id: string;
+  name: string;
+  explanation: string;
+  colorIndex: number;
+  tiles: Tile[];
+};
+
+export type AdminPuzzle = {
+  id: string;
+  puzzleNumber: number;
+  publishDate: string;
+  status: PuzzleStatus;
+  difficulty: Difficulty;
+  groups: AdminGroup[];
+};
+
+export type DraftGroupInput = {
+  name: string;
+  explanation: string;
+  tiles: string[];
+};
+
+export type DraftPuzzleInput = {
+  difficulty: Difficulty;
+  groups: DraftGroupInput[];
+};
+
 export type AttemptSnapshot = {
   puzzleId: string;
   solvedGroups: SolvedGroup[];

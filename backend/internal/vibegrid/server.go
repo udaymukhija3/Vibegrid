@@ -13,8 +13,10 @@ import (
 const maxGuessBodyBytes = 16 << 10 // 16 KiB
 
 type ServerConfig struct {
-	Puzzles        []Puzzle
+	Puzzles        PuzzleSource
 	Store          Store
+	AdminPuzzles   AdminPuzzleStore
+	AdminToken     string
 	Clock          func() time.Time
 	TimeZone       string
 	AllowedOrigins []string
@@ -22,8 +24,10 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	puzzles       []Puzzle
+	puzzles       PuzzleSource
 	store         Store
+	adminPuzzles  AdminPuzzleStore
+	adminToken    string
 	clock         func() time.Time
 	timeZone      string
 	secureCookies bool
@@ -43,12 +47,17 @@ func NewServer(config ServerConfig) http.Handler {
 	server := &Server{
 		puzzles:       config.Puzzles,
 		store:         config.Store,
+		adminPuzzles:  config.AdminPuzzles,
+		adminToken:    config.AdminToken,
 		clock:         clock,
 		timeZone:      timeZone,
 		secureCookies: config.SecureCookies,
 	}
 	if server.store == nil {
 		server.store = NewMemoryAttemptStore()
+	}
+	if server.puzzles == nil {
+		server.puzzles = StaticPuzzleSource(nil)
 	}
 
 	mux := http.NewServeMux()
@@ -58,6 +67,10 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/attempts/", server.handleAttempt)
 	mux.HandleFunc("POST /api/guesses", server.handleGuess)
 
+	mux.HandleFunc("GET /api/admin/puzzles", server.requireAdmin(server.handleAdminListPuzzles))
+	mux.HandleFunc("POST /api/admin/puzzles", server.requireAdmin(server.handleAdminCreatePuzzle))
+	mux.HandleFunc("POST /api/admin/puzzles/{id}/publish", server.requireAdmin(server.handleAdminPublishPuzzle))
+
 	return withCORS(mux, config.AllowedOrigins)
 }
 
@@ -65,8 +78,14 @@ func (server *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (server *Server) handleTodayPuzzle(w http.ResponseWriter, _ *http.Request) {
-	puzzle, err := TodaysPuzzle(server.puzzles, server.clock(), server.timeZone)
+func (server *Server) handleTodayPuzzle(w http.ResponseWriter, r *http.Request) {
+	puzzles, err := server.puzzles.Puzzles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load puzzles.")
+		return
+	}
+
+	puzzle, err := TodaysPuzzle(puzzles, server.clock(), server.timeZone)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 		return
@@ -75,8 +94,14 @@ func (server *Server) handleTodayPuzzle(w http.ResponseWriter, _ *http.Request) 
 	writeJSON(w, http.StatusOK, ToPublicPuzzle(*puzzle))
 }
 
-func (server *Server) handlePuzzles(w http.ResponseWriter, _ *http.Request) {
-	published := PublishedPuzzles(server.puzzles)
+func (server *Server) handlePuzzles(w http.ResponseWriter, r *http.Request) {
+	puzzles, err := server.puzzles.Puzzles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load puzzles.")
+		return
+	}
+
+	published := PublishedPuzzles(puzzles)
 	publicPuzzles := make([]PublicPuzzle, 0, len(published))
 	for _, puzzle := range published {
 		publicPuzzles = append(publicPuzzles, ToPublicPuzzle(puzzle))
@@ -92,7 +117,13 @@ func (server *Server) handleAttempt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	puzzle, err := FindPuzzleByID(server.puzzles, puzzleID)
+	puzzles, err := server.puzzles.Puzzles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load puzzles.")
+		return
+	}
+
+	puzzle, err := FindPuzzleByID(puzzles, puzzleID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 		return
@@ -120,7 +151,13 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	puzzle, err := FindPuzzleByID(server.puzzles, request.PuzzleID)
+	puzzles, err := server.puzzles.Puzzles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load puzzles.")
+		return
+	}
+
+	puzzle, err := FindPuzzleByID(puzzles, request.PuzzleID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 		return

@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { ArrowLeft, CalendarDays, Eye, FilePenLine } from "lucide-react";
-import { AdminPuzzlePipeline } from "@/components/AdminPuzzlePipeline";
+import { ArrowLeft } from "lucide-react";
+import { AdminDesk } from "@/components/AdminDesk";
 
 export default function AdminPage() {
   return (
@@ -19,35 +19,7 @@ export default function AdminPage() {
           <h1 className="mt-2 text-4xl font-black sm:text-5xl">Puzzle pipeline</h1>
         </header>
 
-        <section className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
-          <div className="rounded border-2 border-ink bg-white p-4 shadow-[0_6px_0_#171717]">
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-neutral-200 pb-3 text-sm font-black uppercase tracking-[0.12em] text-neutral-500">
-              <span>#</span>
-              <span>Puzzle</span>
-              <span>Status</span>
-            </div>
-
-            <AdminPuzzlePipeline />
-          </div>
-
-          <aside className="rounded border-2 border-ink bg-ink p-4 text-white shadow-[0_6px_0_#2ec4b6]">
-            <h2 className="text-lg font-black">Next admin build</h2>
-            <div className="mt-4 grid gap-3 text-sm">
-              <div className="flex gap-3">
-                <FilePenLine aria-hidden className="mt-0.5 shrink-0 text-yolk" size={18} />
-                <p>Draft form for four named groups and sixteen unique tiles.</p>
-              </div>
-              <div className="flex gap-3">
-                <Eye aria-hidden className="mt-0.5 shrink-0 text-mint" size={18} />
-                <p>Preview mode that hides solution metadata from the player view.</p>
-              </div>
-              <div className="flex gap-3">
-                <CalendarDays aria-hidden className="mt-0.5 shrink-0 text-tomato" size={18} />
-                <p>Publish scheduler with one puzzle per calendar date.</p>
-              </div>
-            </div>
-          </aside>
-        </section>
+        <AdminDesk />
       </div>
     </main>
   );

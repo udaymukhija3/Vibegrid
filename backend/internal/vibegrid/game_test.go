@@ -44,7 +44,7 @@ func TestEvaluateGuessRejectsDuplicateTiles(t *testing.T) {
 
 func TestGuessAPIStoresAttemptAndSetsSessionCookie(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: SeedPuzzles(),
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
 		Store:   NewMemoryAttemptStore(),
 		Clock:   fixedClock,
 	})
@@ -76,7 +76,7 @@ func TestGuessAPIStoresAttemptAndSetsSessionCookie(t *testing.T) {
 
 func TestDuplicateClientGuessIsIdempotent(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: SeedPuzzles(),
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
 		Store:   NewMemoryAttemptStore(),
 		Clock:   fixedClock,
 	})
@@ -105,7 +105,7 @@ func TestDuplicateClientGuessIsIdempotent(t *testing.T) {
 
 func TestFourthMistakeRevealsGroups(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: SeedPuzzles(),
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
 		Store:   NewMemoryAttemptStore(),
 		Clock:   fixedClock,
 	})

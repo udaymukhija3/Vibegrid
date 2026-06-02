@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,6 +29,7 @@ func run(logger *slog.Logger) error {
 	addr := env("VIBEGRID_ADDR", ":8081")
 	timeZone := env("VIBEGRID_TIMEZONE", "Asia/Kolkata")
 	databaseURL := os.Getenv("DATABASE_URL")
+	adminToken := os.Getenv("VIBEGRID_ADMIN_TOKEN")
 	secureCookies := os.Getenv("VIBEGRID_SECURE_COOKIES") == "true"
 	allowedOrigins := splitOrigins(os.Getenv("VIBEGRID_ALLOWED_ORIGINS"))
 
@@ -36,15 +38,23 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, closeStore, err := buildStore(ctx, logger, databaseURL)
+	deps, err := buildDeps(ctx, logger, databaseURL)
 	if err != nil {
 		return err
 	}
-	defer closeStore()
+	defer deps.close()
+
+	if deps.adminPuzzles == nil {
+		logger.Warn("admin endpoints disabled (requires DATABASE_URL)")
+	} else if adminToken == "" {
+		logger.Warn("admin endpoints disabled: set VIBEGRID_ADMIN_TOKEN to enable")
+	}
 
 	handler := vibegrid.NewServer(vibegrid.ServerConfig{
-		Puzzles:        vibegrid.SeedPuzzles(),
-		Store:          store,
+		Puzzles:        deps.puzzles,
+		Store:          deps.attempts,
+		AdminPuzzles:   deps.adminPuzzles,
+		AdminToken:     adminToken,
 		Clock:          time.Now,
 		TimeZone:       timeZone,
 		AllowedOrigins: allowedOrigins,
@@ -79,25 +89,48 @@ func run(logger *slog.Logger) error {
 	}
 }
 
-// buildStore picks the durable Postgres store when DATABASE_URL is set and
-// otherwise falls back to the in-memory store, so local runs and tests work
-// with no database.
-func buildStore(ctx context.Context, logger *slog.Logger, databaseURL string) (vibegrid.Store, func(), error) {
+// deps bundles the store implementations the server needs, plus a close hook.
+type deps struct {
+	attempts     vibegrid.Store
+	puzzles      vibegrid.PuzzleSource
+	adminPuzzles vibegrid.AdminPuzzleStore
+	close        func()
+}
+
+// buildDeps wires the durable Postgres stores when DATABASE_URL is set and
+// otherwise falls back to in-memory attempts plus seed puzzles, so local runs
+// and tests work with no database. Admin authoring requires Postgres.
+func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (deps, error) {
 	if databaseURL == "" {
-		logger.Warn("DATABASE_URL not set, using in-memory attempt store (non-durable)")
-		return vibegrid.NewMemoryAttemptStore(), func() {}, nil
+		logger.Warn("DATABASE_URL not set, using in-memory store and seed puzzles (non-durable)")
+		return deps{
+			attempts: vibegrid.NewMemoryAttemptStore(),
+			puzzles:  vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()),
+			close:    func() {},
+		}, nil
 	}
 
-	store, err := vibegrid.OpenPostgres(ctx, databaseURL)
+	database, err := vibegrid.OpenDB(ctx, databaseURL)
 	if err != nil {
-		return nil, nil, err
+		return deps{}, err
 	}
 
-	logger.Info("connected to postgres, migrations applied")
-	return store, func() {
-		if err := store.Close(); err != nil {
-			logger.Error("closing postgres store", "error", err)
-		}
+	puzzleStore := vibegrid.NewPostgresPuzzleStore(database)
+	if err := puzzleStore.Seed(ctx, vibegrid.SeedPuzzles()); err != nil {
+		_ = database.Close()
+		return deps{}, fmt.Errorf("seed puzzles: %w", err)
+	}
+
+	logger.Info("connected to postgres, migrations applied, puzzles seeded")
+	return deps{
+		attempts:     vibegrid.NewPostgresAttemptStore(database),
+		puzzles:      puzzleStore,
+		adminPuzzles: puzzleStore,
+		close: func() {
+			if err := database.Close(); err != nil {
+				logger.Error("closing postgres pool", "error", err)
+			}
+		},
 	}, nil
 }
 

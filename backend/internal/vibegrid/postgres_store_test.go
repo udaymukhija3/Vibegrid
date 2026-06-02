@@ -19,16 +19,23 @@ func newTestStore(t *testing.T) *PostgresAttemptStore {
 		t.Skip("TEST_DATABASE_URL not set; skipping Postgres integration tests")
 	}
 
-	store, err := OpenPostgres(context.Background(), databaseURL)
+	database, err := OpenDB(context.Background(), databaseURL)
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := store.db.Exec(`truncate attempts, attempt_guesses restart identity cascade`); err != nil {
+	// Truncating puzzles cascades to groups, tiles, attempts, and guesses, giving
+	// each test a clean slate regardless of what other tests left behind.
+	if _, err := database.Exec(`truncate puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	return store
+	// Attempts reference puzzles by foreign key, so the seed puzzle must exist
+	// before any attempt can be created.
+	if err := NewPostgresPuzzleStore(database).Seed(context.Background(), SeedPuzzles()); err != nil {
+		t.Fatalf("seed puzzles: %v", err)
+	}
+	return NewPostgresAttemptStore(database)
 }
 
 func correctGuess(clientGuessID string) GuessRequest {

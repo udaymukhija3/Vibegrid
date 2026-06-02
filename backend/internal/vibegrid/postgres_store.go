@@ -19,17 +19,10 @@ import (
 // violation. We use it to detect a replayed client guess racing against itself.
 const pgUniqueViolation = "23505"
 
-// PostgresAttemptStore is the durable, transaction-safe Store. Every guess is
-// recorded inside a single transaction that locks the attempt row, so
-// concurrent or retried submissions for the same session cannot corrupt
-// mistake counts, double-count guesses, or race past completion.
-type PostgresAttemptStore struct {
-	db *sql.DB
-}
-
-// OpenPostgres opens a connection pool, applies migrations, and returns a store.
-// The caller owns Close.
-func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresAttemptStore, error) {
+// OpenDB opens a connection pool, verifies connectivity, and applies migrations.
+// The attempt store and puzzle store share the returned pool; the caller owns
+// Close.
+func OpenDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
 	database, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
@@ -51,7 +44,7 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresAttemptStor
 		return nil, err
 	}
 
-	return &PostgresAttemptStore{db: database}, nil
+	return database, nil
 }
 
 func runMigrations(database *sql.DB) error {
@@ -66,8 +59,16 @@ func runMigrations(database *sql.DB) error {
 	return nil
 }
 
-func (store *PostgresAttemptStore) Close() error {
-	return store.db.Close()
+// PostgresAttemptStore is the durable, transaction-safe Store. Every guess is
+// recorded inside a single transaction that locks the attempt row, so
+// concurrent or retried submissions for the same session cannot corrupt
+// mistake counts, double-count guesses, or race past completion.
+type PostgresAttemptStore struct {
+	db *sql.DB
+}
+
+func NewPostgresAttemptStore(database *sql.DB) *PostgresAttemptStore {
+	return &PostgresAttemptStore{db: database}
 }
 
 func (store *PostgresAttemptStore) GetOrCreate(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
