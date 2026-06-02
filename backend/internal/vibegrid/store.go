@@ -1,6 +1,7 @@
 package vibegrid
 
 import (
+	"context"
 	"errors"
 	"sort"
 	"sync"
@@ -9,22 +10,22 @@ import (
 
 var ErrAttemptFinished = errors.New("attempt is already finished")
 
+// Store owns mutable per-session game state: attempts and the guesses made
+// against them. Puzzle content is static and served from the seed package, so
+// the store only deals with attempt lifecycle and idempotent guess handling.
+//
+// Two implementations exist: MemoryAttemptStore (default, used in tests and for
+// no-database local runs) and PostgresAttemptStore (durable, transaction-safe).
+// Handlers depend on this interface, never a concrete store.
+type Store interface {
+	GetOrCreate(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error)
+	SubmitGuess(ctx context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error)
+}
+
 type StoredGuess struct {
 	IsCorrect      bool
 	MatchedGroupID string
 	Revealed       bool
-}
-
-type Attempt struct {
-	PuzzleID       string
-	SessionID      string
-	Mistakes       int
-	GuessCount     int
-	StartedAt      time.Time
-	CompletedAt    *time.Time
-	Failed         bool
-	SolvedGroupIDs map[string]bool
-	Guesses        map[string]StoredGuess
 }
 
 type GuessSubmission struct {
@@ -33,90 +34,89 @@ type GuessSubmission struct {
 	Attempt   AttemptSnapshot
 }
 
-type MemoryAttemptStore struct {
-	mu       sync.Mutex
-	attempts map[string]*Attempt
+// attemptState is the minimal, store-agnostic view of an attempt. Both stores
+// project their storage into this struct so snapshot and submission building
+// stays in one place and the two implementations cannot drift apart.
+type attemptState struct {
+	PuzzleID       string
+	SessionID      string
+	Mistakes       int
+	GuessCount     int
+	StartedAt      time.Time
+	CompletedAt    *time.Time
+	Failed         bool
+	SolvedGroupIDs map[string]bool
 }
 
-func NewMemoryAttemptStore() *MemoryAttemptStore {
-	return &MemoryAttemptStore{
-		attempts: map[string]*Attempt{},
-	}
+func (state attemptState) completed(puzzle Puzzle) bool {
+	return len(state.SolvedGroupIDs) == len(puzzle.Groups)
 }
 
-func (store *MemoryAttemptStore) GetOrCreate(puzzle Puzzle, sessionID string, now time.Time) AttemptSnapshot {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	attempt := store.getOrCreateLocked(puzzle.ID, sessionID, now)
-	return snapshotFor(puzzle, attempt)
-}
-
-func (store *MemoryAttemptStore) SubmitGuess(puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	attempt := store.getOrCreateLocked(puzzle.ID, sessionID, now)
-
-	if storedGuess, ok := attempt.Guesses[request.ClientGuessID]; ok {
-		return submissionForStoredGuess(puzzle, attempt, storedGuess), nil
-	}
-
-	if isAttemptComplete(puzzle, attempt) || attempt.Failed {
-		return GuessSubmission{}, ErrAttemptFinished
-	}
-
-	matchedGroup, err := EvaluateGuess(puzzle, request.SelectedTileIDs, attempt.SolvedGroupIDs)
-	if err != nil {
-		return GuessSubmission{}, err
-	}
-
-	attempt.GuessCount++
+// applyGuess mutates the state for a freshly evaluated guess and returns the
+// StoredGuess that should be persisted. matchedGroup is nil for a valid-but-wrong
+// guess. This is the single source of truth for mistake/completion/failure
+// transitions, shared by both stores.
+func (state *attemptState) applyGuess(puzzle Puzzle, matchedGroup *PuzzleGroup, now time.Time) StoredGuess {
+	state.GuessCount++
 	storedGuess := StoredGuess{}
 
 	if matchedGroup != nil {
-		attempt.SolvedGroupIDs[matchedGroup.ID] = true
+		state.SolvedGroupIDs[matchedGroup.ID] = true
 		storedGuess.IsCorrect = true
 		storedGuess.MatchedGroupID = matchedGroup.ID
 
-		if isAttemptComplete(puzzle, attempt) {
+		if state.completed(puzzle) {
 			completedAt := now.UTC()
-			attempt.CompletedAt = &completedAt
+			state.CompletedAt = &completedAt
 		}
-	} else {
-		attempt.Mistakes++
-		if attempt.Mistakes >= MaxMistakes {
-			attempt.Failed = true
-			storedGuess.Revealed = true
+		return storedGuess
+	}
+
+	state.Mistakes++
+	if state.Mistakes >= MaxMistakes {
+		state.Failed = true
+		storedGuess.Revealed = true
+	}
+	return storedGuess
+}
+
+func buildSnapshot(puzzle Puzzle, state attemptState) AttemptSnapshot {
+	solvedGroups := make([]SolvedGroup, 0, len(state.SolvedGroupIDs))
+	for _, group := range puzzle.Groups {
+		if state.SolvedGroupIDs[group.ID] {
+			solvedGroups = append(solvedGroups, SolvedGroupFor(group))
 		}
 	}
 
-	attempt.Guesses[request.ClientGuessID] = storedGuess
-	return submissionForStoredGuess(puzzle, attempt, storedGuess), nil
-}
+	sort.Slice(solvedGroups, func(left, right int) bool {
+		return solvedGroups[left].ColorIndex < solvedGroups[right].ColorIndex
+	})
 
-func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID string, now time.Time) *Attempt {
-	key := attemptKey(puzzleID, sessionID)
-	if attempt, ok := store.attempts[key]; ok {
-		return attempt
+	var completedAt *string
+	if state.CompletedAt != nil {
+		formatted := state.CompletedAt.Format(time.RFC3339)
+		completedAt = &formatted
 	}
 
-	attempt := &Attempt{
-		PuzzleID:       puzzleID,
-		SessionID:      sessionID,
-		StartedAt:      now.UTC(),
-		SolvedGroupIDs: map[string]bool{},
-		Guesses:        map[string]StoredGuess{},
+	revealedGroups := []SolvedGroup{}
+	if state.Failed {
+		revealedGroups = AllSolvedGroups(puzzle)
 	}
-	store.attempts[key] = attempt
-	return attempt
+
+	return AttemptSnapshot{
+		PuzzleID:       state.PuzzleID,
+		SolvedGroups:   solvedGroups,
+		RevealedGroups: revealedGroups,
+		Mistakes:       state.Mistakes,
+		GuessCount:     state.GuessCount,
+		StartedAt:      state.StartedAt.Format(time.RFC3339),
+		CompletedAt:    completedAt,
+		Failed:         state.Failed,
+		Completed:      state.completed(puzzle),
+	}
 }
 
-func attemptKey(puzzleID string, sessionID string) string {
-	return puzzleID + ":" + sessionID
-}
-
-func submissionForStoredGuess(puzzle Puzzle, attempt *Attempt, storedGuess StoredGuess) GuessSubmission {
+func buildSubmission(puzzle Puzzle, state attemptState, storedGuess StoredGuess) GuessSubmission {
 	var group *SolvedGroup
 	if storedGuess.MatchedGroupID != "" {
 		for _, puzzleGroup := range puzzle.Groups {
@@ -131,46 +131,80 @@ func submissionForStoredGuess(puzzle Puzzle, attempt *Attempt, storedGuess Store
 	return GuessSubmission{
 		IsCorrect: storedGuess.IsCorrect,
 		Group:     group,
-		Attempt:   snapshotFor(puzzle, attempt),
+		Attempt:   buildSnapshot(puzzle, state),
 	}
 }
 
-func snapshotFor(puzzle Puzzle, attempt *Attempt) AttemptSnapshot {
-	solvedGroups := make([]SolvedGroup, 0, len(attempt.SolvedGroupIDs))
-	for _, group := range puzzle.Groups {
-		if attempt.SolvedGroupIDs[group.ID] {
-			solvedGroups = append(solvedGroups, SolvedGroupFor(group))
-		}
-	}
+// MemoryAttemptStore keeps attempts in a mutex-guarded map. It is correct and
+// idempotent within a single process but not durable or shared across
+// instances; PostgresAttemptStore is the production path.
+type MemoryAttemptStore struct {
+	mu       sync.Mutex
+	attempts map[string]*memoryAttempt
+}
 
-	sort.Slice(solvedGroups, func(left, right int) bool {
-		return solvedGroups[left].ColorIndex < solvedGroups[right].ColorIndex
-	})
+type memoryAttempt struct {
+	state   attemptState
+	guesses map[string]StoredGuess
+}
 
-	var completedAt *string
-	if attempt.CompletedAt != nil {
-		formatted := attempt.CompletedAt.Format(time.RFC3339)
-		completedAt = &formatted
-	}
-
-	revealedGroups := []SolvedGroup{}
-	if attempt.Failed {
-		revealedGroups = AllSolvedGroups(puzzle)
-	}
-
-	return AttemptSnapshot{
-		PuzzleID:       attempt.PuzzleID,
-		SolvedGroups:   solvedGroups,
-		RevealedGroups: revealedGroups,
-		Mistakes:       attempt.Mistakes,
-		GuessCount:     attempt.GuessCount,
-		StartedAt:      attempt.StartedAt.Format(time.RFC3339),
-		CompletedAt:    completedAt,
-		Failed:         attempt.Failed,
-		Completed:      isAttemptComplete(puzzle, attempt),
+func NewMemoryAttemptStore() *MemoryAttemptStore {
+	return &MemoryAttemptStore{
+		attempts: map[string]*memoryAttempt{},
 	}
 }
 
-func isAttemptComplete(puzzle Puzzle, attempt *Attempt) bool {
-	return len(attempt.SolvedGroupIDs) == len(puzzle.Groups)
+func (store *MemoryAttemptStore) GetOrCreate(_ context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	attempt := store.getOrCreateLocked(puzzle.ID, sessionID, now)
+	return buildSnapshot(puzzle, attempt.state), nil
+}
+
+func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	attempt := store.getOrCreateLocked(puzzle.ID, sessionID, now)
+
+	if storedGuess, ok := attempt.guesses[request.ClientGuessID]; ok {
+		return buildSubmission(puzzle, attempt.state, storedGuess), nil
+	}
+
+	if attempt.state.completed(puzzle) || attempt.state.Failed {
+		return GuessSubmission{}, ErrAttemptFinished
+	}
+
+	matchedGroup, err := EvaluateGuess(puzzle, request.SelectedTileIDs, attempt.state.SolvedGroupIDs)
+	if err != nil {
+		return GuessSubmission{}, err
+	}
+
+	storedGuess := attempt.state.applyGuess(puzzle, matchedGroup, now)
+	attempt.guesses[request.ClientGuessID] = storedGuess
+	return buildSubmission(puzzle, attempt.state, storedGuess), nil
+}
+
+func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID string, now time.Time) *memoryAttempt {
+	key := attemptKey(puzzleID, sessionID)
+	if attempt, ok := store.attempts[key]; ok {
+		return attempt
+	}
+
+	attempt := &memoryAttempt{
+		state: attemptState{
+			PuzzleID:       puzzleID,
+			SessionID:      sessionID,
+			StartedAt:      now.UTC(),
+			SolvedGroupIDs: map[string]bool{},
+		},
+		guesses: map[string]StoredGuess{},
+	}
+	store.attempts[key] = attempt
+	return attempt
+}
+
+func attemptKey(puzzleID string, sessionID string) string {
+	return puzzleID + ":" + sessionID
 }

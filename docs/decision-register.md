@@ -8,7 +8,7 @@
 | Identity | Anonymous sessions first | Removes signup friction and still supports persistence. |
 | Core rules | 16 tiles, 4 groups, 4 mistakes | Familiar enough to learn instantly. |
 | Validation | Go server-side guess validation | Prevents client source from becoming the answer key. |
-| Persistence | Go in-memory attempts now, Postgres attempts next | Ships the API contract while keeping the durable path clear. |
+| Persistence | Postgres attempts (transaction-safe), in-memory fallback | Durable, idempotent, concurrency-safe attempt state; in-memory store keeps tests and no-DB runs fast. |
 | Stack | Go API, Next.js, TypeScript, Tailwind, Postgres | Keeps backend rules independent and frontend iteration fast. |
 | Launch timezone | Asia/Kolkata in the scaffold | Matches the current workspace context; should be revisited before public launch. |
 

@@ -8,18 +8,25 @@ import (
 	"time"
 )
 
+// maxGuessBodyBytes caps the guess payload. A legal guess is four short tile
+// ids, so anything large is malformed or hostile.
+const maxGuessBodyBytes = 16 << 10 // 16 KiB
+
 type ServerConfig struct {
-	Puzzles  []Puzzle
-	Store    *MemoryAttemptStore
-	Clock    func() time.Time
-	TimeZone string
+	Puzzles        []Puzzle
+	Store          Store
+	Clock          func() time.Time
+	TimeZone       string
+	AllowedOrigins []string
+	SecureCookies  bool
 }
 
 type Server struct {
-	puzzles  []Puzzle
-	store    *MemoryAttemptStore
-	clock    func() time.Time
-	timeZone string
+	puzzles       []Puzzle
+	store         Store
+	clock         func() time.Time
+	timeZone      string
+	secureCookies bool
 }
 
 func NewServer(config ServerConfig) http.Handler {
@@ -34,10 +41,11 @@ func NewServer(config ServerConfig) http.Handler {
 	}
 
 	server := &Server{
-		puzzles:  config.Puzzles,
-		store:    config.Store,
-		clock:    clock,
-		timeZone: timeZone,
+		puzzles:       config.Puzzles,
+		store:         config.Store,
+		clock:         clock,
+		timeZone:      timeZone,
+		secureCookies: config.SecureCookies,
 	}
 	if server.store == nil {
 		server.store = NewMemoryAttemptStore()
@@ -50,7 +58,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/attempts/", server.handleAttempt)
 	mux.HandleFunc("POST /api/guesses", server.handleGuess)
 
-	return withCORS(mux)
+	return withCORS(mux, config.AllowedOrigins)
 }
 
 func (server *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -90,13 +98,18 @@ func (server *Server) handleAttempt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := EnsureSessionID(w, r)
-	attempt := server.store.GetOrCreate(*puzzle, sessionID, server.clock())
+	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	attempt, err := server.store.GetOrCreate(r.Context(), *puzzle, sessionID, server.clock())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load that attempt.")
+		return
+	}
 	writeJSON(w, http.StatusOK, attempt)
 }
 
 func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 	var request GuessRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxGuessBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "That guess payload is not valid.")
 		return
@@ -113,12 +126,19 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := EnsureSessionID(w, r)
-	submission, err := server.store.SubmitGuess(*puzzle, sessionID, request, server.clock())
+	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	submission, err := server.store.SubmitGuess(r.Context(), *puzzle, sessionID, request, server.clock())
 	if err != nil {
 		status := http.StatusUnprocessableEntity
-		if errors.Is(err, ErrAttemptFinished) {
+		switch {
+		case errors.Is(err, ErrAttemptFinished):
 			status = http.StatusConflict
+		case isGuessValidationError(err):
+			status = http.StatusUnprocessableEntity
+		default:
+			// Unexpected (storage/transaction) failures are 500s, not client errors.
+			writeError(w, http.StatusInternalServerError, "Could not record that guess.")
+			return
 		}
 
 		writeError(w, status, humanError(err))
@@ -137,6 +157,15 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+// isGuessValidationError reports whether err is a client-fixable problem with
+// the guess (wrong size, unknown tile, already-solved group) as opposed to a
+// storage failure.
+func isGuessValidationError(err error) bool {
+	return errors.Is(err, ErrInvalidGroupSize) ||
+		errors.Is(err, ErrUnknownTile) ||
+		errors.Is(err, ErrAlreadySolved)
 }
 
 func humanError(err error) string {
@@ -167,11 +196,18 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
-func withCORS(next http.Handler) http.Handler {
-	allowedOrigins := map[string]bool{
-		"http://localhost:3000": true,
-		"http://localhost:3001": true,
-		"http://localhost:3002": true,
+func withCORS(next http.Handler, origins []string) http.Handler {
+	if len(origins) == 0 {
+		origins = []string{
+			"http://localhost:3000",
+			"http://localhost:3001",
+			"http://localhost:3002",
+		}
+	}
+
+	allowedOrigins := make(map[string]bool, len(origins))
+	for _, origin := range origins {
+		allowedOrigins[origin] = true
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

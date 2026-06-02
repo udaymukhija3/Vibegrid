@@ -9,7 +9,11 @@ import (
 
 const sessionCookieName = "vibegrid_session"
 
-func EnsureSessionID(w http.ResponseWriter, r *http.Request) string {
+// sessionTTL is how long an anonymous session cookie lives. Long enough that a
+// returning player keeps their attempt history and streak across days.
+const sessionTTL = 24 * time.Hour * 183
+
+func EnsureSessionID(w http.ResponseWriter, r *http.Request, secure bool) string {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
 		return cookie.Value
 	}
@@ -20,9 +24,10 @@ func EnsureSessionID(w http.ResponseWriter, r *http.Request) string {
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int((24 * time.Hour * 183).Seconds()),
-		Expires:  time.Now().Add(24 * time.Hour * 183),
+		MaxAge:   int(sessionTTL.Seconds()),
+		Expires:  time.Now().Add(sessionTTL),
 	})
 
 	return sessionID

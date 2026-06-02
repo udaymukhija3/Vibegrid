@@ -21,11 +21,17 @@ This is a small product with real state, not a complex platform. Next.js keeps t
 
 The key technical decision is server-side validation. The player UI receives tile text and ids, but not group membership. The Go API validates selected ids and only reveals a group after a correct guess.
 
-## What Is Stubbed Today
+## What Is Built vs Stubbed Today
 
-- The Go backend currently uses seeded Go puzzle data and an in-memory attempt store.
-- Anonymous attempts are server-owned during process lifetime; the client keeps selected tile UI state locally.
-- The next backend step is moving attempt creation, guess idempotency, mistakes, completion, and failure state into Postgres.
+- Attempts, guesses, idempotency, mistakes, completion, and failure state are
+  durable in Postgres via a transaction-safe store (`PostgresAttemptStore`), with
+  an in-memory store as the no-database fallback. Migrations live in
+  `backend/db/migrations/` and apply on startup.
+- Puzzle *content* is still static and served from the seed package. DB-backed
+  puzzles and admin authoring are the next step (P1: Editor Desk); until then
+  `attempts.puzzle_id` is a plain reference rather than a foreign key.
+- The client keeps selected-tile UI state locally, but the server is the source
+  of truth for attempt state.
 
 ## Testing Direction
 
