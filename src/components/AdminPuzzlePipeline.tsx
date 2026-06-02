@@ -1,46 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { PublicPuzzle } from "@/types/puzzle";
-
-type PipelineState =
-  | { status: "loading" }
-  | { status: "ready"; puzzles: PublicPuzzle[] }
-  | { status: "error"; message: string };
+import { fetchPublishedPuzzles } from "@/lib/api";
+import { useResource } from "@/hooks/useResource";
 
 export function AdminPuzzlePipeline() {
-  const [state, setState] = useState<PipelineState>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPuzzles() {
-      try {
-        const response = await fetch("/api/puzzles", {
-          credentials: "include"
-        });
-
-        if (!response.ok) {
-          throw new Error("Could not load puzzle pipeline.");
-        }
-
-        const puzzles = (await response.json()) as PublicPuzzle[];
-        if (!cancelled) {
-          setState({ status: "ready", puzzles });
-        }
-      } catch {
-        if (!cancelled) {
-          setState({ status: "error", message: "Could not load puzzle pipeline." });
-        }
-      }
-    }
-
-    void loadPuzzles();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const state = useResource(fetchPublishedPuzzles, "Could not load puzzle pipeline.");
 
   if (state.status === "loading") {
     return <p className="py-4 font-black text-neutral-600">Loading pipeline.</p>;
@@ -52,7 +16,7 @@ export function AdminPuzzlePipeline() {
 
   return (
     <div className="divide-y divide-neutral-200">
-      {state.puzzles.map((puzzle) => (
+      {state.data.map((puzzle) => (
         <div key={puzzle.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 py-4">
           <span className="font-black">{puzzle.puzzleNumber}</span>
           <div>
@@ -67,4 +31,3 @@ export function AdminPuzzlePipeline() {
     </div>
   );
 }
-

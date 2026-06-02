@@ -1,50 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { VibeGridGame } from "@/components/VibeGridGame";
-import type { PublicPuzzle } from "@/types/puzzle";
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "ready"; puzzle: PublicPuzzle }
-  | { status: "error"; message: string };
+import { fetchTodayPuzzle } from "@/lib/api";
+import { useResource } from "@/hooks/useResource";
 
 export function VibeGridApp() {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPuzzle() {
-      try {
-        const response = await fetch("/api/puzzles/today", {
-          credentials: "include"
-        });
-
-        if (!response.ok) {
-          throw new Error("Could not load today's grid.");
-        }
-
-        const puzzle = (await response.json()) as PublicPuzzle;
-        if (!cancelled) {
-          setState({ status: "ready", puzzle });
-        }
-      } catch {
-        if (!cancelled) {
-          setState({ status: "error", message: "Could not load today's grid." });
-        }
-      }
-    }
-
-    void loadPuzzle();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const state = useResource(fetchTodayPuzzle, "Could not load today's grid.");
 
   if (state.status === "ready") {
-    return <VibeGridGame puzzle={state.puzzle} />;
+    return <VibeGridGame puzzle={state.data} />;
   }
 
   return (
@@ -58,4 +22,3 @@ export function VibeGridApp() {
     </div>
   );
 }
-
