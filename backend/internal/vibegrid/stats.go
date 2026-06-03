@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"sort"
+	"time"
 
 	"github.com/lib/pq"
 )
+
+const dateLayout = "2006-01-02"
 
 // wrongGuessView is one heatmap row with human-readable tile text.
 type wrongGuessView struct {
@@ -34,6 +38,23 @@ func (server *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// handleStreak serves the current session's daily-completion streak. Without a
+// database it returns an empty summary (streaks need persistence).
+func (server *Server) handleStreak(w http.ResponseWriter, r *http.Request) {
+	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	if server.stats == nil {
+		writeJSON(w, http.StatusOK, StreakSummary{})
+		return
+	}
+
+	summary, err := server.stats.SessionStreak(r.Context(), sessionID, server.todayString())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load streak.")
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
 }
 
 // handleAdminAnalytics serves the admin wrong-guess heatmap: stats plus the most
@@ -119,6 +140,7 @@ type WrongGuessGrouping struct {
 type StatsStore interface {
 	PuzzleStats(ctx context.Context, puzzleID string) (PuzzleStats, error)
 	WrongGuessGroupings(ctx context.Context, puzzleID string, limit int) ([]WrongGuessGrouping, error)
+	SessionStreak(ctx context.Context, sessionID, today string) (StreakSummary, error)
 }
 
 type PostgresStatsStore struct {
@@ -194,4 +216,95 @@ func (store *PostgresStatsStore) WrongGuessGroupings(ctx context.Context, puzzle
 		groupings = append(groupings, grouping)
 	}
 	return groupings, rows.Err()
+}
+
+// SessionStreak reads the editorial daily puzzles a session has completed and
+// derives the streak summary. "today" is the current daily date in the launch
+// timezone, supplied by the caller so the store stays clock-agnostic.
+func (store *PostgresStatsStore) SessionStreak(ctx context.Context, sessionID, today string) (StreakSummary, error) {
+	rows, err := store.db.QueryContext(ctx,
+		`select p.publish_date
+		 from attempts a
+		 join puzzles p on p.id = a.puzzle_id
+		 where a.session_id = $1 and a.completed = true
+		   and p.origin = 'EDITORIAL' and p.publish_date is not null`,
+		sessionID,
+	)
+	if err != nil {
+		return StreakSummary{}, fmt.Errorf("session streak: %w", err)
+	}
+	defer rows.Close()
+
+	dates := []string{}
+	for rows.Next() {
+		var d time.Time
+		if err := rows.Scan(&d); err != nil {
+			return StreakSummary{}, fmt.Errorf("scan publish_date: %w", err)
+		}
+		dates = append(dates, d.Format(dateLayout))
+	}
+	if err := rows.Err(); err != nil {
+		return StreakSummary{}, err
+	}
+	return computeStreak(dates, today), nil
+}
+
+// computeStreak derives current/longest/total from a set of completed daily
+// dates. The current streak anchors on today, or on yesterday if today is not
+// done yet (so a streak isn't shown broken until a full day is actually missed).
+func computeStreak(completedDates []string, today string) StreakSummary {
+	set := map[string]bool{}
+	for _, d := range completedDates {
+		if d != "" {
+			set[d] = true
+		}
+	}
+
+	summary := StreakSummary{TotalCompleted: len(set)}
+	if len(set) == 0 {
+		return summary
+	}
+
+	sorted := make([]string, 0, len(set))
+	for d := range set {
+		sorted = append(sorted, d)
+	}
+	sort.Strings(sorted)
+
+	longest, run := 0, 0
+	var prev time.Time
+	havePrev := false
+	for _, ds := range sorted {
+		d, err := time.Parse(dateLayout, ds)
+		if err != nil {
+			continue
+		}
+		if havePrev && d.Equal(prev.AddDate(0, 0, 1)) {
+			run++
+		} else {
+			run = 1
+		}
+		if run > longest {
+			longest = run
+		}
+		prev, havePrev = d, true
+	}
+	summary.LongestStreak = longest
+
+	todayT, err := time.Parse(dateLayout, today)
+	if err != nil {
+		return summary
+	}
+	anchor := todayT
+	if !set[today] {
+		yesterday := todayT.AddDate(0, 0, -1)
+		if !set[yesterday.Format(dateLayout)] {
+			return summary // missed both today and yesterday: streak is broken
+		}
+		anchor = yesterday
+	}
+	for d := anchor; set[d.Format(dateLayout)]; d = d.AddDate(0, 0, -1) {
+		summary.CurrentStreak++
+	}
+	return summary
 }

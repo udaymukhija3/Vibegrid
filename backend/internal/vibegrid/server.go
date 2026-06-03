@@ -75,6 +75,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
 	mux.HandleFunc("GET /api/attempts/", server.handleAttempt)
+	mux.HandleFunc("GET /api/streak", server.handleStreak)
 	mux.HandleFunc("POST /api/guesses", server.handleGuess)
 	mux.HandleFunc("POST /api/community/puzzles", server.handleCommunityCreate)
 
@@ -84,6 +85,16 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/admin/puzzles/{id}/analytics", server.requireAdmin(server.handleAdminAnalytics))
 
 	return withCORS(mux, config.AllowedOrigins)
+}
+
+// todayString is the current daily date in the configured launch timezone — the
+// same notion of "today" that selects the daily puzzle.
+func (server *Server) todayString() string {
+	location, err := time.LoadLocation(server.timeZone)
+	if err != nil {
+		location = time.UTC
+	}
+	return server.clock().In(location).Format("2006-01-02")
 }
 
 func (server *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

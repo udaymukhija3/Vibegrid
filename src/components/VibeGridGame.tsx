@@ -5,8 +5,14 @@ import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
 import { Archive, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
-import { buildShareGrid, buildShareText, formatElapsedTime, formatSeconds } from "@/lib/game";
-import { fetchPuzzleStats, type PuzzleStats } from "@/lib/api";
+import {
+  buildShareGrid,
+  buildShareText,
+  formatElapsedTime,
+  formatSeconds,
+  MIN_STATS_PLAYERS
+} from "@/lib/game";
+import { fetchPuzzleStats, fetchStreak, type PuzzleStats, type StreakSummary } from "@/lib/api";
 import { HowToPlay } from "@/components/HowToPlay";
 import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
 
@@ -58,6 +64,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const [hasLoadedAttempt, setHasLoadedAttempt] = useState(false);
   const [tileOrder, setTileOrder] = useState(() => puzzle.tiles.map((tile) => tile.id));
   const [stats, setStats] = useState<PuzzleStats | null>(null);
+  const [streak, setStreak] = useState<StreakSummary | null>(null);
 
   useEffect(() => {
     const storedAttempt = window.localStorage.getItem(storageKey);
@@ -164,6 +171,29 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       cancelled = true;
     };
   }, [isOver, puzzle.id]);
+
+  // Streaks apply to the daily puzzle only (community puzzles are dateless).
+  // Re-fetch when the puzzle is completed so the count bumps immediately.
+  useEffect(() => {
+    if (!puzzle.publishDate) {
+      return;
+    }
+
+    let cancelled = false;
+    fetchStreak()
+      .then((loaded) => {
+        if (!cancelled) {
+          setStreak(loaded);
+        }
+      })
+      .catch(() => {
+        // Streak is a nice-to-have; never block the board on it.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [puzzle.publishDate, isComplete]);
 
   const tilesById = useMemo(() => new Map(puzzle.tiles.map((tile) => [tile.id, tile])), [puzzle.tiles]);
   const remainingTiles = tileOrder
@@ -316,10 +346,20 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           <Image src="/vibegrid-mark.svg" width={48} height={48} alt="" className="rounded" priority />
           <div>
             <h1 className="text-3xl font-black leading-none sm:text-4xl">VibeGrid</h1>
-            <p className="mt-1 text-sm font-semibold text-neutral-600">
-              #{puzzle.puzzleNumber}
-              {puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold text-neutral-600">
+                #{puzzle.puzzleNumber}
+                {puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
+              </p>
+              {streak && streak.currentStreak > 0 && (
+                <span
+                  title={`Longest streak: ${streak.longestStreak} · Solved: ${streak.totalCompleted}`}
+                  className="inline-flex items-center gap-1 rounded border-2 border-ink bg-yolk px-2 py-0.5 text-xs font-black"
+                >
+                  🔥 {streak.currentStreak} day{streak.currentStreak === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -459,7 +499,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
               <p className="mt-1">Guesses {attempt.guessCount}</p>
             </div>
 
-            {isOver && stats && stats.players > 0 && (
+            {isOver && stats && stats.players >= MIN_STATS_PLAYERS && (
               <div className="mt-4 rounded border-2 border-ink bg-plum/10 p-3">
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-plum">How others did</p>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-semibold">

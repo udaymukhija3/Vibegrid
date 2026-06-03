@@ -76,6 +76,12 @@ type AttemptSnapshot struct {
 	Completed      bool          `json:"completed"`
 }
 
+type StreakSummary struct {
+	CurrentStreak  int `json:"currentStreak"`
+	LongestStreak  int `json:"longestStreak"`
+	TotalCompleted int `json:"totalCompleted"`
+}
+
 type GuessRequest struct {
 	PuzzleID        string   `json:"puzzleId"`
 	SelectedTileIDs []string `json:"selectedTileIds"`

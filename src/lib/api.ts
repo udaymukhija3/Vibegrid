@@ -53,6 +53,18 @@ export async function fetchPuzzleStats(id: string): Promise<PuzzleStats> {
   return puzzleStatsSchema.parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}/stats`));
 }
 
+const streakSchema = z.object({
+  currentStreak: z.number(),
+  longestStreak: z.number(),
+  totalCompleted: z.number()
+});
+
+export type StreakSummary = z.infer<typeof streakSchema>;
+
+export async function fetchStreak(): Promise<StreakSummary> {
+  return streakSchema.parse(await getJSON("/api/streak"));
+}
+
 const createdPuzzleSchema = z.object({
   ok: z.literal(true),
   id: z.string(),

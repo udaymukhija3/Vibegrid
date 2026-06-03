@@ -1,5 +1,9 @@
 export const MAX_MISTAKES = 4;
 
+// Don't show "how others did" percentages until enough people have played, so a
+// fresh puzzle doesn't display noisy 1-or-2-player stats.
+export const MIN_STATS_PLAYERS = 20;
+
 export function formatElapsedTime(startedAt: string, finishedAt = new Date().toISOString()) {
   const elapsedMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
   const totalSeconds = Math.floor(elapsedMs / 1000);

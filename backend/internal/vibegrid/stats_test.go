@@ -6,6 +6,31 @@ import (
 	"testing"
 )
 
+func TestComputeStreak(t *testing.T) {
+	// Three consecutive days ending today.
+	got := computeStreak([]string{"2026-06-03", "2026-06-02", "2026-06-01"}, "2026-06-03")
+	if got.CurrentStreak != 3 || got.LongestStreak != 3 || got.TotalCompleted != 3 {
+		t.Fatalf("expected 3/3/3, got %#v", got)
+	}
+
+	// Today not played yet, but yesterday + the day before were: streak alive at 2.
+	alive := computeStreak([]string{"2026-06-02", "2026-06-01"}, "2026-06-03")
+	if alive.CurrentStreak != 2 {
+		t.Fatalf("expected current streak 2 (alive via yesterday), got %d", alive.CurrentStreak)
+	}
+
+	// A gap two days back: current streak is broken (0), but history is kept.
+	broken := computeStreak([]string{"2026-05-30", "2026-05-29"}, "2026-06-03")
+	if broken.CurrentStreak != 0 || broken.LongestStreak != 2 || broken.TotalCompleted != 2 {
+		t.Fatalf("expected 0/2/2 for a broken streak, got %#v", broken)
+	}
+
+	// No plays.
+	if empty := computeStreak(nil, "2026-06-03"); empty != (StreakSummary{}) {
+		t.Fatalf("expected zero summary, got %#v", empty)
+	}
+}
+
 func newStatsTest(t *testing.T) (*PostgresAttemptStore, *PostgresStatsStore) {
 	t.Helper()
 
