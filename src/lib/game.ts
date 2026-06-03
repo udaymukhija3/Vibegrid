@@ -16,6 +16,20 @@ export function formatSeconds(totalSeconds: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+// Coloured squares for the spoiler-safe share grid, indexed by a group's
+// colorIndex (0..3) to mirror the on-screen mint / yolk / tomato / plum palette.
+export const SHARE_SQUARES = ["🟩", "🟨", "🟥", "🟪"];
+
+// buildShareGrid turns the player's guess history into Wordle/Connections-style
+// rows of coloured squares. Each guess is one row; each tile is coloured by the
+// group it actually belonged to (known once the puzzle is over), so the grid
+// shows the path to the solution without naming any group.
+export function buildShareGrid(guessHistory: string[][], colorByTile: Record<string, number>): string[] {
+  return guessHistory
+    .filter((row) => row.length > 0)
+    .map((row) => row.map((tileId) => SHARE_SQUARES[(colorByTile[tileId] ?? 0) % SHARE_SQUARES.length]).join(""));
+}
+
 export function buildShareText(input: {
   puzzleNumber: number;
   mistakes: number;
@@ -25,15 +39,17 @@ export function buildShareText(input: {
   startedAt: string;
   finishedAt?: string;
   failed: boolean;
+  grid?: string[];
 }) {
   const status = input.failed
     ? `${input.solvedCount}/${input.groupCount} vibes found`
-    : `solved in ${formatElapsedTime(input.startedAt, input.finishedAt)}`;
+    : `Solved in ${formatElapsedTime(input.startedAt, input.finishedAt)}`;
 
-  return [
-    `VibeGrid #${input.puzzleNumber}`,
-    status,
-    `mistakes ${input.mistakes}/${input.mistakesAllowed}`,
-    "Group the words. Guess the vibe."
-  ].join("\n");
+  const lines = [`VibeGrid #${input.puzzleNumber}`];
+  if (input.grid && input.grid.length > 0) {
+    lines.push(...input.grid);
+  }
+  lines.push(`${status} · ${input.mistakes}/${input.mistakesAllowed} mistakes`);
+  lines.push("Group the words. Guess the vibe.");
+  return lines.join("\n");
 }

@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
 import { Archive, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
-import { buildShareText, formatElapsedTime, formatSeconds } from "@/lib/game";
+import { buildShareGrid, buildShareText, formatElapsedTime, formatSeconds } from "@/lib/game";
 import { fetchPuzzleStats, type PuzzleStats } from "@/lib/api";
 import { HowToPlay } from "@/components/HowToPlay";
 import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
@@ -15,6 +15,9 @@ type StoredAttempt = {
   selectedTileIds: string[];
   solvedGroups: SolvedGroup[];
   revealedGroups: SolvedGroup[];
+  // Ordered list of every submitted guess (the four tile ids per guess), kept
+  // locally so the result screen can render a spoiler-safe share grid.
+  guessHistory: string[][];
   mistakes: number;
   guessCount: number;
   startedAt: string;
@@ -28,6 +31,7 @@ const emptyAttempt = (puzzleId: string): StoredAttempt => ({
   selectedTileIds: [],
   solvedGroups: [],
   revealedGroups: [],
+  guessHistory: [],
   mistakes: 0,
   guessCount: 0,
   startedAt: new Date().toISOString(),
@@ -41,6 +45,9 @@ const groupColors = [
   "bg-tomato text-ink",
   "bg-plum text-white"
 ];
+
+// Background-only palette (matching groupColors) for the share-grid squares.
+const squareColors = ["bg-mint", "bg-yolk", "bg-tomato", "bg-plum"];
 
 export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const storageKey = `vibegrid:attempt:${puzzle.id}`;
@@ -67,7 +74,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
         setAttempt({
           ...emptyAttempt(puzzle.id),
           ...parsed,
-          revealedGroups: parsed.revealedGroups ?? []
+          revealedGroups: parsed.revealedGroups ?? [],
+          guessHistory: parsed.guessHistory ?? []
         });
       }
     } catch {
@@ -229,6 +237,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           return current;
         }
 
+        const submittedTiles = current.selectedTileIds;
         const nextAttempt = mergeServerAttempt(
           {
             ...current,
@@ -236,6 +245,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           },
           result.attempt
         );
+        nextAttempt.guessHistory = [...current.guessHistory, submittedTiles];
 
         if (result.isCorrect) {
           setMessage(nextAttempt.completed ? "All vibes found. Suspiciously competent." : result.group.name);
@@ -260,6 +270,24 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     window.localStorage.setItem(storageKey, JSON.stringify(nextAttempt));
   }
 
+  // colorByTile maps every tile to its group's colour index. Once the puzzle is
+  // over, displayedGroups covers all 16 tiles (solved on a win, revealed on a
+  // loss), so the share grid can colour the full guess history.
+  const colorByTile = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const group of displayedGroups) {
+      for (const tileId of group.tileIds) {
+        map[tileId] = group.colorIndex;
+      }
+    }
+    return map;
+  }, [displayedGroups]);
+
+  const shareGrid = useMemo(
+    () => (isOver ? buildShareGrid(attempt.guessHistory, colorByTile) : []),
+    [isOver, attempt.guessHistory, colorByTile]
+  );
+
   async function shareResult() {
     const shareText = buildShareText({
       puzzleNumber: puzzle.puzzleNumber,
@@ -269,7 +297,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       groupCount: puzzle.groupCount,
       startedAt: attempt.startedAt,
       finishedAt: attempt.completedAt,
-      failed: attempt.failed
+      failed: attempt.failed,
+      grid: shareGrid
     });
 
     await navigator.clipboard.writeText(shareText);
@@ -436,6 +465,27 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
                   {stats.medianSolveSeconds !== undefined && (
                     <p>~{formatSeconds(stats.medianSolveSeconds)} median</p>
                   )}
+                </div>
+              </div>
+            )}
+
+            {isOver && attempt.guessHistory.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-neutral-500">Your grid</p>
+                <div className="mt-2 grid gap-1">
+                  {attempt.guessHistory.map((row, rowIndex) => (
+                    <div key={rowIndex} className="flex gap-1">
+                      {row.map((tileId, tileIndex) => (
+                        <span
+                          key={`${rowIndex}-${tileIndex}`}
+                          className={clsx(
+                            "h-5 w-5 rounded-sm border border-ink",
+                            squareColors[(colorByTile[tileId] ?? 0) % squareColors.length]
+                          )}
+                        />
+                      ))}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
