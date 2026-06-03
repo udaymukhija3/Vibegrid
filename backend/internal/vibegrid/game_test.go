@@ -27,6 +27,45 @@ func TestEvaluateGuessMatchesRegardlessOfOrder(t *testing.T) {
 	}
 }
 
+func TestIsOneAway(t *testing.T) {
+	puzzle := SeedPuzzles()[0]
+
+	// Three Italian-summer tiles + one intruder = one away.
+	if !IsOneAway(puzzle, []string{"p1-espresso", "p1-linen", "p1-vespa", "p1-slack"}) {
+		t.Fatal("expected one away for a 3+1 guess")
+	}
+	// Two and two = not one away.
+	if IsOneAway(puzzle, []string{"p1-espresso", "p1-linen", "p1-slack", "p1-deck"}) {
+		t.Fatal("did not expect one away for a 2+2 guess")
+	}
+	// An exact group is not reported as one away (it is a correct guess).
+	if IsOneAway(puzzle, []string{"p1-espresso", "p1-linen", "p1-vespa", "p1-balcony"}) {
+		t.Fatal("a full group is not one away")
+	}
+}
+
+func TestGuessResponseFlagsOneAway(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
+		Store:   NewMemoryAttemptStore(),
+		Clock:   fixedClock,
+	})
+
+	response := postGuess(t, handler, "", GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "near-miss",
+		SelectedTileIDs: []string{"p1-espresso", "p1-linen", "p1-vespa", "p1-slack"},
+	})
+
+	var body GuessResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.IsCorrect || !body.OneAway {
+		t.Fatalf("expected a wrong, one-away guess, got %#v", body)
+	}
+}
+
 func TestEvaluateGuessRejectsDuplicateTiles(t *testing.T) {
 	puzzle := SeedPuzzles()[0]
 

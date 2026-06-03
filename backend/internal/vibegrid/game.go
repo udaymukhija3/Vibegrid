@@ -49,6 +49,35 @@ func EvaluateGuess(puzzle Puzzle, selectedTileIDs []string, solvedGroupIDs map[s
 	return nil, nil
 }
 
+// maxGroupOverlap returns the largest number of selected tiles that fall within
+// a single group. A wrong guess with an overlap of GroupSize-1 (three of four)
+// is "one away" — the only near-miss signal the game reveals.
+func maxGroupOverlap(puzzle Puzzle, selectedTileIDs []string) int {
+	selected := map[string]bool{}
+	for _, tileID := range normalizeTileIDs(selectedTileIDs) {
+		selected[tileID] = true
+	}
+
+	best := 0
+	for _, group := range puzzle.Groups {
+		count := 0
+		for _, tile := range group.Tiles {
+			if selected[tile.ID] {
+				count++
+			}
+		}
+		if count > best {
+			best = count
+		}
+	}
+	return best
+}
+
+// IsOneAway reports whether a guess has exactly three tiles in a single group.
+func IsOneAway(puzzle Puzzle, selectedTileIDs []string) bool {
+	return maxGroupOverlap(puzzle, selectedTileIDs) == GroupSize-1
+}
+
 func normalizeTileIDs(tileIDs []string) []string {
 	seen := map[string]bool{}
 	normalized := make([]string, 0, len(tileIDs))

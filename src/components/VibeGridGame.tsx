@@ -252,7 +252,11 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           return nextAttempt;
         }
 
-        setMessage(nextAttempt.failed ? "Four misses. The grid wins today." : "Not that vibe.");
+        if (nextAttempt.failed) {
+          setMessage("Four misses. The grid wins today.");
+        } else {
+          setMessage(result.oneAway ? "So close — one away." : "Not that vibe.");
+        }
         return nextAttempt;
       });
     } catch {

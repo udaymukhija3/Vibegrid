@@ -201,6 +201,9 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		Attempt:   &submission.Attempt,
 		SessionID: sessionID,
 	}
+	if !submission.IsCorrect {
+		response.OneAway = IsOneAway(*puzzle, request.SelectedTileIDs)
+	}
 	if submission.Attempt.Failed {
 		response.RevealedGroups = submission.Attempt.RevealedGroups
 	}

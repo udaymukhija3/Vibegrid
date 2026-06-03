@@ -87,6 +87,7 @@ type GuessResponse struct {
 	IsCorrect      bool             `json:"isCorrect"`
 	Group          *SolvedGroup     `json:"group,omitempty"`
 	Attempt        *AttemptSnapshot `json:"attempt,omitempty"`
+	OneAway        bool             `json:"oneAway,omitempty"`
 	RevealedGroups []SolvedGroup    `json:"revealedGroups,omitempty"`
 	SessionID      string           `json:"sessionId,omitempty"`
 	Error          string           `json:"error,omitempty"`

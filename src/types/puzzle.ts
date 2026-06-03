@@ -78,6 +78,7 @@ export type GuessResponse =
       isCorrect: false;
       sessionId: string;
       attempt: AttemptSnapshot;
+      oneAway?: boolean;
       revealedGroups?: SolvedGroup[];
     }
   | {
