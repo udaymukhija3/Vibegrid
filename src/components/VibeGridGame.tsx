@@ -5,7 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
 import { Archive, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
-import { buildShareText, formatElapsedTime } from "@/lib/game";
+import { buildShareText, formatElapsedTime, formatSeconds } from "@/lib/game";
+import { fetchPuzzleStats, type PuzzleStats } from "@/lib/api";
 import { HowToPlay } from "@/components/HowToPlay";
 import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
 
@@ -49,6 +50,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const [copied, setCopied] = useState(false);
   const [hasLoadedAttempt, setHasLoadedAttempt] = useState(false);
   const [tileOrder, setTileOrder] = useState(() => puzzle.tiles.map((tile) => tile.id));
+  const [stats, setStats] = useState<PuzzleStats | null>(null);
 
   useEffect(() => {
     const storedAttempt = window.localStorage.getItem(storageKey);
@@ -133,6 +135,27 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const selectedTileIds = new Set(attempt.selectedTileIds);
   const isComplete = attempt.completed || attempt.solvedGroups.length === puzzle.groupCount;
   const isOver = isComplete || attempt.failed;
+
+  useEffect(() => {
+    if (!isOver) {
+      return;
+    }
+
+    let cancelled = false;
+    fetchPuzzleStats(puzzle.id)
+      .then((loaded) => {
+        if (!cancelled) {
+          setStats(loaded);
+        }
+      })
+      .catch(() => {
+        // Stats are a nice-to-have; a failure should never disrupt the result screen.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOver, puzzle.id]);
 
   const tilesById = useMemo(() => new Map(puzzle.tiles.map((tile) => [tile.id, tile])), [puzzle.tiles]);
   const remainingTiles = tileOrder
@@ -402,6 +425,20 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
               <p>Elapsed {formatElapsedTime(attempt.startedAt, attempt.completedAt)}</p>
               <p className="mt-1">Guesses {attempt.guessCount}</p>
             </div>
+
+            {isOver && stats && stats.players > 0 && (
+              <div className="mt-4 rounded border-2 border-ink bg-plum/10 p-3">
+                <p className="text-xs font-black uppercase tracking-[0.14em] text-plum">How others did</p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-semibold">
+                  <p>{Math.round(stats.solveRate * 100)}% solved</p>
+                  <p>{stats.players} {stats.players === 1 ? "player" : "players"}</p>
+                  <p>~{stats.medianMistakes.toFixed(0)} mistakes</p>
+                  {stats.medianSolveSeconds !== undefined && (
+                    <p>~{formatSeconds(stats.medianSolveSeconds)} median</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid gap-2">

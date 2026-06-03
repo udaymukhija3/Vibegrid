@@ -62,3 +62,20 @@ export async function publishPuzzle(token: string, puzzleId: string, publishDate
     body: JSON.stringify({ publishDate })
   });
 }
+
+const analyticsSchema = z.object({
+  stats: z.object({
+    players: z.number(),
+    solveRate: z.number(),
+    failRate: z.number(),
+    medianMistakes: z.number(),
+    medianSolveSeconds: z.number().optional()
+  }),
+  wrongGuesses: z.array(z.object({ tiles: z.array(z.string()), count: z.number() }))
+});
+
+export type PuzzleAnalytics = z.infer<typeof analyticsSchema>;
+
+export async function fetchAnalytics(token: string, puzzleId: string): Promise<PuzzleAnalytics> {
+  return analyticsSchema.parse(await adminFetch(token, `/api/admin/puzzles/${puzzleId}/analytics`));
+}

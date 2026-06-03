@@ -17,6 +17,7 @@ type ServerConfig struct {
 	Store          Store
 	AdminPuzzles   AdminPuzzleStore
 	Community      CommunityPuzzleStore
+	Stats          StatsStore
 	AdminToken     string
 	Clock          func() time.Time
 	TimeZone       string
@@ -29,6 +30,7 @@ type Server struct {
 	store         Store
 	adminPuzzles  AdminPuzzleStore
 	community     CommunityPuzzleStore
+	stats         StatsStore
 	createLimiter *rateLimiter
 	adminToken    string
 	clock         func() time.Time
@@ -52,6 +54,7 @@ func NewServer(config ServerConfig) http.Handler {
 		store:         config.Store,
 		adminPuzzles:  config.AdminPuzzles,
 		community:     config.Community,
+		stats:         config.Stats,
 		createLimiter: newRateLimiter(20, time.Hour),
 		adminToken:    config.AdminToken,
 		clock:         clock,
@@ -70,6 +73,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/today", server.handleTodayPuzzle)
 	mux.HandleFunc("GET /api/puzzles", server.handlePuzzles)
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
+	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
 	mux.HandleFunc("GET /api/attempts/", server.handleAttempt)
 	mux.HandleFunc("POST /api/guesses", server.handleGuess)
 	mux.HandleFunc("POST /api/community/puzzles", server.handleCommunityCreate)
@@ -77,6 +81,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/admin/puzzles", server.requireAdmin(server.handleAdminListPuzzles))
 	mux.HandleFunc("POST /api/admin/puzzles", server.requireAdmin(server.handleAdminCreatePuzzle))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/publish", server.requireAdmin(server.handleAdminPublishPuzzle))
+	mux.HandleFunc("GET /api/admin/puzzles/{id}/analytics", server.requireAdmin(server.handleAdminAnalytics))
 
 	return withCORS(mux, config.AllowedOrigins)
 }

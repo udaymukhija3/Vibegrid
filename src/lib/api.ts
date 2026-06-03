@@ -39,6 +39,20 @@ export async function fetchPuzzleById(id: string): Promise<PublicPuzzle> {
   return publicPuzzleSchema.parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}`));
 }
 
+const puzzleStatsSchema = z.object({
+  players: z.number(),
+  solveRate: z.number(),
+  failRate: z.number(),
+  medianMistakes: z.number(),
+  medianSolveSeconds: z.number().optional()
+});
+
+export type PuzzleStats = z.infer<typeof puzzleStatsSchema>;
+
+export async function fetchPuzzleStats(id: string): Promise<PuzzleStats> {
+  return puzzleStatsSchema.parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}/stats`));
+}
+
 const createdPuzzleSchema = z.object({
   ok: z.literal(true),
   id: z.string(),

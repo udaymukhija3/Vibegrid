@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import type { AdminPuzzle } from "@/types/puzzle";
-import { createDraftPuzzle, fetchAdminPuzzles, publishPuzzle } from "@/lib/adminApi";
+import {
+  createDraftPuzzle,
+  fetchAdminPuzzles,
+  fetchAnalytics,
+  publishPuzzle,
+  type PuzzleAnalytics
+} from "@/lib/adminApi";
+import { formatSeconds } from "@/lib/game";
 import { PuzzleDraftForm } from "@/components/PuzzleDraftForm";
 
 const TOKEN_KEY = "vibegrid:adminToken";
@@ -19,6 +26,8 @@ export function AdminDesk() {
   const [tokenInput, setTokenInput] = useState("");
   const [puzzles, setPuzzles] = useState<AdminPuzzle[] | null>(null);
   const [publishDates, setPublishDates] = useState<Record<string, string>>({});
+  const [analytics, setAnalytics] = useState<Record<string, PuzzleAnalytics>>({});
+  const [openAnalyticsId, setOpenAnalyticsId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -58,6 +67,22 @@ export function AdminDesk() {
     setPuzzles(null);
     setNotice("");
     setError("");
+  }
+
+  async function toggleAnalytics(puzzleId: string) {
+    if (openAnalyticsId === puzzleId) {
+      setOpenAnalyticsId(null);
+      return;
+    }
+    setOpenAnalyticsId(puzzleId);
+    if (!analytics[puzzleId]) {
+      try {
+        const data = await fetchAnalytics(token, puzzleId);
+        setAnalytics((current) => ({ ...current, [puzzleId]: data }));
+      } catch (analyticsError) {
+        setError(analyticsError instanceof Error ? analyticsError.message : "Could not load analytics.");
+      }
+    }
   }
 
   async function publish(puzzleId: string) {
@@ -131,45 +156,57 @@ export function AdminDesk() {
         )}
         <div className="mt-3 divide-y divide-neutral-200">
           {puzzles?.map((puzzle) => (
-            <div key={puzzle.id} className="grid gap-3 py-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
-              <span className="font-black">#{puzzle.puzzleNumber}</span>
-              <div>
-                <p className="font-black">{puzzle.groups.map((group) => group.name).join(" · ")}</p>
-                <p className="text-sm text-neutral-600">
-                  {puzzle.difficulty}
-                  {puzzle.publishDate ? ` · ${puzzle.publishDate}` : ""}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={clsx(
-                    "rounded px-3 py-1 text-xs font-black uppercase tracking-[0.12em]",
-                    statusStyles[puzzle.status] ?? "bg-neutral-200"
+            <div key={puzzle.id} className="py-4">
+              <div className="grid gap-3 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                <span className="font-black">#{puzzle.puzzleNumber}</span>
+                <div>
+                  <p className="font-black">{puzzle.groups.map((group) => group.name).join(" · ")}</p>
+                  <p className="text-sm text-neutral-600">
+                    {puzzle.difficulty}
+                    {puzzle.publishDate ? ` · ${puzzle.publishDate}` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={clsx(
+                      "rounded px-3 py-1 text-xs font-black uppercase tracking-[0.12em]",
+                      statusStyles[puzzle.status] ?? "bg-neutral-200"
+                    )}
+                  >
+                    {puzzle.status}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => toggleAnalytics(puzzle.id)}
+                    aria-expanded={openAnalyticsId === puzzle.id}
+                    className="inline-flex h-9 items-center rounded border border-neutral-300 bg-white px-3 text-sm font-black text-neutral-700"
+                  >
+                    Stats
+                  </button>
+                  {puzzle.status === "DRAFT" && (
+                    <>
+                      <input
+                        type="date"
+                        value={publishDates[puzzle.id] ?? ""}
+                        onChange={(event) =>
+                          setPublishDates((current) => ({ ...current, [puzzle.id]: event.target.value }))
+                        }
+                        className="h-9 rounded border-2 border-ink px-2 text-sm font-semibold"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => publish(puzzle.id)}
+                        className="inline-flex h-9 items-center rounded border-2 border-ink bg-mint px-3 text-sm font-black shadow-[0_3px_0_#171717] disabled:opacity-50"
+                      >
+                        Publish
+                      </button>
+                    </>
                   )}
-                >
-                  {puzzle.status}
-                </span>
-                {puzzle.status === "DRAFT" && (
-                  <>
-                    <input
-                      type="date"
-                      value={publishDates[puzzle.id] ?? ""}
-                      onChange={(event) =>
-                        setPublishDates((current) => ({ ...current, [puzzle.id]: event.target.value }))
-                      }
-                      className="h-9 rounded border-2 border-ink px-2 text-sm font-semibold"
-                    />
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => publish(puzzle.id)}
-                      className="inline-flex h-9 items-center rounded border-2 border-ink bg-mint px-3 text-sm font-black shadow-[0_3px_0_#171717] disabled:opacity-50"
-                    >
-                      Publish
-                    </button>
-                  </>
-                )}
+                </div>
               </div>
+
+              {openAnalyticsId === puzzle.id && <AnalyticsPanel data={analytics[puzzle.id]} />}
             </div>
           ))}
         </div>
@@ -186,6 +223,45 @@ export function AdminDesk() {
           }}
         />
       </section>
+    </div>
+  );
+}
+
+function AnalyticsPanel({ data }: { data: PuzzleAnalytics | undefined }) {
+  if (!data) {
+    return <p className="mt-3 text-sm font-semibold text-neutral-600">Loading analytics…</p>;
+  }
+
+  const { stats, wrongGuesses } = data;
+
+  if (stats.players === 0) {
+    return <p className="mt-3 text-sm font-semibold text-neutral-600">No plays yet.</p>;
+  }
+
+  return (
+    <div className="mt-3 rounded border-2 border-ink bg-neutral-50 p-3">
+      <div className="grid grid-cols-2 gap-2 text-sm font-semibold sm:grid-cols-4">
+        <p>{stats.players} {stats.players === 1 ? "player" : "players"}</p>
+        <p>{Math.round(stats.solveRate * 100)}% solved</p>
+        <p>~{stats.medianMistakes.toFixed(1)} mistakes</p>
+        {stats.medianSolveSeconds !== undefined && <p>~{formatSeconds(stats.medianSolveSeconds)} median</p>}
+      </div>
+
+      <p className="mt-3 text-xs font-black uppercase tracking-[0.12em] text-neutral-500">
+        Most common wrong guesses
+      </p>
+      {wrongGuesses.length === 0 ? (
+        <p className="mt-1 text-sm text-neutral-500">No wrong guesses recorded yet.</p>
+      ) : (
+        <ul className="mt-2 grid gap-1">
+          {wrongGuesses.map((wrong, index) => (
+            <li key={index} className="flex items-center justify-between gap-3 text-sm">
+              <span className="font-semibold">{wrong.tiles.join(", ")}</span>
+              <span className="font-black text-tomato">×{wrong.count}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

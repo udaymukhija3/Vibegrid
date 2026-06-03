@@ -30,6 +30,9 @@ transaction-safe attempts.
 - **User-generated content.** A public, rate-limited create flow lets anyone
   author a puzzle and share a play-by-link; community puzzles stay out of the
   daily rotation by design.
+- **Analytics from first principles.** Completion stats (solve rate, median
+  mistakes/time) and an admin wrong-guess heatmap are computed straight from the
+  attempt and guess tables with SQL aggregates — no separate analytics pipeline.
 - **Tested and CI'd.** Go unit + integration tests (including a Postgres service
   container in GitHub Actions) and a typed, lint-clean front end.
 

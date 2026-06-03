@@ -9,6 +9,13 @@ export function formatElapsedTime(startedAt: string, finishedAt = new Date().toI
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+export function formatSeconds(totalSeconds: number) {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 export function buildShareText(input: {
   puzzleNumber: number;
   mistakes: number;
