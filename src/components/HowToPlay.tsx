@@ -6,12 +6,15 @@ import { HelpCircle, X } from "lucide-react";
 const SEEN_KEY = "vibegrid:seenHowTo";
 
 const rules = [
-  "Find four groups of four tiles that share a hidden vibe.",
-  "Select exactly four tiles, then hit Submit.",
-  "A correct group locks and reveals its category name.",
-  "Four wrong guesses ends the run — the grid wins.",
-  "Solve all four to win, then share your result (no spoilers)."
+  "Pick four tiles you think share a vibe, then hit Submit.",
+  "Right: the group locks and names itself. Wrong: a mistake.",
+  "Four mistakes and the grid wins. Solve all four to win.",
+  "Share your result without spoiling the answers."
 ];
+
+// An illustrative group — deliberately not from any real puzzle, so it teaches
+// the idea (and the red-herring twist) without spoiling a live grid.
+const exampleTiles = ["meal prep", "face mask", "clean sheets", "to-do list"];
 
 // HowToPlay is a help button plus a modal. It opens automatically the first time
 // a visitor lands (tracked in localStorage) and on demand after that.
@@ -55,7 +58,7 @@ export function HowToPlay() {
           role="dialog"
           aria-modal="true"
           aria-label="How to play"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-ink/40 p-4"
           onClick={() => setOpen(false)}
         >
           <div
@@ -73,7 +76,13 @@ export function HowToPlay() {
                 <X aria-hidden size={18} />
               </button>
             </div>
-            <ul className="mt-4 grid gap-2 text-sm font-semibold text-neutral-700">
+
+            <p className="mt-2 text-sm font-semibold text-neutral-700">
+              Sort 16 tiles into 4 hidden groups. Each group shares a{" "}
+              <span className="text-plum">vibe</span> — a theme, a mood, a very specific kind of person.
+            </p>
+
+            <ul className="mt-3 grid gap-2 text-sm font-semibold text-neutral-700">
               {rules.map((rule) => (
                 <li key={rule} className="flex gap-2">
                   <span aria-hidden className="font-black text-plum">
@@ -83,6 +92,28 @@ export function HowToPlay() {
                 </li>
               ))}
             </ul>
+
+            <div className="mt-4 rounded border-2 border-ink bg-neutral-50 p-3">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-plum">Example</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {exampleTiles.map((tile) => (
+                  <span key={tile} className="rounded border border-ink bg-white px-2 py-1 text-xs font-black">
+                    {tile}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2 text-sm font-bold">
+                <span aria-hidden className="text-plum">
+                  →
+                </span>{" "}
+                Sunday reset
+              </p>
+              <p className="mt-1 text-sm text-neutral-600">
+                Tiles are built to mislead: a face mask reads as skincare, but here the vibe is a
+                lazy Sunday. Expect overlaps — that is the whole game.
+              </p>
+            </div>
+
             <button
               type="button"
               onClick={() => setOpen(false)}
