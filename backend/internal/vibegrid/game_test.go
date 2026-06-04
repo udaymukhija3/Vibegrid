@@ -2,7 +2,9 @@ package vibegrid
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,6 +26,28 @@ func TestEvaluateGuessMatchesRegardlessOfOrder(t *testing.T) {
 	}
 	if group == nil || group.ID != "italian-summer" {
 		t.Fatalf("expected italian summer group, got %#v", group)
+	}
+}
+
+func TestReadinessReflectsReadyCheck(t *testing.T) {
+	// Healthy: no ready check configured (in-memory mode) → always ready.
+	healthy := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())})
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	healthy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with no ready check, got %d", rec.Code)
+	}
+
+	// Unhealthy: a ready check that fails → 503.
+	failing := NewServer(ServerConfig{
+		Puzzles:    StaticPuzzleSource(SeedPuzzles()),
+		ReadyCheck: func(context.Context) error { return errors.New("db down") },
+	})
+	rec2 := httptest.NewRecorder()
+	failing.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when ready check fails, got %d", rec2.Code)
 	}
 }
 

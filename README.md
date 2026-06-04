@@ -107,6 +107,14 @@ See [.env.example](.env.example) for all configuration (`VIBEGRID_ADMIN_TOKEN`,
 - `/admin` — Editor Desk (author drafts, publish one puzzle per date). Requires
   `VIBEGRID_ADMIN_TOKEN` on the backend and a database.
 
+## Deployment
+
+The repo is deploy-ready: a multi-stage `Dockerfile` (≈20 MB distroless image),
+`fly.toml` with migrations as a release command and a `/readyz` health check, a
+`vibegrid migrate` subcommand, and security/cache headers. Target topology is
+Vercel (web) + Fly.io (API) + Neon (Postgres). Step-by-step instructions are in
+[docs/deployment.md](docs/deployment.md).
+
 ## Project docs
 
 Product vision, the decision register, the engineering roadmap, and the tech

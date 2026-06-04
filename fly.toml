@@ -1,0 +1,38 @@
+# Fly.io config for the VibeGrid Go API.
+# Rename `app` to your own, then: fly launch --copy-config --no-deploy, set
+# secrets (see docs/deployment.md), and `fly deploy`.
+app = "vibegrid-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Apply migrations once per release, before any new machine serves traffic —
+# avoids instances racing to migrate on boot.
+[deploy]
+  release_command = "/vibegrid migrate"
+
+[env]
+  VIBEGRID_ADDR = ":8081"
+  VIBEGRID_TIMEZONE = "UTC"
+  VIBEGRID_SECURE_COOKIES = "true"
+  # DATABASE_URL, VIBEGRID_ADMIN_TOKEN and VIBEGRID_ALLOWED_ORIGINS are set with
+  # `fly secrets set` — never commit them.
+
+[http_service]
+  internal_port = 8081
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/readyz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -1,0 +1,19 @@
+# Keep the build context small and free of host/web artifacts.
+.git
+.github
+.next
+.cache
+node_modules
+coverage
+dist
+src
+public
+docs
+*.md
+01_VIBEGRID_*.md
+.env
+.env*.local
+.claude
+prisma
+scripts
+**/*_test.go

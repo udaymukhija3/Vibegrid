@@ -19,10 +19,40 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
+	// `vibegrid migrate` applies migrations and exits — used as the deploy
+	// release step so schema changes land once, before any instance serves
+	// traffic, instead of racing across instances on boot.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := runMigrate(logger); err != nil {
+			logger.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(logger); err != nil {
 		logger.Error("vibegrid exited with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runMigrate(logger *slog.Logger) error {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return errors.New("DATABASE_URL is required to migrate")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	database, err := vibegrid.OpenDB(ctx, databaseURL) // OpenDB applies migrations
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	logger.Info("migrations applied")
+	return nil
 }
 
 func run(logger *slog.Logger) error {
@@ -56,6 +86,7 @@ func run(logger *slog.Logger) error {
 		AdminPuzzles:   deps.adminPuzzles,
 		Community:      deps.community,
 		Stats:          deps.stats,
+		ReadyCheck:     deps.ready,
 		AdminToken:     adminToken,
 		Clock:          time.Now,
 		TimeZone:       timeZone,
@@ -91,13 +122,15 @@ func run(logger *slog.Logger) error {
 	}
 }
 
-// deps bundles the store implementations the server needs, plus a close hook.
+// deps bundles the store implementations the server needs, plus a close hook
+// and a readiness probe (nil when there is no database to check).
 type deps struct {
 	attempts     vibegrid.Store
 	puzzles      vibegrid.PuzzleSource
 	adminPuzzles vibegrid.AdminPuzzleStore
 	community    vibegrid.CommunityPuzzleStore
 	stats        vibegrid.StatsStore
+	ready        func(context.Context) error
 	close        func()
 }
 
@@ -132,6 +165,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		adminPuzzles: puzzleStore,
 		community:    puzzleStore,
 		stats:        vibegrid.NewPostgresStatsStore(database),
+		ready:        database.PingContext,
 		close: func() {
 			if err := database.Close(); err != nil {
 				logger.Error("closing postgres pool", "error", err)

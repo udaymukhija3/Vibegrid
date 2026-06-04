@@ -1,6 +1,7 @@
 package vibegrid
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +19,7 @@ type ServerConfig struct {
 	AdminPuzzles   AdminPuzzleStore
 	Community      CommunityPuzzleStore
 	Stats          StatsStore
+	ReadyCheck     func(context.Context) error
 	AdminToken     string
 	Clock          func() time.Time
 	TimeZone       string
@@ -31,6 +33,7 @@ type Server struct {
 	adminPuzzles  AdminPuzzleStore
 	community     CommunityPuzzleStore
 	stats         StatsStore
+	readyCheck    func(context.Context) error
 	createLimiter *rateLimiter
 	adminToken    string
 	clock         func() time.Time
@@ -55,6 +58,7 @@ func NewServer(config ServerConfig) http.Handler {
 		adminPuzzles:  config.AdminPuzzles,
 		community:     config.Community,
 		stats:         config.Stats,
+		readyCheck:    config.ReadyCheck,
 		createLimiter: newRateLimiter(20, time.Hour),
 		adminToken:    config.AdminToken,
 		clock:         clock,
@@ -70,6 +74,7 @@ func NewServer(config ServerConfig) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.handleHealth)
+	mux.HandleFunc("GET /readyz", server.handleReady)
 	mux.HandleFunc("GET /api/puzzles/today", server.handleTodayPuzzle)
 	mux.HandleFunc("GET /api/puzzles", server.handlePuzzles)
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
@@ -101,6 +106,21 @@ func (server *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleReady is the readiness probe: liveness (handleHealth) means the process
+// is up, readiness means it can actually serve — i.e. the database is reachable.
+// Platforms route traffic only once this returns 200.
+func (server *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if server.readyCheck != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := server.readyCheck(ctx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Not ready.")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ready": true})
+}
+
 func (server *Server) handleTodayPuzzle(w http.ResponseWriter, r *http.Request) {
 	puzzles, err := server.puzzles.Puzzles(r.Context())
 	if err != nil {
@@ -114,6 +134,9 @@ func (server *Server) handleTodayPuzzle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The public puzzle payload carries no per-user data, so it is safe to cache
+	// at the CDN/edge for a short window.
+	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=300")
 	writeJSON(w, http.StatusOK, ToPublicPuzzle(*puzzle))
 }
 
@@ -130,6 +153,7 @@ func (server *Server) handlePuzzles(w http.ResponseWriter, r *http.Request) {
 		publicPuzzles = append(publicPuzzles, ToPublicPuzzle(puzzle))
 	}
 
+	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=300")
 	writeJSON(w, http.StatusOK, publicPuzzles)
 }
 
@@ -274,6 +298,10 @@ func withCORS(next http.Handler, origins []string) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Baseline hardening for every API response.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+
 		origin := r.Header.Get("Origin")
 		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
