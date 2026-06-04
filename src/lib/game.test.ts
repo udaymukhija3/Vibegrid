@@ -46,9 +46,11 @@ describe("game UI helpers", () => {
       startedAt: "2026-06-02T10:00:00.000Z",
       finishedAt: "2026-06-02T10:01:00.000Z",
       failed: false,
-      grid: ["🟩🟩🟩🟩"]
+      grid: ["🟩🟩🟩🟩"],
+      shareUrl: "https://vibegrid.app/p/example"
     });
     expect(text).toContain("🟩🟩🟩🟩");
     expect(text).toContain("VibeGrid #7");
+    expect(text).toContain("https://vibegrid.app/p/example");
   });
 });

@@ -44,6 +44,7 @@ export function buildShareText(input: {
   finishedAt?: string;
   failed: boolean;
   grid?: string[];
+  shareUrl?: string;
 }) {
   const status = input.failed
     ? `${input.solvedCount}/${input.groupCount} vibes found`
@@ -54,6 +55,9 @@ export function buildShareText(input: {
     lines.push(...input.grid);
   }
   lines.push(`${status} · ${input.mistakes}/${input.mistakesAllowed} mistakes`);
+  if (input.shareUrl) {
+    lines.push(input.shareUrl);
+  }
   lines.push("Group the words. Guess the vibe.");
   return lines.join("\n");
 }

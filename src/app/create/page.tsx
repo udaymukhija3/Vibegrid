@@ -20,7 +20,7 @@ export default function CreatePage() {
         </Link>
 
         <header className="mt-8 border-b-4 border-ink pb-5">
-          <p className="text-sm font-bold uppercase tracking-[0.16em] text-plum">Make your own</p>
+          <p className="text-sm font-bold text-plum">Make your own</p>
           <h1 className="mt-2 text-4xl font-black sm:text-5xl">Build a VibeGrid</h1>
           <p className="mt-3 max-w-2xl font-semibold text-neutral-600">
             Four groups of four. Name the vibes, fill the tiles, and get a private link to send your

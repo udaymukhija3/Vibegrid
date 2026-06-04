@@ -15,7 +15,7 @@ export default function AdminPage() {
         </Link>
 
         <header className="mt-8 border-b-4 border-ink pb-5">
-          <p className="text-sm font-bold uppercase tracking-[0.16em] text-plum">Editor Desk</p>
+          <p className="text-sm font-bold text-plum">Editor Desk</p>
           <h1 className="mt-2 text-4xl font-black sm:text-5xl">Puzzle pipeline</h1>
         </header>
 

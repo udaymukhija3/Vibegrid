@@ -117,8 +117,8 @@ Vercel (web) + Fly.io (API) + Neon (Postgres). Step-by-step instructions are in
 
 ## Project docs
 
-Product vision, the decision register, the engineering roadmap, and the tech
-stack rationale live in [`docs/`](docs/).
+Product vision, daily puzzle operations, the decision register, the engineering
+roadmap, and the tech stack rationale live in [`docs/`](docs/).
 
 ## License
 

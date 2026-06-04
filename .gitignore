@@ -3,6 +3,7 @@
 .env*.local
 .next
 .cache
+.gocache
 node_modules
 coverage
 dist

@@ -2,6 +2,11 @@
 
 import { useState } from "react";
 import type { Difficulty, DraftPuzzleInput } from "@/types/puzzle";
+import {
+  MAX_GROUP_EXPLANATION_LENGTH,
+  MAX_GROUP_NAME_LENGTH,
+  MAX_TILE_TEXT_LENGTH
+} from "@/lib/puzzleLimits";
 
 const GROUP_COUNT = 4;
 const TILES_PER_GROUP = 4;
@@ -73,9 +78,9 @@ export function PuzzleDraftForm({
             }
             className="h-9 rounded border-2 border-ink px-2 font-semibold"
           >
-            <option value="EASY">EASY</option>
-            <option value="MEDIUM">MEDIUM</option>
-            <option value="HARD">HARD</option>
+            <option value="EASY">Easy</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HARD">Hard</option>
           </select>
         </label>
       </div>
@@ -83,18 +88,20 @@ export function PuzzleDraftForm({
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         {draft.groups.map((group, groupIndex) => (
           <fieldset key={groupIndex} className="rounded border-2 border-ink p-3">
-            <legend className="px-1 text-xs font-black uppercase tracking-[0.12em] text-neutral-500">
+            <legend className="px-1 text-xs font-black text-neutral-500">
               Group {groupIndex + 1}
             </legend>
             <input
               value={group.name}
               onChange={(event) => updateGroup(groupIndex, "name", event.target.value)}
+              maxLength={MAX_GROUP_NAME_LENGTH}
               placeholder="Category name (e.g. Corporate séance)"
               className="h-10 w-full rounded border border-neutral-300 px-2 font-bold"
             />
             <input
               value={group.explanation}
               onChange={(event) => updateGroup(groupIndex, "explanation", event.target.value)}
+              maxLength={MAX_GROUP_EXPLANATION_LENGTH}
               placeholder="One-line explanation shown on reveal"
               className="mt-2 h-10 w-full rounded border border-neutral-300 px-2 text-sm"
             />
@@ -104,6 +111,7 @@ export function PuzzleDraftForm({
                   key={tileIndex}
                   value={tile}
                   onChange={(event) => updateTile(groupIndex, tileIndex, event.target.value)}
+                  maxLength={MAX_TILE_TEXT_LENGTH}
                   placeholder={`Tile ${tileIndex + 1}`}
                   className="h-10 w-full rounded border border-neutral-300 px-2 text-sm font-semibold"
                 />
@@ -124,7 +132,7 @@ export function PuzzleDraftForm({
         {busy ? "Saving…" : submitLabel}
       </button>
       <p className="mt-2 text-xs text-neutral-500">
-        Four groups of four. All sixteen tiles must be unique; the server validates before saving.
+        Four groups of four. Keep the wording sharp and fair; repeated tiles are blocked before saving.
       </p>
     </div>
   );

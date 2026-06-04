@@ -10,6 +10,7 @@ import {
   publishPuzzle,
   type PuzzleAnalytics
 } from "@/lib/adminApi";
+import { formatDifficulty, formatStatus } from "@/lib/displayLabels";
 import { formatSeconds } from "@/lib/game";
 import { PuzzleDraftForm } from "@/components/PuzzleDraftForm";
 
@@ -110,7 +111,7 @@ export function AdminDesk() {
       <div className="mt-6 max-w-md rounded border-2 border-ink bg-white p-5 shadow-[0_6px_0_#171717]">
         <h2 className="text-lg font-black">Admin token</h2>
         <p className="mt-1 text-sm text-neutral-600">
-          Paste the value of <code className="font-mono">VIBEGRID_ADMIN_TOKEN</code> to manage puzzles.
+          Paste your admin token to manage puzzles.
         </p>
         <input
           type="password"
@@ -162,18 +163,18 @@ export function AdminDesk() {
                 <div>
                   <p className="font-black">{puzzle.groups.map((group) => group.name).join(" · ")}</p>
                   <p className="text-sm text-neutral-600">
-                    {puzzle.difficulty}
+                    {formatDifficulty(puzzle.difficulty)}
                     {puzzle.publishDate ? ` · ${puzzle.publishDate}` : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span
                     className={clsx(
-                      "rounded px-3 py-1 text-xs font-black uppercase tracking-[0.12em]",
+                      "rounded px-3 py-1 text-xs font-black",
                       statusStyles[puzzle.status] ?? "bg-neutral-200"
                     )}
                   >
-                    {puzzle.status}
+                    {formatStatus(puzzle.status)}
                   </span>
                   <button
                     type="button"
@@ -247,7 +248,7 @@ function AnalyticsPanel({ data }: { data: PuzzleAnalytics | undefined }) {
         {stats.medianSolveSeconds !== undefined && <p>~{formatSeconds(stats.medianSolveSeconds)} median</p>}
       </div>
 
-      <p className="mt-3 text-xs font-black uppercase tracking-[0.12em] text-neutral-500">
+      <p className="mt-3 text-xs font-black text-neutral-500">
         Most common wrong guesses
       </p>
       {wrongGuesses.length === 0 ? (

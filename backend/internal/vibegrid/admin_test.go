@@ -120,6 +120,34 @@ func TestAdminRejectsDuplicateTiles(t *testing.T) {
 	}
 }
 
+func TestAdminRejectsOverlongPuzzleFields(t *testing.T) {
+	handler, _ := newAdminTestServer(t)
+
+	input := validPuzzleInput()
+	input.Groups[0].Name = stringOfLength(MaxGroupNameLength + 1)
+
+	response := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles", testAdminToken, input)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for overlong group name, got %d: %s", response.Code, response.Body.String())
+	}
+
+	input = validPuzzleInput()
+	input.Groups[0].Explanation = stringOfLength(MaxGroupExplanationLength + 1)
+
+	response = adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles", testAdminToken, input)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for overlong explanation, got %d: %s", response.Code, response.Body.String())
+	}
+
+	input = validPuzzleInput()
+	input.Groups[0].Tiles[0] = stringOfLength(MaxTileTextLength + 1)
+
+	response = adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles", testAdminToken, input)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for overlong tile, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAdminCreateAndPublishFlow(t *testing.T) {
 	handler, store := newAdminTestServer(t)
 
@@ -187,4 +215,12 @@ func mustCreateDraft(t *testing.T, handler http.Handler) string {
 		t.Fatal(err)
 	}
 	return puzzle.ID
+}
+
+func stringOfLength(length int) string {
+	value := make([]byte, length)
+	for index := range value {
+		value[index] = 'a'
+	}
+	return string(value)
 }

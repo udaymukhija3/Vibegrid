@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
+import { Archive, Flag, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
 import {
   buildShareGrid,
   buildShareText,
@@ -54,6 +54,8 @@ const groupColors = [
 
 // Background-only palette (matching groupColors) for the share-grid squares.
 const squareColors = ["bg-mint", "bg-yolk", "bg-tomato", "bg-plum"];
+
+const reportEmail = process.env.NEXT_PUBLIC_REPORT_EMAIL ?? "hello@vibegrid.app";
 
 export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const storageKey = `vibegrid:attempt:${puzzle.id}`;
@@ -322,6 +324,34 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     [isOver, attempt.guessHistory, colorByTile]
   );
 
+  const fallbackShareUrl = useMemo(() => {
+    return new URL(`/p/${puzzle.id}`, process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").toString();
+  }, [puzzle.id]);
+
+  function currentShareUrl() {
+    if (typeof window === "undefined") {
+      return fallbackShareUrl;
+    }
+
+    const url = new URL(window.location.href);
+    url.hash = "";
+    return url.toString();
+  }
+
+  const reportHref = useMemo(() => {
+    const body = [
+      `Puzzle: ${puzzle.id}`,
+      `Number: ${puzzle.puzzleNumber}`,
+      `URL: ${fallbackShareUrl}`,
+      "",
+      "What should we know?"
+    ].join("\n");
+
+    return `mailto:${reportEmail}?subject=${encodeURIComponent(
+      `Report VibeGrid #${puzzle.puzzleNumber}`
+    )}&body=${encodeURIComponent(body)}`;
+  }, [fallbackShareUrl, puzzle.id, puzzle.puzzleNumber]);
+
   async function shareResult() {
     const shareText = buildShareText({
       puzzleNumber: puzzle.puzzleNumber,
@@ -332,7 +362,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       startedAt: attempt.startedAt,
       finishedAt: attempt.completedAt,
       failed: attempt.failed,
-      grid: shareGrid
+      grid: shareGrid,
+      shareUrl: currentShareUrl()
     });
 
     await navigator.clipboard.writeText(shareText);
@@ -422,7 +453,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
                       <h2 className="text-xl font-black">{group.name}</h2>
                       <p className="mt-1 text-sm font-semibold opacity-80">{group.explanation}</p>
                     </div>
-                    <p className="text-sm font-black uppercase tracking-[0.14em]">
+                    <p className="text-sm font-black">
                       {isSolved ? "Locked" : "Revealed"}
                     </p>
                   </div>
@@ -469,11 +500,11 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           <div>
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded border border-neutral-200 p-3">
-                <p className="text-xs font-black uppercase tracking-[0.14em] text-neutral-500">Selected</p>
+                <p className="text-xs font-black text-neutral-500">Selected</p>
                 <p className="mt-1 text-2xl font-black">{attempt.selectedTileIds.length}/4</p>
               </div>
               <div className="rounded border border-neutral-200 p-3">
-                <p className="text-xs font-black uppercase tracking-[0.14em] text-neutral-500">Mistakes</p>
+                <p className="text-xs font-black text-neutral-500">Mistakes</p>
                 <p className="mt-1 text-2xl font-black">
                   {attempt.mistakes}/{puzzle.mistakesAllowed}
                 </p>
@@ -501,7 +532,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
 
             {isOver && stats && stats.players >= MIN_STATS_PLAYERS && (
               <div className="mt-4 rounded border-2 border-ink bg-plum/10 p-3">
-                <p className="text-xs font-black uppercase tracking-[0.14em] text-plum">How others did</p>
+                <p className="text-xs font-black text-plum">How others did</p>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-semibold">
                   <p>{Math.round(stats.solveRate * 100)}% solved</p>
                   <p>{stats.players} {stats.players === 1 ? "player" : "players"}</p>
@@ -515,7 +546,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
 
             {isOver && attempt.guessHistory.length > 0 && (
               <div className="mt-4">
-                <p className="text-xs font-black uppercase tracking-[0.14em] text-neutral-500">Your grid</p>
+                <p className="text-xs font-black text-neutral-500">Your grid</p>
                 <div className="mt-2 grid gap-1">
                   {attempt.guessHistory.map((row, rowIndex) => (
                     <div key={rowIndex} className="flex gap-1">
@@ -564,6 +595,13 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
               <Sparkles aria-hidden size={16} />
               Make your own
             </Link>
+            <a
+              href={reportHref}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
+            >
+              <Flag aria-hidden size={16} />
+              Report this grid
+            </a>
           </div>
         </aside>
       </section>

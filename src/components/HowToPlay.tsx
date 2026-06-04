@@ -94,7 +94,7 @@ export function HowToPlay() {
             </ul>
 
             <div className="mt-4 rounded border-2 border-ink bg-neutral-50 p-3">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-plum">Example</p>
+              <p className="text-xs font-black text-plum">Example</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {exampleTiles.map((tile) => (
                   <span key={tile} className="rounded border border-ink bg-white px-2 py-1 text-xs font-black">

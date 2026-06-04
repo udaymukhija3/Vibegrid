@@ -41,6 +41,7 @@ Non-secret config (`VIBEGRID_ADDR`, `VIBEGRID_TIMEZONE`,
 2. Set environment variables:
    - `GO_BACKEND_URL` = the Fly API URL (e.g. `https://vibegrid-api.fly.dev`)
    - `NEXT_PUBLIC_APP_URL` = your Vercel/custom domain
+   - `NEXT_PUBLIC_REPORT_EMAIL` = the inbox for puzzle reports
 3. Deploy. Add a custom domain if desired (Vercel handles HTTPS).
 4. Set `VIBEGRID_ALLOWED_ORIGINS` on Fly to the **final** web domain and redeploy
    the API.

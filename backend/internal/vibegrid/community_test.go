@@ -28,6 +28,18 @@ func TestCommunityCreateValidatesInput(t *testing.T) {
 	}
 }
 
+func TestCommunityCreateRejectsOverlongTiles(t *testing.T) {
+	handler, _ := newAdminTestServer(t)
+
+	input := validPuzzleInput()
+	input.Groups[0].Tiles[0] = stringOfLength(MaxTileTextLength + 1)
+
+	response := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", input)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for overlong public tile, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestCommunityPuzzlePlayableByLinkButNotInDaily(t *testing.T) {
 	handler, _ := newAdminTestServer(t)
 

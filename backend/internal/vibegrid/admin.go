@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // PuzzleGroupCount is the number of groups in a valid puzzle (four groups of
@@ -16,6 +17,12 @@ import (
 const PuzzleGroupCount = 4
 
 const maxAdminBodyBytes = 64 << 10 // 64 KiB
+
+const (
+	MaxGroupNameLength        = 64
+	MaxGroupExplanationLength = 160
+	MaxTileTextLength         = 32
+)
 
 // AdminPuzzleStore is the write side of puzzle authoring. Only the Postgres
 // store implements it; admin endpoints are unavailable without a database.
@@ -49,19 +56,34 @@ func (input AdminPuzzleInput) Validate() error {
 
 	seenTiles := map[string]bool{}
 	for index, group := range input.Groups {
-		if strings.TrimSpace(group.Name) == "" {
+		name := strings.TrimSpace(group.Name)
+		explanation := strings.TrimSpace(group.Explanation)
+		if name == "" {
 			return fmt.Errorf("group %d is missing a name", index+1)
 		}
-		if strings.TrimSpace(group.Explanation) == "" {
-			return fmt.Errorf("group %q is missing an explanation", group.Name)
+		if overRuneLimit(name, MaxGroupNameLength) {
+			return fmt.Errorf("group %d name is too long; keep it to %d characters", index+1, MaxGroupNameLength)
+		}
+		if explanation == "" {
+			return fmt.Errorf("group %q is missing an explanation", name)
+		}
+		if overRuneLimit(explanation, MaxGroupExplanationLength) {
+			return fmt.Errorf(
+				"group %q explanation is too long; keep it to %d characters",
+				name,
+				MaxGroupExplanationLength,
+			)
 		}
 		if len(group.Tiles) != GroupSize {
-			return fmt.Errorf("group %q needs exactly %d tiles, got %d", group.Name, GroupSize, len(group.Tiles))
+			return fmt.Errorf("group %q needs exactly %d tiles, got %d", name, GroupSize, len(group.Tiles))
 		}
 		for _, tile := range group.Tiles {
 			text := strings.TrimSpace(tile)
 			if text == "" {
-				return fmt.Errorf("group %q has an empty tile", group.Name)
+				return fmt.Errorf("group %q has an empty tile", name)
+			}
+			if overRuneLimit(text, MaxTileTextLength) {
+				return fmt.Errorf("tile %q is too long; keep tiles to %d characters", text, MaxTileTextLength)
 			}
 			key := strings.ToLower(text)
 			if seenTiles[key] {
@@ -77,6 +99,10 @@ func (input AdminPuzzleInput) Validate() error {
 	default:
 		return fmt.Errorf("difficulty %q is not one of EASY, MEDIUM, HARD", input.Difficulty)
 	}
+}
+
+func overRuneLimit(value string, max int) bool {
+	return utf8.RuneCountInString(value) > max
 }
 
 // toPuzzle builds a persistable DRAFT puzzle, generating ids and assigning color

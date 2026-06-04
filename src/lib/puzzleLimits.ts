@@ -1,0 +1,3 @@
+export const MAX_GROUP_NAME_LENGTH = 64;
+export const MAX_GROUP_EXPLANATION_LENGTH = 160;
+export const MAX_TILE_TEXT_LENGTH = 32;

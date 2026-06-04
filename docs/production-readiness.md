@@ -1,10 +1,9 @@
 # VibeGrid — Production Readiness & Product Review
 
-Status at time of writing: feature-complete locally (play / create+share / admin
-author / stats), ~4,300 LOC, CI configured, **not deployed and not on GitHub**.
-This document is the plan to take it to production grade, plus a critical review
-of the business logic and feature set. It is a checklist to execute in a fresh
-session — nothing here is implemented yet.
+Status as of June 4, 2026: feature-complete locally (play / create+share / admin
+author / stats), deploy scaffolding present, CI configured, **not deployed yet**.
+This document tracks what is already launch-ready and what still needs attention
+after the first GitHub push.
 
 ---
 
@@ -18,17 +17,17 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 - [ ] Push to GitHub; protect `main`; require the CI workflow to pass before merge.
 - [ ] Confirm CI is green in the cloud (it runs Go race tests against a Postgres
       service + frontend lint/typecheck/test/build).
-- [ ] **Containerize the Go API** — multi-stage Dockerfile, `scratch`/`distroless`
+- [x] **Containerize the Go API** — multi-stage Dockerfile, `scratch`/`distroless`
       final image, non-root user, `CGO_ENABLED=0` static binary.
 - [ ] **Deploy API** to Fly.io or Render (long-lived service); **deploy web** to
       Vercel. Wire the Next rewrite `GO_BACKEND_URL` to the deployed API URL.
 - [ ] **Managed Postgres** (Neon or Supabase). Set `DATABASE_URL` as a platform
       secret. Mind connection limits: `SetMaxOpenConns(10)` × instances must stay
       under the DB/pooler cap — use the provider's connection pooler.
-- [ ] **Migrations on deploy, not on every boot.** Today migrations run in
-      `OpenDB` on startup. With >1 instance, concurrent `goose.Up` can race — move
-      it to a one-off release/deploy step (or add an advisory lock) and have the
-      app fail fast if the schema version is behind.
+- [ ] **Migrations on deploy, not on every boot.** Fly now has a release command,
+      but `OpenDB` still runs idempotent migrations on boot. Fine for first
+      launch at one instance; remove boot migrations or add an advisory lock
+      before scaling horizontally.
 - [ ] Production env: `VIBEGRID_SECURE_COOKIES=true`, `VIBEGRID_ALLOWED_ORIGINS`
       = the real domain, a strong rotated `VIBEGRID_ADMIN_TOKEN`, fixed
       `VIBEGRID_TIMEZONE` (see "daily rollover" below).
@@ -38,25 +37,22 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
       is first-party on the production domain (test login/attempt persistence on
       the deployed site, not just locally). This is the most likely deploy gotcha.
 - [ ] Custom domain + HTTPS (automatic on Vercel/Fly).
-- [ ] Readiness vs liveness: `/healthz` exists (liveness); add a readiness check
-      that pings the DB so deploys don't route traffic before the DB is reachable.
+- [x] Readiness vs liveness: `/healthz` exists for liveness and `/readyz` pings
+      the DB when Postgres is configured.
 
 ### P1 — Security
 
-- [ ] **Security headers**: CSP, HSTS, `X-Content-Type-Options: nosniff`,
-      `Referrer-Policy`, `frame-ancestors`. None are set today (add via Next
-      `headers()` and/or Go middleware).
+- [ ] **Security headers**: basic HSTS / `nosniff` / referrer / frame headers are
+      set. Add a real CSP before a bigger public launch.
 - [ ] **Rate limiting beyond create.** Only `POST /api/community/puzzles` is
       limited, and the limiter is in-memory per-instance (resets on deploy, not
       shared). Add limits to `POST /api/guesses`, and move the limiter to Redis
       for multi-instance correctness.
-- [ ] **Input length caps.** Body size is capped, but tile text / category names
-      have no max length — a community puzzle can carry very long strings (within
-      64 KiB) that break the UI. Add per-field length limits in `Validate()`.
-- [ ] **UGC moderation.** Community creation is unauthenticated free text →
-      profanity/abuse/illegal content. Unlisted links limit spread but not
-      creation. Add at minimum a profanity filter on submit and a report/takedown
-      path. (See also Part 2.)
+- [x] **Input length caps.** Body size and per-field lengths are capped for
+      category names, explanations, and tiles.
+- [ ] **UGC moderation.** Community creation is unauthenticated free text.
+      Unlisted links, length caps, and a report link are in place; add a profanity
+      filter and documented takedown process before a bigger public launch.
 - [ ] **Dependency scanning**: `govulncheck` for Go and `npm audit` /
       Dependabot/Renovate in CI.
 - [ ] **Admin auth threat model.** Single static bearer token is acceptable for a
