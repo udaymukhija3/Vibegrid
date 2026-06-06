@@ -31,7 +31,7 @@ func (backend *fakePuzzleBackend) PuzzleByID(_ context.Context, puzzleID string)
 }
 
 func (backend *fakePuzzleBackend) Puzzles(context.Context) ([]Puzzle, error) { return nil, nil }
-func (backend *fakePuzzleBackend) PublishedPuzzles(context.Context, string) ([]Puzzle, error) {
+func (backend *fakePuzzleBackend) PublishedPuzzles(context.Context, string, int, int) ([]Puzzle, error) {
 	return nil, nil
 }
 func (backend *fakePuzzleBackend) TodaysPuzzle(context.Context, string) (Puzzle, error) {

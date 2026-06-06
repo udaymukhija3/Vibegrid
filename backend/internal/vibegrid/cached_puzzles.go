@@ -105,8 +105,8 @@ func (store *cachedPuzzleStore) Puzzles(ctx context.Context) ([]Puzzle, error) {
 	return store.inner.Puzzles(ctx)
 }
 
-func (store *cachedPuzzleStore) PublishedPuzzles(ctx context.Context, today string) ([]Puzzle, error) {
-	return store.inner.PublishedPuzzles(ctx, today)
+func (store *cachedPuzzleStore) PublishedPuzzles(ctx context.Context, today string, limit, offset int) ([]Puzzle, error) {
+	return store.inner.PublishedPuzzles(ctx, today, limit, offset)
 }
 
 func (store *cachedPuzzleStore) TodaysPuzzle(ctx context.Context, today string) (Puzzle, error) {

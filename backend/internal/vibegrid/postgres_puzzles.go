@@ -30,7 +30,7 @@ func (store *PostgresPuzzleStore) Puzzles(ctx context.Context) ([]Puzzle, error)
 		 order by puzzle_number`)
 }
 
-func (store *PostgresPuzzleStore) PublishedPuzzles(ctx context.Context, today string) ([]Puzzle, error) {
+func (store *PostgresPuzzleStore) PublishedPuzzles(ctx context.Context, today string, limit, offset int) ([]Puzzle, error) {
 	return store.loadPuzzleSet(ctx,
 		`select id, puzzle_number, publish_date, status, difficulty, origin
 		 from puzzles
@@ -38,8 +38,9 @@ func (store *PostgresPuzzleStore) PublishedPuzzles(ctx context.Context, today st
 		   and origin <> 'COMMUNITY'
 		   and publish_date is not null
 		   and publish_date <= $1::date
-		 order by publish_date desc, puzzle_number desc`,
-		today,
+		 order by publish_date desc, puzzle_number desc
+		 limit $2 offset $3`,
+		today, limit, offset,
 	)
 }
 

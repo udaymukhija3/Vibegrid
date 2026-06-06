@@ -11,7 +11,7 @@ import (
 // archive before serving a single board or validating a guess.
 type PuzzleSource interface {
 	Puzzles(ctx context.Context) ([]Puzzle, error)
-	PublishedPuzzles(ctx context.Context, today string) ([]Puzzle, error)
+	PublishedPuzzles(ctx context.Context, today string, limit, offset int) ([]Puzzle, error)
 	TodaysPuzzle(ctx context.Context, today string) (Puzzle, error)
 	PuzzleByID(ctx context.Context, puzzleID string) (Puzzle, error)
 }
@@ -24,8 +24,8 @@ func (source StaticPuzzleSource) Puzzles(_ context.Context) ([]Puzzle, error) {
 	return source, nil
 }
 
-func (source StaticPuzzleSource) PublishedPuzzles(_ context.Context, today string) ([]Puzzle, error) {
-	return PublishedPuzzlesThrough(source, today), nil
+func (source StaticPuzzleSource) PublishedPuzzles(_ context.Context, today string, limit, offset int) ([]Puzzle, error) {
+	return pagePuzzles(PublishedPuzzlesThrough(source, today), limit, offset), nil
 }
 
 func (source StaticPuzzleSource) TodaysPuzzle(_ context.Context, today string) (Puzzle, error) {

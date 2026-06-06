@@ -32,8 +32,17 @@ export async function fetchTodayPuzzle(): Promise<PublicPuzzle> {
   return publicPuzzleSchema.parse(await getJSON("/api/puzzles/today"));
 }
 
-export async function fetchPublishedPuzzles(): Promise<PublicPuzzle[]> {
-  return z.array(publicPuzzleSchema).parse(await getJSON("/api/puzzles"));
+// The archive grows by one puzzle a day, so it is paginated. Callers page with
+// offset = number already loaded and stop when a short page (< ARCHIVE_PAGE_SIZE)
+// comes back.
+export const ARCHIVE_PAGE_SIZE = 30;
+
+export async function fetchPublishedPuzzles(
+  limit: number = ARCHIVE_PAGE_SIZE,
+  offset = 0
+): Promise<PublicPuzzle[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return z.array(publicPuzzleSchema).parse(await getJSON(`/api/puzzles?${params.toString()}`));
 }
 
 export async function fetchPuzzleById(id: string): Promise<PublicPuzzle> {

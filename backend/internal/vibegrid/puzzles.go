@@ -66,6 +66,23 @@ func TodaysPuzzle(puzzles []Puzzle, now time.Time, timeZone string) (*Puzzle, er
 	return nil, ErrPuzzleNotFound
 }
 
+// pagePuzzles returns the limit/offset window of an already-ordered puzzle
+// slice, guarding against out-of-range bounds. A non-positive limit returns
+// everything from offset onward.
+func pagePuzzles(puzzles []Puzzle, limit, offset int) []Puzzle {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(puzzles) {
+		return []Puzzle{}
+	}
+	end := len(puzzles)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return puzzles[offset:end]
+}
+
 func PubliclyPlayable(puzzle Puzzle, today string) bool {
 	if puzzle.Status != PuzzleStatusPublished {
 		return false

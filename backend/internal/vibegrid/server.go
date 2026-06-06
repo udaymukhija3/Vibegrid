@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -202,7 +203,10 @@ func (server *Server) handleTodayPuzzle(w http.ResponseWriter, r *http.Request) 
 }
 
 func (server *Server) handlePuzzles(w http.ResponseWriter, r *http.Request) {
-	puzzles, err := server.puzzles.PublishedPuzzles(r.Context(), server.todayString())
+	// Bound the archive read: it grows by one puzzle a day forever, so without a
+	// limit this would eventually load every puzzle's full content in one query.
+	limit, offset := archivePagination(r)
+	puzzles, err := server.puzzles.PublishedPuzzles(r.Context(), server.todayString(), limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load puzzles.")
 		return
@@ -243,10 +247,11 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 	if server.guessLimiter != nil || server.rateLimits != nil {
 		decision, err := server.checkRateLimit(r.Context(), "guess:"+clientIP(r), guessRateLimit, guessRateWindow, server.guessLimiter)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not check request limits.")
-			return
-		}
-		if !decision.allowed {
+			// Fail open: a rate-limit backend hiccup must not block gameplay. The
+			// guess path is still protected by per-attempt row locking and
+			// idempotent client guess ids, so allowing through is safe.
+			slog.Warn("guess rate-limit check failed; allowing", "error", err)
+		} else if !decision.allowed {
 			writeRateLimit(w, "You're guessing too quickly. Slow down for a minute.", decision.retryAfter)
 			return
 		}
@@ -355,6 +360,39 @@ func minInt(left, right int) int {
 		return left
 	}
 	return right
+}
+
+const (
+	defaultArchivePageSize = 30
+	maxArchivePageSize     = 100
+	maxArchiveOffset       = 1_000_000
+)
+
+// archivePagination reads and clamps the limit/offset query params for the
+// public archive. Bad or missing values fall back to sane defaults rather than
+// erroring, so a hand-edited URL never breaks the page.
+func archivePagination(r *http.Request) (limit, offset int) {
+	limit = clampedQueryInt(r, "limit", defaultArchivePageSize, 1, maxArchivePageSize)
+	offset = clampedQueryInt(r, "offset", 0, 0, maxArchiveOffset)
+	return limit, offset
+}
+
+func clampedQueryInt(r *http.Request, key string, fallback, minValue, maxValue int) int {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 // isGuessValidationError reports whether err is a client-fixable problem with
