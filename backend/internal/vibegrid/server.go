@@ -23,6 +23,15 @@ const (
 	requestTimeout  = 5 * time.Second
 	guessRateLimit  = 120
 	guessRateWindow = time.Minute
+
+	// Reports/appeals are public, unauthenticated writes into the moderation
+	// queue; a generous per-IP cap stops one client from flooding it.
+	reportRateLimit  = 30
+	reportRateWindow = time.Hour
+
+	// Admin login is a single shared secret, so throttle password attempts per IP.
+	adminLoginRateLimit  = 10
+	adminLoginRateWindow = time.Minute
 )
 
 type ServerConfig struct {
@@ -56,6 +65,8 @@ type Server struct {
 	readyCheck         func(context.Context) error
 	createLimiter      *rateLimiter
 	guessLimiter       *rateLimiter
+	reportLimiter      *rateLimiter
+	loginLimiter       *rateLimiter
 	blocklist          *wordBlocklist
 	metrics            *httpMetrics
 	adminToken         string
@@ -88,6 +99,8 @@ func NewServer(config ServerConfig) http.Handler {
 		readyCheck:         config.ReadyCheck,
 		createLimiter:      newRateLimiter(20, time.Hour),
 		guessLimiter:       newRateLimiter(guessRateLimit, guessRateWindow),
+		reportLimiter:      newRateLimiter(reportRateLimit, reportRateWindow),
+		loginLimiter:       newRateLimiter(adminLoginRateLimit, adminLoginRateWindow),
 		blocklist:          newWordBlocklist(config.BlockedTerms),
 		metrics:            newHTTPMetrics(),
 		adminToken:         config.AdminToken,
@@ -218,7 +231,7 @@ func (server *Server) handleAttempt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := EnsureSessionID(w, r, server.secureCookies)
-	attempt, err := server.store.GetOrCreate(r.Context(), puzzle, sessionID, server.clock())
+	attempt, err := server.store.GetAttempt(r.Context(), puzzle, sessionID, server.clock())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load that attempt.")
 		return

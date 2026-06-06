@@ -101,15 +101,17 @@ func NewPostgresAttemptStore(database *sql.DB) *PostgresAttemptStore {
 	return &PostgresAttemptStore{db: database}
 }
 
-func (store *PostgresAttemptStore) GetOrCreate(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
+func (store *PostgresAttemptStore) GetAttempt(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	if err := store.ensureAttempt(ctx, puzzle.ID, sessionID, now); err != nil {
-		return AttemptSnapshot{}, err
-	}
-
+	// Read-only: the attempt row is created lazily on the first guess (see
+	// SubmitGuess -> ensureAttempt), so loading a board never writes. A session
+	// that has not guessed yet gets a fresh, empty snapshot.
 	state, err := store.readState(ctx, store.db, puzzle.ID, sessionID, false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return buildSnapshot(puzzle, freshState(puzzle.ID, sessionID, now)), nil
+	}
 	if err != nil {
 		return AttemptSnapshot{}, err
 	}

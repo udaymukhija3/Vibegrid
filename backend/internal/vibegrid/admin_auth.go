@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,15 @@ type adminSessionRequest struct {
 }
 
 func (server *Server) handleAdminSession(w http.ResponseWriter, r *http.Request) {
+	// Throttle password attempts per IP. Fail open: a rate-limit backend hiccup
+	// must never lock the only admin out of their own console.
+	if decision, err := server.checkRateLimit(r.Context(), "admin-login:"+clientIP(r), adminLoginRateLimit, adminLoginRateWindow, server.loginLimiter); err != nil {
+		slog.Warn("admin login rate-limit check failed; allowing", "error", err)
+	} else if !decision.allowed {
+		writeRateLimit(w, "Too many login attempts. Wait a minute and try again.", decision.retryAfter)
+		return
+	}
+
 	var request adminSessionRequest
 	if !decodeJSONBody(w, r, maxAdminBodyBytes, &request, "That login payload is not valid JSON.") {
 		return

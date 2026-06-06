@@ -18,8 +18,24 @@ var ErrAttemptFinished = errors.New("attempt is already finished")
 // no-database local runs) and PostgresAttemptStore (durable, transaction-safe).
 // Handlers depend on this interface, never a concrete store.
 type Store interface {
-	GetOrCreate(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error)
+	// GetAttempt returns the current snapshot for a session's attempt. It never
+	// writes: a session that has not guessed yet gets a fresh, empty snapshot and
+	// no row is created until the first guess (see SubmitGuess). This keeps the
+	// read path free of writes and stops an unauthenticated caller from inflating
+	// the attempts table by hitting it with throwaway sessions.
+	GetAttempt(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error)
 	SubmitGuess(ctx context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error)
+}
+
+// freshState is the zero-guess starting state for an attempt that does not yet
+// exist in storage. Shared so read-only reads and lazy creation agree.
+func freshState(puzzleID, sessionID string, now time.Time) attemptState {
+	return attemptState{
+		PuzzleID:       puzzleID,
+		SessionID:      sessionID,
+		StartedAt:      now.UTC(),
+		SolvedGroupIDs: map[string]bool{},
+	}
 }
 
 type StoredGuess struct {
@@ -154,12 +170,14 @@ func NewMemoryAttemptStore() *MemoryAttemptStore {
 	}
 }
 
-func (store *MemoryAttemptStore) GetOrCreate(_ context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
+func (store *MemoryAttemptStore) GetAttempt(_ context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	attempt := store.getOrCreateLocked(puzzle.ID, sessionID, now)
-	return buildSnapshot(puzzle, attempt.state), nil
+	if attempt, ok := store.attempts[attemptKey(puzzle.ID, sessionID)]; ok {
+		return buildSnapshot(puzzle, attempt.state), nil
+	}
+	return buildSnapshot(puzzle, freshState(puzzle.ID, sessionID, now)), nil
 }
 
 func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error) {
@@ -193,12 +211,7 @@ func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID st
 	}
 
 	attempt := &memoryAttempt{
-		state: attemptState{
-			PuzzleID:       puzzleID,
-			SessionID:      sessionID,
-			StartedAt:      now.UTC(),
-			SolvedGroupIDs: map[string]bool{},
-		},
+		state:   freshState(puzzleID, sessionID, now),
 		guesses: map[string]StoredGuess{},
 	}
 	store.attempts[key] = attempt

@@ -1,6 +1,8 @@
 package vibegrid
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"sort"
 	"time"
@@ -85,7 +87,7 @@ func ToPublicPuzzle(puzzle Puzzle) PublicPuzzle {
 		PuzzleNumber:    puzzle.PuzzleNumber,
 		PublishDate:     puzzle.PublishDate,
 		Difficulty:      puzzle.Difficulty,
-		Tiles:           seededShuffle(tiles, uint32(puzzle.PuzzleNumber)),
+		Tiles:           orderTilesForDisplay(tiles),
 		GroupCount:      len(puzzle.Groups),
 		MistakesAllowed: MaxMistakes,
 	}
@@ -120,18 +122,30 @@ func AllSolvedGroups(puzzle Puzzle) []SolvedGroup {
 	return groups
 }
 
-func seededShuffle(items []Tile, seed uint32) []Tile {
-	shuffled := append([]Tile(nil), items...)
-	state := seed
-	if state == 0 {
-		state = 1
-	}
+// orderTilesForDisplay returns the puzzle's tiles in a stable order that is
+// independent of group membership. The order is derived from a hash of each
+// tile's id, so it is identical on every request (a stable board that does not
+// reshuffle on refresh) yet encodes nothing about which tiles share a group.
+//
+// This replaces a Fisher-Yates shuffle seeded by the public puzzle number:
+// because that seed and the algorithm were both knowable by the client, the
+// permutation could be inverted to recover the original group-blocked layout —
+// i.e. the answer key. Tile ids are assigned independently of grouping, so a
+// per-tile hash ordering leaks nothing an attacker did not already have.
+func orderTilesForDisplay(items []Tile) []Tile {
+	ordered := append([]Tile(nil), items...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		leftKey, rightKey := tileOrderKey(ordered[left].ID), tileOrderKey(ordered[right].ID)
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		// Deterministic tiebreak if two ids ever hash to the same prefix.
+		return ordered[left].ID < ordered[right].ID
+	})
+	return ordered
+}
 
-	for index := len(shuffled) - 1; index > 0; index-- {
-		state = state*1664525 + 1013904223
-		swapIndex := int(state % uint32(index+1))
-		shuffled[index], shuffled[swapIndex] = shuffled[swapIndex], shuffled[index]
-	}
-
-	return shuffled
+func tileOrderKey(id string) uint64 {
+	sum := sha256.Sum256([]byte(id))
+	return binary.BigEndian.Uint64(sum[:8])
 }

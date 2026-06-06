@@ -49,9 +49,28 @@ type auditLogResponse struct {
 	Actions []ModerationAction `json:"actions"`
 }
 
+// allowModerationWrite applies a per-IP rate limit to the public, unauthenticated
+// report/appeal endpoints so a single client cannot flood the moderation queue.
+// It writes the response and returns false when the caller should stop.
+func (server *Server) allowModerationWrite(w http.ResponseWriter, r *http.Request, keyPrefix, limitMessage string) bool {
+	decision, err := server.checkRateLimit(r.Context(), keyPrefix+clientIP(r), reportRateLimit, reportRateWindow, server.reportLimiter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not check request limits.")
+		return false
+	}
+	if !decision.allowed {
+		writeRateLimit(w, limitMessage, decision.retryAfter)
+		return false
+	}
+	return true
+}
+
 func (server *Server) handleCreateReport(w http.ResponseWriter, r *http.Request) {
 	if server.moderation == nil {
 		writeError(w, http.StatusServiceUnavailable, "Reports require a database.")
+		return
+	}
+	if !server.allowModerationWrite(w, r, "report:", "You're sending reports too quickly. Try again later.") {
 		return
 	}
 
@@ -84,6 +103,9 @@ func (server *Server) handleCreateReport(w http.ResponseWriter, r *http.Request)
 func (server *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
 	if server.moderation == nil {
 		writeError(w, http.StatusServiceUnavailable, "Appeals require a database.")
+		return
+	}
+	if !server.allowModerationWrite(w, r, "appeal:", "You're sending appeals too quickly. Try again later.") {
 		return
 	}
 

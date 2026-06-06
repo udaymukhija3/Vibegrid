@@ -135,7 +135,7 @@ func TestPostgresConcurrentDuplicateGuessCountsOnce(t *testing.T) {
 	}
 	wg.Wait()
 
-	snapshot, err := store.GetOrCreate(ctx, puzzle, "session-race", fixedClock())
+	snapshot, err := store.GetAttempt(ctx, puzzle, "session-race", fixedClock())
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPostgresConcurrentDistinctGuessesSerialize(t *testing.T) {
 	}
 	wg.Wait()
 
-	snapshot, err := store.GetOrCreate(ctx, puzzle, "session-serial", time.Now())
+	snapshot, err := store.GetAttempt(ctx, puzzle, "session-serial", time.Now())
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
