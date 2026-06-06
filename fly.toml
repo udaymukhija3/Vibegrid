@@ -1,4 +1,4 @@
-# Fly.io config for the VibeGrid Go API.
+# Fly.io config for the VibeGrid single-binary web/API app.
 # Rename `app` to your own, then: fly launch --copy-config --no-deploy, set
 # secrets (see docs/deployment.md), and `fly deploy`.
 app = "vibegrid-api"
@@ -16,15 +16,16 @@ primary_region = "iad"
   VIBEGRID_ADDR = ":8081"
   VIBEGRID_TIMEZONE = "UTC"
   VIBEGRID_SECURE_COOKIES = "true"
-  # DATABASE_URL, VIBEGRID_ADMIN_TOKEN and VIBEGRID_ALLOWED_ORIGINS are set with
-  # `fly secrets set` — never commit them.
+  # DATABASE_URL, VIBEGRID_ADMIN_PASSWORD, VIBEGRID_ADMIN_SESSION_SECRET, and
+  # optional VIBEGRID_ADMIN_TOKEN are set with `fly secrets set` - never commit
+  # them. VIBEGRID_ALLOWED_ORIGINS is only needed for non-same-origin API clients.
 
 [http_service]
   internal_port = 8081
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   [[http_service.checks]]
     method = "GET"

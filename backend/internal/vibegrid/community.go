@@ -2,7 +2,7 @@ package vibegrid
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -28,22 +28,47 @@ type createdPuzzleResponse struct {
 // enough to blunt casual abuse of the public create endpoint; a multi-instance
 // deployment would move this to Redis.
 type rateLimiter struct {
-	mu     sync.Mutex
-	hits   map[string][]time.Time
-	limit  int
-	window time.Duration
+	mu        sync.Mutex
+	hits      map[string][]time.Time
+	limit     int
+	window    time.Duration
+	maxKeys   int
+	lastPrune time.Time
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {
-	return &rateLimiter{hits: map[string][]time.Time{}, limit: limit, window: window}
+	return &rateLimiter{hits: map[string][]time.Time{}, limit: limit, window: window, maxKeys: 10000}
 }
 
-func (limiter *rateLimiter) allow(key string) bool {
+type rateLimitDecision struct {
+	allowed    bool
+	retryAfter time.Duration
+}
+
+func (server *Server) checkRateLimit(ctx context.Context, key string, limit int, window time.Duration, fallback *rateLimiter) (rateLimitDecision, error) {
+	if server.rateLimits != nil {
+		return server.rateLimits.Check(ctx, key, limit, window, server.clock())
+	}
+	if fallback != nil {
+		return fallback.check(key), nil
+	}
+	return rateLimitDecision{allowed: true}, nil
+}
+
+func (limiter *rateLimiter) check(key string) rateLimitDecision {
 	now := time.Now()
 	cutoff := now.Add(-limiter.window)
 
 	limiter.mu.Lock()
 	defer limiter.mu.Unlock()
+
+	if limiter.lastPrune.IsZero() || now.Sub(limiter.lastPrune) > limiter.window/4 {
+		limiter.pruneLocked(cutoff, now)
+	}
+
+	if _, exists := limiter.hits[key]; !exists && limiter.maxKeys > 0 && len(limiter.hits) >= limiter.maxKeys {
+		return rateLimitDecision{retryAfter: limiter.window}
+	}
 
 	recent := make([]time.Time, 0, len(limiter.hits[key]))
 	for _, hit := range limiter.hits[key] {
@@ -54,16 +79,36 @@ func (limiter *rateLimiter) allow(key string) bool {
 
 	if len(recent) >= limiter.limit {
 		limiter.hits[key] = recent
-		return false
+		return rateLimitDecision{retryAfter: recent[0].Add(limiter.window).Sub(now)}
 	}
 
 	limiter.hits[key] = append(recent, now)
-	return true
+	return rateLimitDecision{allowed: true}
+}
+
+func (limiter *rateLimiter) pruneLocked(cutoff, now time.Time) {
+	for key, hits := range limiter.hits {
+		recent := hits[:0]
+		for _, hit := range hits {
+			if hit.After(cutoff) {
+				recent = append(recent, hit)
+			}
+		}
+		if len(recent) == 0 {
+			delete(limiter.hits, key)
+		} else {
+			limiter.hits[key] = recent
+		}
+	}
+	limiter.lastPrune = now
 }
 
 func clientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	for _, header := range []string{"Fly-Client-IP", "X-Real-IP"} {
+		value := strings.TrimSpace(r.Header.Get(header))
+		if ip := net.ParseIP(value); ip != nil {
+			return ip.String()
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
@@ -77,20 +122,33 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if server.createLimiter != nil && !server.createLimiter.allow(clientIP(r)) {
-		writeError(w, http.StatusTooManyRequests, "You're creating puzzles too quickly. Try again later.")
-		return
+	if server.createLimiter != nil || server.rateLimits != nil {
+		decision, err := server.checkRateLimit(r.Context(), "create:"+clientIP(r), 20, time.Hour, server.createLimiter)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not check request limits.")
+			return
+		}
+		if !decision.allowed {
+			writeRateLimit(w, "You're creating puzzles too quickly. Try again later.", decision.retryAfter)
+			return
+		}
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)
 	var input AdminPuzzleInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "That puzzle payload is not valid JSON.")
+	if !decodeJSONBody(w, r, maxAdminBodyBytes, &input, "That puzzle payload is not valid JSON.") {
 		return
 	}
 
 	if err := input.Validate(); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if err := server.blocklist.review(input); err != nil {
+		if errors.Is(err, ErrBlockedTerm) {
+			writeError(w, http.StatusUnprocessableEntity, "This puzzle contains a blocked word or phrase.")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Could not review that puzzle.")
 		return
 	}
 
@@ -117,17 +175,12 @@ func (server *Server) handleGetPuzzle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	puzzles, err := server.puzzles.Puzzles(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not load puzzles.")
-		return
-	}
-
-	puzzle, err := FindPuzzleByID(puzzles, puzzleID)
+	puzzle, err := server.publicPuzzleByID(r.Context(), puzzleID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ToPublicPuzzle(*puzzle))
+	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=300")
+	writeJSON(w, http.StatusOK, ToPublicPuzzle(puzzle))
 }

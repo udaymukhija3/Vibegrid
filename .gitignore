@@ -2,12 +2,16 @@
 .env
 .env*.local
 .next
+out
+!backend/internal/frontend/out/
 .cache
 .gocache
 node_modules
 coverage
 dist
 *.tsbuildinfo
+backend/internal/frontend/out/*
+!backend/internal/frontend/out/.keep
 
 # Private planning notes (kept locally, not part of the public repo)
 01_VIBEGRID_*.md

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ApiError, apiFetch } from "@/lib/http";
 import type { DraftPuzzleInput, PublicPuzzle } from "@/types/puzzle";
 
 // Runtime schemas for the public API surface. Validating responses at the
@@ -12,7 +13,7 @@ const tileSchema = z.object({
 const publicPuzzleSchema = z.object({
   id: z.string(),
   puzzleNumber: z.number(),
-  publishDate: z.string(),
+  publishDate: z.string().optional(),
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
   tiles: z.array(tileSchema),
   groupCount: z.number(),
@@ -20,9 +21,9 @@ const publicPuzzleSchema = z.object({
 }) satisfies z.ZodType<PublicPuzzle>;
 
 async function getJSON(url: string): Promise<unknown> {
-  const response = await fetch(url, { credentials: "include" });
+  const response = await apiFetch(url, { credentials: "include" });
   if (!response.ok) {
-    throw new Error(`Request to ${url} failed with ${response.status}`);
+    throw new ApiError(`Request to ${url} failed with ${response.status}`, response.status);
   }
   return response.json();
 }
@@ -78,7 +79,7 @@ const errorBodySchema = z.object({ error: z.string() });
 export async function createCommunityPuzzle(
   input: DraftPuzzleInput
 ): Promise<{ id: string; puzzleNumber: number }> {
-  const response = await fetch("/api/community/puzzles", {
+  const response = await apiFetch("/api/community/puzzles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
@@ -88,9 +89,49 @@ export async function createCommunityPuzzle(
 
   if (!response.ok) {
     const parsed = errorBodySchema.safeParse(payload);
-    throw new Error(parsed.success ? parsed.data.error : `Request failed (${response.status})`);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
   }
 
   const created = createdPuzzleSchema.parse(payload);
   return { id: created.id, puzzleNumber: created.puzzleNumber };
+}
+
+const createdModerationSchema = z.object({
+  ok: z.literal(true),
+  id: z.string()
+});
+
+async function postPublicMutation(url: string, input: unknown): Promise<{ id: string }> {
+  const response = await apiFetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  const payload: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+
+  const created = createdModerationSchema.parse(payload);
+  return { id: created.id };
+}
+
+export async function reportPuzzle(input: {
+  puzzleId: string;
+  reason: string;
+  details: string;
+  contact: string;
+}): Promise<{ id: string }> {
+  return postPublicMutation("/api/reports", input);
+}
+
+export async function appealPuzzle(input: {
+  puzzleId: string;
+  contact: string;
+  message: string;
+}): Promise<{ id: string }> {
+  return postPublicMutation("/api/appeals", input);
 }

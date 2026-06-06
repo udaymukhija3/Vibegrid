@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import type { Difficulty, DraftPuzzleInput } from "@/types/puzzle";
 import {
   MAX_GROUP_EXPLANATION_LENGTH,
@@ -59,7 +60,9 @@ export function PuzzleDraftForm({
       await onSubmit(draft);
       setDraft(emptyDraft());
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Could not save the puzzle.");
+      const message = submitError instanceof Error ? submitError.message : "Could not save the puzzle.";
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }

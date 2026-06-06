@@ -1,7 +1,8 @@
 # VibeGrid — Production Readiness & Product Review
 
-Status as of June 4, 2026: feature-complete locally (play / create+share / admin
-author / stats), deploy scaffolding present, CI configured, **not deployed yet**.
+Status as of June 5, 2026: feature-complete locally (play / create+share / admin
+author / stats / moderation), single-container deploy scaffolding present, CI
+configured, **not deployed to a permanent host yet**.
 This document tracks what is already launch-ready and what still needs attention
 after the first GitHub push.
 
@@ -17,65 +18,63 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 - [ ] Push to GitHub; protect `main`; require the CI workflow to pass before merge.
 - [ ] Confirm CI is green in the cloud (it runs Go race tests against a Postgres
       service + frontend lint/typecheck/test/build).
-- [x] **Containerize the Go API** — multi-stage Dockerfile, `scratch`/`distroless`
-      final image, non-root user, `CGO_ENABLED=0` static binary.
-- [ ] **Deploy API** to Fly.io or Render (long-lived service); **deploy web** to
-      Vercel. Wire the Next rewrite `GO_BACKEND_URL` to the deployed API URL.
+- [x] **Containerize the app** — Node+Go multi-stage Dockerfile builds the Next
+      static export and embeds it in a non-root distroless Go runtime image.
+- [ ] **Deploy single web/API container** to Fly.io or Render.
 - [ ] **Managed Postgres** (Neon or Supabase). Set `DATABASE_URL` as a platform
       secret. Mind connection limits: `SetMaxOpenConns(10)` × instances must stay
       under the DB/pooler cap — use the provider's connection pooler.
-- [ ] **Migrations on deploy, not on every boot.** Fly now has a release command,
-      but `OpenDB` still runs idempotent migrations on boot. Fine for first
-      launch at one instance; remove boot migrations or add an advisory lock
-      before scaling horizontally.
-- [ ] Production env: `VIBEGRID_SECURE_COOKIES=true`, `VIBEGRID_ALLOWED_ORIGINS`
-      = the real domain, a strong rotated `VIBEGRID_ADMIN_TOKEN`, fixed
-      `VIBEGRID_TIMEZONE` (see "daily rollover" below).
-- [ ] **Verify the cookie path through the proxy.** The Go API issues the
-      `vibegrid_session` cookie; it reaches the browser via the Next `/api/*`
-      rewrite. Confirm `Set-Cookie` propagates through the rewrite and the cookie
-      is first-party on the production domain (test login/attempt persistence on
-      the deployed site, not just locally). This is the most likely deploy gotcha.
-- [ ] Custom domain + HTTPS (automatic on Vercel/Fly).
+- [x] **Migrations on deploy, not on every boot.** Fly runs `vibegrid migrate`
+      as a release command; app startup connects and seeds without migrating.
+- [ ] Production env: `VIBEGRID_SECURE_COOKIES=true`, strong
+      `VIBEGRID_ADMIN_PASSWORD` + `VIBEGRID_ADMIN_SESSION_SECRET`, optional
+      rotated `VIBEGRID_ADMIN_TOKEN` for automation, fixed `VIBEGRID_TIMEZONE`
+      (see "daily rollover" below), and `VIBEGRID_ALLOWED_ORIGINS` only for
+      non-same-origin clients.
+- [ ] **Verify the cookie path in production.** The Go binary serves web and API
+      same-origin; confirm `vibegrid_session` persists after a guess + refresh.
+- [ ] Custom domain + HTTPS (automatic on Fly/most platforms).
 - [x] Readiness vs liveness: `/healthz` exists for liveness and `/readyz` pings
       the DB when Postgres is configured.
 
 ### P1 — Security
 
-- [ ] **Security headers**: basic HSTS / `nosniff` / referrer / frame headers are
-      set. Add a real CSP before a bigger public launch.
-- [ ] **Rate limiting beyond create.** Only `POST /api/community/puzzles` is
-      limited, and the limiter is in-memory per-instance (resets on deploy, not
-      shared). Add limits to `POST /api/guesses`, and move the limiter to Redis
-      for multi-instance correctness.
+- [x] **Security headers**: HSTS / `nosniff` / referrer / frame headers and
+      route-aware CSP are set.
+- [x] **Distributed rate limiting beyond create.** `POST /api/community/puzzles`
+      and `POST /api/guesses` use a Postgres-backed fixed-window limiter when
+      `DATABASE_URL` is configured, with in-memory fallback for local runs.
 - [x] **Input length caps.** Body size and per-field lengths are capped for
       category names, explanations, and tiles.
-- [ ] **UGC moderation.** Community creation is unauthenticated free text.
-      Unlisted links, length caps, and a report link are in place; add a profanity
-      filter and documented takedown process before a bigger public launch.
+- [x] **UGC moderation.** Community creation is unauthenticated free text, but
+      the launch path now includes blocklisted terms, DB-backed reports, reason
+      codes, an admin moderation queue, archive/reinstate actions, appeals, and
+      an audit log.
 - [ ] **Dependency scanning**: `govulncheck` for Go and `npm audit` /
       Dependabot/Renovate in CI.
-- [ ] **Admin auth threat model.** Single static bearer token is acceptable for a
-      solo admin, but: never log it, rotate via secret, and add an admin **audit
-      log** (who published what, when) for accountability.
+- [x] **Admin auth threat model.** The web UI uses a password-backed signed
+      HttpOnly session cookie. A static bearer token remains as an automation
+      fallback, and moderation actions are audit logged.
 - [ ] Confirm parameterized queries everywhere (they are) and document it.
 
 ### P1 — Reliability & data
 
-- [ ] **Backups / PITR** on managed Postgres; document RPO/RTO.
-- [ ] **Observability**: request-logging middleware (method, path, status,
-      latency, request id); ship `slog` output to a log store; add error tracking
-      (Sentry, frontend + backend); basic metrics (request rate / latency / 5xx)
-      and uptime monitoring on `/healthz`.
-- [ ] **Alerting** on 5xx spikes, DB connection failures, and deploy failures.
+- [ ] **Backups / PITR** on managed Postgres; the runbook is documented, but the
+      provider setting must be enabled in the production account.
+- [x] **Observability**: request-logging middleware (method, path, status,
+      latency, client IP, user agent), `/metrics`, alert-rule templates, and a
+      starter Grafana dashboard are checked in. External log drain/error
+      tracking still needs provider credentials.
+- [x] **Alerting templates** on scrape failure, 5xx spikes, slow requests, and
+      no traffic are checked in under `monitoring/`.
 - [ ] Graceful shutdown (already implemented) — verify it cooperates with the
       platform's rolling-deploy drain.
 
 ### P1 — Testing & QA
 
-- [ ] **End-to-end tests (Playwright)** for the core flows: play→solve, play→fail,
-      create→share→play, admin draft→publish. This is the biggest test gap; the
-      front end currently has only 2 trivial unit tests.
+- [x] **End-to-end smoke tests** for production routes and create/share are in
+      `scripts/e2e.mjs` and `scripts/smoke.mjs`. Playwright browser coverage is
+      still a useful next layer.
 - [ ] Component tests (React Testing Library) for the game board and the draft form.
 - [ ] Add `govulncheck` + `npm audit` + Playwright to CI.
 - [ ] A quick load test (k6/vegeta) on `POST /api/guesses` to confirm the
@@ -84,31 +83,28 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 
 ### P2 — Frontend production concerns
 
-- [ ] **SEO & link previews.** Home and `/p/[id]` are client-rendered (fetch on
-      mount) → no SSR content and a generic OG preview for shared links. Add
-      proper per-route metadata, a real OG image (not the SVG mark), dynamic OG
-      for shared puzzles, `sitemap.xml`, and `robots.txt`. Shared links are the
-      growth surface — their preview matters.
+- [x] **SEO & link previews.** `/p/[id]` uses Go fallback metadata injection and
+      a dynamic puzzle OG image. Add `sitemap.xml` and `robots.txt` before launch.
 - [ ] Product analytics (Plausible/PostHog) to measure the funnel (distinct from
       the in-app puzzle stats).
 - [ ] Error boundary + nicer loading skeletons; Lighthouse/perf budget pass.
 
 ### P2 — Product, legal, ops
 
-- [ ] **Privacy policy + ToS.** You set cookies and store attempts + IP (for rate
-      limiting) → disclosure required; consider GDPR/cookie consent for EU users.
+- [x] **Privacy policy + ToS.** Launch copy lives at `/privacy` and `/terms`.
 - [ ] Data retention policy for anonymous attempts.
-- [ ] UGC content policy + report/takedown mechanism (ties to moderation above).
-- [ ] Full favicon/app-icon set + social images (basic favicon done).
+- [x] UGC content policy + report/takedown mechanism (ties to moderation above)
+      lives at `/policy` and in the admin moderation queue.
+- [ ] Full favicon/app-icon set (basic favicon + dynamic social image done).
 - [ ] Cost model at expected scale (Postgres + Fly + Vercel).
 
 ### P3 — Scale (only if traffic warrants)
 
-- [ ] **Puzzle read path is the known scaling cliff.** Every public request loads
-      *all* puzzles (3 queries assembling groups+tiles) via `PuzzleSource.Puzzles`.
-      Fine for a small archive; add a per-id query + a short TTL cache (or CDN edge
-      cache on the public payload) before the archive grows large.
-- [ ] CDN/edge caching for `GET /api/puzzles/today` and `/api/puzzles`.
+- [x] **Puzzle read path targeted.** Public today/archive/by-id paths use
+      targeted Postgres queries with supporting indexes instead of loading the
+      full archive.
+- [x] CDN/edge-ready cache headers for `GET /api/puzzles/today` and
+      `/api/puzzles`, capped near daily rollover.
 - [ ] Redis for shared rate limiting and any caching across instances.
 - [ ] Read replica for stats queries if they get heavy.
 
@@ -154,8 +150,8 @@ sense; they are under-specified behaviors and product risks.
    - Link-only (no public gallery) — currently true, and the right default given
      moderation cost. Keep it.
    - **No ownership/edit/delete** — unauthenticated creation means a creator
-     cannot edit or remove their puzzle; it is permanent. Decide whether a
-     delete/report path is needed (recommended).
+     cannot edit their puzzle. Removal happens through report/admin archive, and
+     reinstatement happens through appeal/admin review.
    - **Shared puzzle numbering** — community and editorial share one
      `puzzle_number` sequence, so "VibeGrid #5" might be a community puzzle.
      Decide whether community puzzles need separate numbering/labels in share text.

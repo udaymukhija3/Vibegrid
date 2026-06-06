@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
+	"golang.org/x/sync/singleflight"
 )
 
 const dateLayout = "2006-01-02"
@@ -27,6 +29,11 @@ type adminAnalyticsResponse struct {
 // handleStats serves public completion stats for any puzzle. Without a database
 // it returns empty stats so the UI can simply show nothing.
 func (server *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if _, err := server.publicPuzzleByID(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+		return
+	}
+
 	if server.stats == nil {
 		writeJSON(w, http.StatusOK, PuzzleStats{})
 		return
@@ -99,11 +106,7 @@ func (server *Server) handleAdminAnalytics(w http.ResponseWriter, r *http.Reques
 // readably. Returns an empty map if the puzzle can't be loaded.
 func (server *Server) tileTextLookup(ctx context.Context, puzzleID string) map[string]string {
 	lookup := map[string]string{}
-	puzzles, err := server.puzzles.Puzzles(ctx)
-	if err != nil {
-		return lookup
-	}
-	puzzle, err := FindPuzzleByID(puzzles, puzzleID)
+	puzzle, err := server.puzzles.PuzzleByID(ctx, puzzleID)
 	if err != nil {
 		return lookup
 	}
@@ -143,6 +146,139 @@ type StatsStore interface {
 	SessionStreak(ctx context.Context, sessionID, today string) (StreakSummary, error)
 }
 
+type cachedStatsStore struct {
+	next       StatsStore
+	ttl        time.Duration
+	maxEntries int
+	clock      func() time.Time
+
+	mu      sync.Mutex
+	stats   map[string]cachedStatsEntry
+	flights singleflight.Group
+}
+
+type cachedStatsEntry struct {
+	value     PuzzleStats
+	expiresAt time.Time
+	cachedAt  time.Time
+}
+
+const defaultStatsCacheMaxEntries = 1024
+
+func NewCachedStatsStore(next StatsStore, ttl time.Duration) StatsStore {
+	if next == nil || ttl <= 0 {
+		return next
+	}
+	return &cachedStatsStore{
+		next:       next,
+		ttl:        ttl,
+		maxEntries: defaultStatsCacheMaxEntries,
+		clock:      time.Now,
+		stats:      map[string]cachedStatsEntry{},
+	}
+}
+
+func (store *cachedStatsStore) PuzzleStats(ctx context.Context, puzzleID string) (PuzzleStats, error) {
+	if stats, ok := store.getCached(puzzleID); ok {
+		return stats, nil
+	}
+
+	result := store.flights.DoChan(puzzleID, func() (any, error) {
+		if stats, ok := store.getCached(puzzleID); ok {
+			return stats, nil
+		}
+
+		stats, err := store.next.PuzzleStats(ctx, puzzleID)
+		if err != nil {
+			return PuzzleStats{}, err
+		}
+
+		store.setCached(puzzleID, stats)
+		return stats, nil
+	})
+
+	select {
+	case loaded := <-result:
+		if loaded.Err != nil {
+			return PuzzleStats{}, loaded.Err
+		}
+		stats, ok := loaded.Val.(PuzzleStats)
+		if !ok {
+			return PuzzleStats{}, fmt.Errorf("unexpected stats cache value for %s", puzzleID)
+		}
+		return stats, nil
+	case <-ctx.Done():
+		return PuzzleStats{}, ctx.Err()
+	}
+}
+
+func (store *cachedStatsStore) getCached(puzzleID string) (PuzzleStats, bool) {
+	now := store.clock()
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	entry, ok := store.stats[puzzleID]
+	if !ok {
+		return PuzzleStats{}, false
+	}
+	if now.After(entry.expiresAt) {
+		delete(store.stats, puzzleID)
+		return PuzzleStats{}, false
+	}
+	return entry.value, true
+}
+
+func (store *cachedStatsStore) setCached(puzzleID string, stats PuzzleStats) {
+	now := store.clock()
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if store.maxEntries <= 0 {
+		return
+	}
+	store.pruneExpiredLocked(now)
+	if _, exists := store.stats[puzzleID]; !exists && len(store.stats) >= store.maxEntries {
+		store.evictOldestLocked()
+	}
+
+	store.stats[puzzleID] = cachedStatsEntry{value: stats, expiresAt: now.Add(store.ttl), cachedAt: now}
+}
+
+func (store *cachedStatsStore) pruneExpiredLocked(now time.Time) {
+	for puzzleID, entry := range store.stats {
+		if now.After(entry.expiresAt) {
+			delete(store.stats, puzzleID)
+		}
+	}
+}
+
+func (store *cachedStatsStore) evictOldestLocked() {
+	var (
+		oldestID string
+		oldestAt time.Time
+	)
+
+	for puzzleID, entry := range store.stats {
+		if oldestID == "" || entry.cachedAt.Before(oldestAt) {
+			oldestID = puzzleID
+			oldestAt = entry.cachedAt
+		}
+	}
+	if oldestID != "" {
+		delete(store.stats, oldestID)
+	}
+}
+
+func (store *cachedStatsStore) WrongGuessGroupings(ctx context.Context, puzzleID string, limit int) ([]WrongGuessGrouping, error) {
+	return store.next.WrongGuessGroupings(ctx, puzzleID, limit)
+}
+
+func (store *cachedStatsStore) SessionStreak(ctx context.Context, sessionID, today string) (StreakSummary, error) {
+	return store.next.SessionStreak(ctx, sessionID, today)
+}
+
 type PostgresStatsStore struct {
 	db *sql.DB
 }
@@ -152,6 +288,9 @@ func NewPostgresStatsStore(database *sql.DB) *PostgresStatsStore {
 }
 
 func (store *PostgresStatsStore) PuzzleStats(ctx context.Context, puzzleID string) (PuzzleStats, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
 	var (
 		players      int
 		completed    int
@@ -192,6 +331,9 @@ func (store *PostgresStatsStore) PuzzleStats(ctx context.Context, puzzleID strin
 }
 
 func (store *PostgresStatsStore) WrongGuessGroupings(ctx context.Context, puzzleID string, limit int) ([]WrongGuessGrouping, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
 	rows, err := store.db.QueryContext(ctx,
 		`select g.selected_tile_ids, count(*) as n
 		 from attempt_guesses g
@@ -222,6 +364,9 @@ func (store *PostgresStatsStore) WrongGuessGroupings(ctx context.Context, puzzle
 // derives the streak summary. "today" is the current daily date in the launch
 // timezone, supplied by the caller so the store stays clock-agnostic.
 func (store *PostgresStatsStore) SessionStreak(ctx context.Context, sessionID, today string) (StreakSummary, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
 	rows, err := store.db.QueryContext(ctx,
 		`select p.publish_date
 		 from attempts a

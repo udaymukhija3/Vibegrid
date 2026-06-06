@@ -1,13 +1,13 @@
-# Keep the build context small and free of host/web artifacts.
+# Keep the build context small and free of host artifacts.
 .git
 .github
 .next
+out
 .cache
+.gocache
 node_modules
 coverage
 dist
-src
-public
 docs
 *.md
 01_VIBEGRID_*.md
@@ -15,5 +15,6 @@ docs
 .env*.local
 .claude
 prisma
-scripts
+backend/internal/frontend/out/*
+!backend/internal/frontend/out/.keep
 **/*_test.go

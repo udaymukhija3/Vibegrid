@@ -36,6 +36,19 @@ func PublishedPuzzles(puzzles []Puzzle) []Puzzle {
 	return published
 }
 
+// PublishedPuzzlesThrough returns editorial puzzles that are live on or before
+// today. This is the public archive view and prevents scheduled puzzles from
+// leaking before their publish date.
+func PublishedPuzzlesThrough(puzzles []Puzzle, today string) []Puzzle {
+	published := make([]Puzzle, 0, len(puzzles))
+	for _, puzzle := range PublishedPuzzles(puzzles) {
+		if puzzle.PublishDate != "" && puzzle.PublishDate <= today {
+			published = append(published, puzzle)
+		}
+	}
+	return published
+}
+
 func TodaysPuzzle(puzzles []Puzzle, now time.Time, timeZone string) (*Puzzle, error) {
 	location, err := time.LoadLocation(timeZone)
 	if err != nil {
@@ -43,18 +56,22 @@ func TodaysPuzzle(puzzles []Puzzle, now time.Time, timeZone string) (*Puzzle, er
 	}
 
 	today := now.In(location).Format("2006-01-02")
-	published := PublishedPuzzles(puzzles)
-	for i := range published {
-		if published[i].PublishDate <= today {
-			return &published[i], nil
-		}
-	}
-
+	published := PublishedPuzzlesThrough(puzzles, today)
 	if len(published) > 0 {
 		return &published[0], nil
 	}
 
 	return nil, ErrPuzzleNotFound
+}
+
+func PubliclyPlayable(puzzle Puzzle, today string) bool {
+	if puzzle.Status != PuzzleStatusPublished {
+		return false
+	}
+	if puzzle.Origin == OriginCommunity {
+		return true
+	}
+	return puzzle.PublishDate != "" && puzzle.PublishDate <= today
 }
 
 func ToPublicPuzzle(puzzle Puzzle) PublicPuzzle {

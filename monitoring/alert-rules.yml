@@ -1,0 +1,38 @@
+groups:
+  - name: vibegrid
+    rules:
+      - alert: VibeGridMetricsDown
+        expr: up{job="vibegrid"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: VibeGrid metrics scrape is down
+          description: Prometheus cannot scrape /metrics for more than 2 minutes.
+
+      - alert: VibeGridHighErrorRate
+        expr: sum(rate(vibegrid_http_requests_total{job="vibegrid",status=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: VibeGrid 5xx rate is elevated
+          description: The app is returning more than 0.05 server errors per second for 5 minutes.
+
+      - alert: VibeGridSlowRequests
+        expr: histogram_quantile(0.95, sum(rate(vibegrid_http_request_duration_seconds_bucket{job="vibegrid"}[5m])) by (le)) > 1
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: VibeGrid p95 latency is above 1s
+          description: The 95th percentile request latency has stayed above 1 second for 10 minutes.
+
+      - alert: VibeGridNoTraffic
+        expr: sum(rate(vibegrid_http_requests_total{job="vibegrid"}[30m])) == 0
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: VibeGrid has no observed traffic
+          description: No requests were recorded for 30 minutes. Check DNS, uptime monitor, and public routing.
