@@ -169,12 +169,18 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		return deps{}, fmt.Errorf("seed puzzles: %w", err)
 	}
 
+	// Cache immutable puzzle content in process so the per-guess read path does
+	// not reload groups and tiles from Postgres on every request. The same
+	// instance backs the public, admin, and community surfaces, so status changes
+	// (publish/archive/reinstate) invalidate the cached copy.
+	puzzles := vibegrid.NewCachedPuzzleStore(puzzleStore, 5*time.Minute)
+
 	logger.Info("connected to postgres, puzzles seeded")
 	return deps{
 		attempts:     vibegrid.NewPostgresAttemptStore(database),
-		puzzles:      puzzleStore,
-		adminPuzzles: puzzleStore,
-		community:    puzzleStore,
+		puzzles:      puzzles,
+		adminPuzzles: puzzles,
+		community:    puzzles,
 		stats:        vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
 		rateLimits:   vibegrid.NewPostgresRateLimitStore(database),
 		moderation:   vibegrid.NewPostgresModerationStore(database),
