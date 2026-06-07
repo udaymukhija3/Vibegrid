@@ -31,7 +31,8 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
 COPY --from=build /out/vibegrid /vibegrid
 
-ENV VIBEGRID_ADDR=:8081
+# No hardcoded VIBEGRID_ADDR: the binary listens on $PORT when a PaaS injects it
+# (Render/Railway/Cloud Run/Koyeb), and falls back to :8081 for local/Fly.
 EXPOSE 8081
 USER nonroot:nonroot
 ENTRYPOINT ["/vibegrid"]
