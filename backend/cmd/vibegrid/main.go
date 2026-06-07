@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -101,6 +102,8 @@ func run(logger *slog.Logger) error {
 		AllowedOrigins:     allowedOrigins,
 		SecureCookies:      secureCookies,
 		BlockedTerms:       blockedTerms,
+		DBStats:            deps.dbStats,
+		PuzzleCacheStats:   deps.puzzleCacheStats,
 	})
 
 	server := &http.Server{
@@ -134,15 +137,17 @@ func run(logger *slog.Logger) error {
 // deps bundles the store implementations the server needs, plus a close hook
 // and a readiness probe (nil when there is no database to check).
 type deps struct {
-	attempts     vibegrid.Store
-	puzzles      vibegrid.PuzzleSource
-	adminPuzzles vibegrid.AdminPuzzleStore
-	community    vibegrid.CommunityPuzzleStore
-	stats        vibegrid.StatsStore
-	rateLimits   vibegrid.RateLimitStore
-	moderation   vibegrid.ModerationStore
-	ready        func(context.Context) error
-	close        func()
+	attempts         vibegrid.Store
+	puzzles          vibegrid.PuzzleSource
+	adminPuzzles     vibegrid.AdminPuzzleStore
+	community        vibegrid.CommunityPuzzleStore
+	stats            vibegrid.StatsStore
+	rateLimits       vibegrid.RateLimitStore
+	moderation       vibegrid.ModerationStore
+	ready            func(context.Context) error
+	dbStats          func() sql.DBStats
+	puzzleCacheStats func() vibegrid.CacheStats
+	close            func()
 }
 
 // buildDeps wires the durable Postgres stores when DATABASE_URL is set and
@@ -175,16 +180,24 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 	// (publish/archive/reinstate) invalidate the cached copy.
 	puzzles := vibegrid.NewCachedPuzzleStore(puzzleStore, 5*time.Minute)
 
+	// Expose cache effectiveness on /metrics when the decorator is active.
+	var puzzleCacheStats func() vibegrid.CacheStats
+	if provider, ok := puzzles.(interface{ CacheStats() vibegrid.CacheStats }); ok {
+		puzzleCacheStats = provider.CacheStats
+	}
+
 	logger.Info("connected to postgres, puzzles seeded")
 	return deps{
-		attempts:     vibegrid.NewPostgresAttemptStore(database),
-		puzzles:      puzzles,
-		adminPuzzles: puzzles,
-		community:    puzzles,
-		stats:        vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
-		rateLimits:   vibegrid.NewPostgresRateLimitStore(database),
-		moderation:   vibegrid.NewPostgresModerationStore(database),
-		ready:        database.PingContext,
+		attempts:         vibegrid.NewPostgresAttemptStore(database),
+		puzzles:          puzzles,
+		adminPuzzles:     puzzles,
+		community:        puzzles,
+		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
+		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
+		moderation:       vibegrid.NewPostgresModerationStore(database),
+		ready:            database.PingContext,
+		dbStats:          database.Stats,
+		puzzleCacheStats: puzzleCacheStats,
 		close: func() {
 			if err := database.Close(); err != nil {
 				logger.Error("closing postgres pool", "error", err)

@@ -64,6 +64,43 @@ func (metrics *httpMetrics) observe(method, route string, status int, duration t
 
 func (server *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	server.metrics.writePrometheus(w)
+	server.writeRuntimeGauges(w)
+}
+
+// writeRuntimeGauges appends the connection-pool and puzzle-cache metrics that
+// make the latency/scale machinery observable: pool saturation (wait count and
+// wait time are the classic exhaustion signals) and cache hit rate. Both sources
+// are optional, so this is a no-op without a database.
+func (server *Server) writeRuntimeGauges(w http.ResponseWriter) {
+	if server.dbStats != nil {
+		stats := server.dbStats()
+		writeGauge(w, "vibegrid_db_open_connections", "Open Postgres connections (in use plus idle).", float64(stats.OpenConnections))
+		writeGauge(w, "vibegrid_db_in_use_connections", "Postgres connections currently in use.", float64(stats.InUse))
+		writeGauge(w, "vibegrid_db_idle_connections", "Idle Postgres connections in the pool.", float64(stats.Idle))
+		writeCounter(w, "vibegrid_db_wait_count_total", "Total times a request waited for a free connection.", float64(stats.WaitCount))
+		writeCounter(w, "vibegrid_db_wait_seconds_total", "Total time requests spent waiting for a connection.", stats.WaitDuration.Seconds())
+	}
+	if server.puzzleCacheStats != nil {
+		cache := server.puzzleCacheStats()
+		writeCounter(w, "vibegrid_puzzle_cache_hits_total", "Puzzle content cache hits.", float64(cache.Hits))
+		writeCounter(w, "vibegrid_puzzle_cache_misses_total", "Puzzle content cache misses.", float64(cache.Misses))
+		writeCounter(w, "vibegrid_puzzle_cache_evictions_total", "Puzzle content cache evictions.", float64(cache.Evictions))
+		writeGauge(w, "vibegrid_puzzle_cache_entries", "Puzzles currently held in the content cache.", float64(cache.Entries))
+	}
+}
+
+func writeGauge(w http.ResponseWriter, name, help string, value float64) {
+	writeMetric(w, name, help, "gauge", value)
+}
+
+func writeCounter(w http.ResponseWriter, name, help string, value float64) {
+	writeMetric(w, name, help, "counter", value)
+}
+
+func writeMetric(w http.ResponseWriter, name, help, metricType string, value float64) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s %s\n", name, metricType)
+	fmt.Fprintf(w, "%s %s\n", name, strconv.FormatFloat(value, 'f', -1, 64))
 }
 
 func (metrics *httpMetrics) writePrometheus(w http.ResponseWriter) {

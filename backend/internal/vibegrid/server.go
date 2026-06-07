@@ -3,6 +3,7 @@ package vibegrid
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,6 +54,10 @@ type ServerConfig struct {
 	AllowedOrigins     []string
 	SecureCookies      bool
 	BlockedTerms       []string
+	// Optional runtime metric sources, surfaced on /metrics. Nil in no-database
+	// mode, where there is no pool or content cache to observe.
+	DBStats          func() sql.DBStats
+	PuzzleCacheStats func() CacheStats
 }
 
 type Server struct {
@@ -76,6 +81,8 @@ type Server struct {
 	clock              func() time.Time
 	timeZone           string
 	secureCookies      bool
+	dbStats            func() sql.DBStats
+	puzzleCacheStats   func() CacheStats
 }
 
 func NewServer(config ServerConfig) http.Handler {
@@ -110,6 +117,8 @@ func NewServer(config ServerConfig) http.Handler {
 		clock:              clock,
 		timeZone:           timeZone,
 		secureCookies:      config.SecureCookies,
+		dbStats:            config.DBStats,
+		puzzleCacheStats:   config.PuzzleCacheStats,
 	}
 	if server.store == nil {
 		server.store = NewMemoryAttemptStore()

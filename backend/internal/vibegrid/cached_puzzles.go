@@ -4,10 +4,20 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 )
+
+// CacheStats is a point-in-time view of puzzle-cache effectiveness, surfaced on
+// /metrics so the hit rate of the latency optimization is observable in prod.
+type CacheStats struct {
+	Hits      uint64
+	Misses    uint64
+	Evictions uint64
+	Entries   int
+}
 
 // puzzleBackend is the full puzzle-store surface the server depends on: the
 // public read source plus admin authoring and community creation. The Postgres
@@ -40,6 +50,10 @@ type cachedPuzzleStore struct {
 	mu      sync.Mutex
 	byID    map[string]cachedPuzzleEntry
 	flights singleflight.Group
+
+	hits      atomic.Uint64
+	misses    atomic.Uint64
+	evictions atomic.Uint64
 }
 
 type cachedPuzzleEntry struct {
@@ -66,13 +80,16 @@ func NewCachedPuzzleStore(inner puzzleBackend, ttl time.Duration) puzzleBackend 
 
 func (store *cachedPuzzleStore) PuzzleByID(ctx context.Context, puzzleID string) (Puzzle, error) {
 	if puzzle, ok := store.getCached(puzzleID); ok {
+		store.hits.Add(1)
 		return puzzle, nil
 	}
 
 	result := store.flights.DoChan(puzzleID, func() (any, error) {
 		if puzzle, ok := store.getCached(puzzleID); ok {
+			store.hits.Add(1)
 			return puzzle, nil
 		}
+		store.misses.Add(1)
 		puzzle, err := store.inner.PuzzleByID(ctx, puzzleID)
 		if err != nil {
 			// Negative lookups are not cached: a community puzzle is shared by link
@@ -213,6 +230,21 @@ func (store *cachedPuzzleStore) evictOldestLocked() {
 	}
 	if oldestID != "" {
 		delete(store.byID, oldestID)
+		store.evictions.Add(1)
+	}
+}
+
+// CacheStats reports cumulative hit/miss/eviction counters and the current entry
+// count. Safe to call concurrently with reads and writes.
+func (store *cachedPuzzleStore) CacheStats() CacheStats {
+	store.mu.Lock()
+	entries := len(store.byID)
+	store.mu.Unlock()
+	return CacheStats{
+		Hits:      store.hits.Load(),
+		Misses:    store.misses.Load(),
+		Evictions: store.evictions.Load(),
+		Entries:   entries,
 	}
 }
 

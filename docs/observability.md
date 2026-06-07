@@ -4,7 +4,8 @@ VibeGrid exposes three operational endpoints:
 
 - `/healthz` - process liveness.
 - `/readyz` - readiness; checks Postgres when `DATABASE_URL` is set.
-- `/metrics` - Prometheus text metrics for request count, status, and latency.
+- `/metrics` - Prometheus text metrics for request count, status, and latency,
+  plus connection-pool and puzzle-cache series (see below).
 
 ## Public Uptime Checks
 
@@ -30,6 +31,27 @@ Import the files under `monitoring/` into the chosen metrics stack:
   and latency by route.
 
 Replace `vibegrid.example.com` with the real domain before importing.
+
+### Exposed series
+
+HTTP (always):
+
+- `vibegrid_http_requests_total{method,route,status}`
+- `vibegrid_http_request_duration_seconds{...}` (histogram)
+
+Connection pool (when `DATABASE_URL` is set) — watch the wait series for pool
+saturation under load:
+
+- `vibegrid_db_open_connections`, `vibegrid_db_in_use_connections`,
+  `vibegrid_db_idle_connections` (gauges)
+- `vibegrid_db_wait_count_total`, `vibegrid_db_wait_seconds_total` (counters)
+
+Puzzle content cache (when `DATABASE_URL` is set) — hit rate validates the
+per-guess read-path optimization:
+
+- `vibegrid_puzzle_cache_hits_total`, `vibegrid_puzzle_cache_misses_total`,
+  `vibegrid_puzzle_cache_evictions_total` (counters)
+- `vibegrid_puzzle_cache_entries` (gauge)
 
 ## Logs
 
