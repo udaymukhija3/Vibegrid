@@ -1,6 +1,8 @@
 package vibegrid
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"sort"
 	"time"
@@ -36,6 +38,19 @@ func PublishedPuzzles(puzzles []Puzzle) []Puzzle {
 	return published
 }
 
+// PublishedPuzzlesThrough returns editorial puzzles that are live on or before
+// today. This is the public archive view and prevents scheduled puzzles from
+// leaking before their publish date.
+func PublishedPuzzlesThrough(puzzles []Puzzle, today string) []Puzzle {
+	published := make([]Puzzle, 0, len(puzzles))
+	for _, puzzle := range PublishedPuzzles(puzzles) {
+		if puzzle.PublishDate != "" && puzzle.PublishDate <= today {
+			published = append(published, puzzle)
+		}
+	}
+	return published
+}
+
 func TodaysPuzzle(puzzles []Puzzle, now time.Time, timeZone string) (*Puzzle, error) {
 	location, err := time.LoadLocation(timeZone)
 	if err != nil {
@@ -43,18 +58,39 @@ func TodaysPuzzle(puzzles []Puzzle, now time.Time, timeZone string) (*Puzzle, er
 	}
 
 	today := now.In(location).Format("2006-01-02")
-	published := PublishedPuzzles(puzzles)
-	for i := range published {
-		if published[i].PublishDate <= today {
-			return &published[i], nil
-		}
-	}
-
+	published := PublishedPuzzlesThrough(puzzles, today)
 	if len(published) > 0 {
 		return &published[0], nil
 	}
 
 	return nil, ErrPuzzleNotFound
+}
+
+// pagePuzzles returns the limit/offset window of an already-ordered puzzle
+// slice, guarding against out-of-range bounds. A non-positive limit returns
+// everything from offset onward.
+func pagePuzzles(puzzles []Puzzle, limit, offset int) []Puzzle {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(puzzles) {
+		return []Puzzle{}
+	}
+	end := len(puzzles)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return puzzles[offset:end]
+}
+
+func PubliclyPlayable(puzzle Puzzle, today string) bool {
+	if puzzle.Status != PuzzleStatusPublished {
+		return false
+	}
+	if puzzle.Origin == OriginCommunity {
+		return true
+	}
+	return puzzle.PublishDate != "" && puzzle.PublishDate <= today
 }
 
 func ToPublicPuzzle(puzzle Puzzle) PublicPuzzle {
@@ -68,7 +104,7 @@ func ToPublicPuzzle(puzzle Puzzle) PublicPuzzle {
 		PuzzleNumber:    puzzle.PuzzleNumber,
 		PublishDate:     puzzle.PublishDate,
 		Difficulty:      puzzle.Difficulty,
-		Tiles:           seededShuffle(tiles, uint32(puzzle.PuzzleNumber)),
+		Tiles:           orderTilesForDisplay(tiles),
 		GroupCount:      len(puzzle.Groups),
 		MistakesAllowed: MaxMistakes,
 	}
@@ -103,18 +139,30 @@ func AllSolvedGroups(puzzle Puzzle) []SolvedGroup {
 	return groups
 }
 
-func seededShuffle(items []Tile, seed uint32) []Tile {
-	shuffled := append([]Tile(nil), items...)
-	state := seed
-	if state == 0 {
-		state = 1
-	}
+// orderTilesForDisplay returns the puzzle's tiles in a stable order that is
+// independent of group membership. The order is derived from a hash of each
+// tile's id, so it is identical on every request (a stable board that does not
+// reshuffle on refresh) yet encodes nothing about which tiles share a group.
+//
+// This replaces a Fisher-Yates shuffle seeded by the public puzzle number:
+// because that seed and the algorithm were both knowable by the client, the
+// permutation could be inverted to recover the original group-blocked layout —
+// i.e. the answer key. Tile ids are assigned independently of grouping, so a
+// per-tile hash ordering leaks nothing an attacker did not already have.
+func orderTilesForDisplay(items []Tile) []Tile {
+	ordered := append([]Tile(nil), items...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		leftKey, rightKey := tileOrderKey(ordered[left].ID), tileOrderKey(ordered[right].ID)
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		// Deterministic tiebreak if two ids ever hash to the same prefix.
+		return ordered[left].ID < ordered[right].ID
+	})
+	return ordered
+}
 
-	for index := len(shuffled) - 1; index > 0; index-- {
-		state = state*1664525 + 1013904223
-		swapIndex := int(state % uint32(index+1))
-		shuffled[index], shuffled[swapIndex] = shuffled[swapIndex], shuffled[index]
-	}
-
-	return shuffled
+func tileOrderKey(id string) uint64 {
+	sum := sha256.Sum256([]byte(id))
+	return binary.BigEndian.Uint64(sum[:8])
 }

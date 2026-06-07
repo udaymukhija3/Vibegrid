@@ -3,7 +3,9 @@ package vibegrid
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestComputeStreak(t *testing.T) {
@@ -31,6 +33,120 @@ func TestComputeStreak(t *testing.T) {
 	}
 }
 
+type countingStatsStore struct {
+	mu      sync.Mutex
+	calls   int
+	blocker chan struct{}
+}
+
+func (store *countingStatsStore) PuzzleStats(context.Context, string) (PuzzleStats, error) {
+	if store.blocker != nil {
+		<-store.blocker
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.calls++
+	return PuzzleStats{Players: store.calls}, nil
+}
+
+func (store *countingStatsStore) callCount() int {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.calls
+}
+
+func (store *countingStatsStore) WrongGuessGroupings(context.Context, string, int) ([]WrongGuessGrouping, error) {
+	return nil, nil
+}
+
+func (store *countingStatsStore) SessionStreak(context.Context, string, string) (StreakSummary, error) {
+	return StreakSummary{}, nil
+}
+
+func TestCachedStatsStoreCachesPuzzleStats(t *testing.T) {
+	inner := &countingStatsStore{}
+	cache := NewCachedStatsStore(inner, time.Minute).(*cachedStatsStore)
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	cache.clock = func() time.Time { return now }
+
+	first, err := cache.PuzzleStats(context.Background(), "puzzle-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cache.PuzzleStats(context.Background(), "puzzle-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Players != 1 || second.Players != 1 || inner.callCount() != 1 {
+		t.Fatalf("expected cached value after one call, got first=%#v second=%#v calls=%d", first, second, inner.callCount())
+	}
+
+	now = now.Add(2 * time.Minute)
+	third, err := cache.PuzzleStats(context.Background(), "puzzle-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Players != 2 || inner.callCount() != 2 {
+		t.Fatalf("expected cache refresh after ttl, got third=%#v calls=%d", third, inner.callCount())
+	}
+}
+
+func TestCachedStatsStoreSingleflightsConcurrentMisses(t *testing.T) {
+	blocker := make(chan struct{})
+	inner := &countingStatsStore{blocker: blocker}
+	cache := NewCachedStatsStore(inner, time.Minute).(*cachedStatsStore)
+
+	const requestCount = 8
+	results := make(chan PuzzleStats, requestCount)
+	for range requestCount {
+		go func() {
+			stats, err := cache.PuzzleStats(context.Background(), "puzzle-1")
+			if err != nil {
+				t.Errorf("PuzzleStats returned error: %v", err)
+				return
+			}
+			results <- stats
+		}()
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	close(blocker)
+
+	for range requestCount {
+		stats := <-results
+		if stats.Players != 1 {
+			t.Fatalf("expected shared stats result, got %#v", stats)
+		}
+	}
+	if inner.callCount() != 1 {
+		t.Fatalf("expected one underlying call, got %d", inner.callCount())
+	}
+}
+
+func TestCachedStatsStoreBoundsEntries(t *testing.T) {
+	inner := &countingStatsStore{}
+	cache := NewCachedStatsStore(inner, time.Hour).(*cachedStatsStore)
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	cache.clock = func() time.Time { return now }
+	cache.maxEntries = 2
+
+	for _, puzzleID := range []string{"puzzle-1", "puzzle-2", "puzzle-3"} {
+		if _, err := cache.PuzzleStats(context.Background(), puzzleID); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+	}
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.stats) != 2 {
+		t.Fatalf("expected cache to stay bounded at 2 entries, got %d", len(cache.stats))
+	}
+	if _, exists := cache.stats["puzzle-1"]; exists {
+		t.Fatal("expected oldest cache entry to be evicted")
+	}
+}
+
 func newStatsTest(t *testing.T) (*PostgresAttemptStore, *PostgresStatsStore) {
 	t.Helper()
 
@@ -45,7 +161,7 @@ func newStatsTest(t *testing.T) (*PostgresAttemptStore, *PostgresStatsStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	if err := NewPostgresPuzzleStore(database).Seed(context.Background(), SeedPuzzles()); err != nil {

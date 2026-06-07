@@ -1,83 +1,283 @@
 # Deploying VibeGrid
 
-Topology: **Vercel** (Next.js web) + **Fly.io** (Go API container) + **Neon**
-(Postgres). The web app proxies `/api/*` to the API via a Next rewrite, so the
-browser only ever talks same-origin.
+This is the complete runbook to take VibeGrid from the repo to a live URL.
+
+## What you are deploying
+
+VibeGrid is **one Go binary** that serves both the web app and the API from a
+single origin. The Docker build compiles the Next.js app to a static export,
+embeds it into the Go binary via `go:embed` (along with the SQL migrations), and
+produces a tiny distroless image that listens on `:8081` and runs as a non-root
+user.
 
 ```
-Browser ──▶ Vercel (Next + /api/* rewrite) ──▶ Fly (Go API) ──▶ Neon (Postgres)
+Browser ── HTTPS ──▶ container (Go binary: embedded Next export + /api/*) ──▶ Postgres
 ```
 
-Everything below is repo-ready: the Dockerfile, `fly.toml` (migrations as a
-release command, `/readyz` health check), security/cache headers, and a `migrate`
-subcommand all exist. You supply accounts and run the commands.
+Because it is a normal long-running server process, it deploys to a **container
+host**, not to a static/edge platform.
 
-## 1. Database (Neon)
+> ### Read this if you came from Cloudflare
+> Cloudflare **Pages** (static) and **Workers** (V8/WASM isolates) cannot run an
+> arbitrary Go binary, and this app is single-origin (the Go process serves the
+> frontend itself — there is no separate static site to host). So a Cloudflare
+> *compute* deployment of this architecture was never going to work; that is the
+> most likely reason the old one died.
+>
+> You can still use Cloudflare, but only as **DNS + CDN/proxy in front of the
+> container origin**. Two important caveats if you do:
+> 1. Prefer **DNS-only (grey cloud)** to start. The app derives the client IP for
+>    rate limiting from `Fly-Client-IP` / `X-Real-IP` (`clientIP` in
+>    `backend/internal/vibegrid/rate_limits.go`). If you proxy through Cloudflare
+>    (orange cloud), the real client IP arrives in `CF-Connecting-IP`, which the
+>    app does **not** read yet — so per-IP limits would bucket all traffic under
+>    Cloudflare's IPs. Either stay grey-cloud, or add `CF-Connecting-IP` to
+>    `clientIP` before enabling the proxy.
+> 2. The app already sets HSTS and forces HTTPS at the host; keep Cloudflare SSL
+>    mode on **Full (strict)**, not Flexible, to avoid redirect loops.
 
-1. Create a Neon project; copy the **pooled** connection string.
-2. Keep it for the API secret below. Migrations apply automatically on first
-   deploy (the Fly release command runs `vibegrid migrate`).
+The repo ships the production pieces: multi-stage `Dockerfile`, `fly.toml`,
+`/healthz` + `/readyz` + `/metrics`, route-aware CSP, embedded migrations, and a
+`vibegrid migrate` subcommand used as the release step.
 
-## 2. API (Fly.io)
+---
+
+## 0. Prerequisites
+
+- A container host account. **Fly.io** is pre-configured here; Render or Railway
+  work too (see "Other hosts" at the end).
+- A **managed Postgres** provider: Neon, Supabase, Fly Postgres, or Railway.
+- CLIs: `flyctl` (`brew install flyctl`), `psql` (to verify the DB), `openssl`
+  (to generate secrets).
+- The repo checked out, CI green on `main`.
+
+---
+
+## 1. Provision Postgres
+
+1. Create a managed Postgres database.
+2. Copy the **pooled** connection string if the provider offers one (Neon and
+   Supabase do). Keep the direct/session string handy too — see the pooler note.
+3. Note the connection cap. The app sets `SetMaxOpenConns(10)` **per machine**
+   (`backend/internal/vibegrid/postgres_store.go`), so:
+   `10 × (machine count) ≤ pooler/instance connection limit`.
+4. Enable **daily backups and point-in-time recovery now**, before any real
+   traffic. Record retention, RPO, and RTO.
+
+> **Pooler gotcha (pgx + PgBouncer).** The app uses the `pgx` driver. If your
+> connection string points at a **transaction-mode** pooler (Supabase's `6543`
+> pgbouncer port, some Neon setups), prepared-statement caching can throw
+> `prepared statement "..." already exists`. Fix by appending
+> `?default_query_exec_mode=simple_protocol` to `DATABASE_URL`, or use the
+> **session-mode / direct** connection string. This is a classic "it worked then
+> randomly 500s" failure — set it correctly up front.
+
+No manual schema step is needed: migrations run automatically as the release
+command (step 3), and starter puzzles are seeded idempotently on every boot.
+
+---
+
+## 2. Generate secrets
 
 ```bash
-# from the repo root (Dockerfile + fly.toml live here)
-fly launch --copy-config --no-deploy      # pick a unique app name + region
-fly secrets set \
-  DATABASE_URL="postgres://USER:PASS@HOST/db?sslmode=require" \
-  VIBEGRID_ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  VIBEGRID_ALLOWED_ORIGINS="https://YOUR-VERCEL-DOMAIN"
-fly deploy
-fly status          # confirm the machine is healthy (/readyz passing)
+# Admin browser login (pick a strong password) and the cookie signing secret:
+VIBEGRID_ADMIN_PASSWORD="$(openssl rand -base64 24)"
+VIBEGRID_ADMIN_SESSION_SECRET="$(openssl rand -hex 32)"
+# Optional automation/API token (the web UI uses the password + cookie instead):
+VIBEGRID_ADMIN_TOKEN="$(openssl rand -hex 32)"
+echo "ADMIN_PASSWORD=$VIBEGRID_ADMIN_PASSWORD"   # save these in your password manager
+echo "SESSION_SECRET=$VIBEGRID_ADMIN_SESSION_SECRET"
+echo "ADMIN_TOKEN=$VIBEGRID_ADMIN_TOKEN"
 ```
 
-Non-secret config (`VIBEGRID_ADDR`, `VIBEGRID_TIMEZONE`,
-`VIBEGRID_SECURE_COOKIES`) is in `fly.toml`. Note the API URL Fly prints
-(e.g. `https://vibegrid-api.fly.dev`) for the next step.
+If `VIBEGRID_ADMIN_PASSWORD` is set but `VIBEGRID_ADMIN_SESSION_SECRET` is not,
+browser admin login is disabled (the app logs a warning). Set both.
 
-## 3. Web (Vercel)
+---
 
-1. Import the GitHub repo into Vercel (framework auto-detected as Next.js).
-2. Set environment variables:
-   - `GO_BACKEND_URL` = the Fly API URL (e.g. `https://vibegrid-api.fly.dev`)
-   - `NEXT_PUBLIC_APP_URL` = your Vercel/custom domain
-   - `NEXT_PUBLIC_REPORT_EMAIL` = the inbox for puzzle reports
-3. Deploy. Add a custom domain if desired (Vercel handles HTTPS).
-4. Set `VIBEGRID_ALLOWED_ORIGINS` on Fly to the **final** web domain and redeploy
-   the API.
+## 3. Deploy to Fly.io
 
-## 4. Verify in production (do not skip)
+`fly.toml` is already configured: it builds the `Dockerfile`, runs
+`/vibegrid migrate` as the release command (migrations land once, before any new
+machine serves traffic), checks `/readyz`, forces HTTPS, sets
+`VIBEGRID_SECURE_COOKIES=true` and `VIBEGRID_TIMEZONE=UTC`, and keeps one machine
+warm.
 
-- `https://<web>/` loads today's puzzle.
-- **Session cookie through the proxy:** play a guess, refresh — the attempt
-  persists. The cookie is issued by the API and must survive the Vercel→Fly
-  rewrite as a first-party cookie on the web domain. This is the most likely
-  cross-service gotcha; test it explicitly.
-- `https://<web>/admin` — paste `VIBEGRID_ADMIN_TOKEN`, create + publish a puzzle.
-- `https://<web>/create` — build a community puzzle, open the `/p/<id>` link.
-- `curl -i https://<api>/readyz` returns 200 (DB reachable).
+```bash
+# 1. Rename the app (edit `app = "..."` in fly.toml, or):
+fly launch --copy-config --no-deploy        # creates the app, keeps fly.toml
 
-## 5. CI/CD
+# 2. Set secrets (never commit these):
+fly secrets set \
+  DATABASE_URL="postgres://USER:PASS@HOST:PORT/db?sslmode=require" \
+  VIBEGRID_ADMIN_PASSWORD="$VIBEGRID_ADMIN_PASSWORD" \
+  VIBEGRID_ADMIN_SESSION_SECRET="$VIBEGRID_ADMIN_SESSION_SECRET" \
+  VIBEGRID_ADMIN_TOKEN="$VIBEGRID_ADMIN_TOKEN" \
+  VIBEGRID_BLOCKED_TERMS="slur-one,slur-two"
 
-CI (`.github/workflows/ci.yml`) already gates tests on every push/PR. To deploy
-on merge to `main`:
+# 3. Deploy:
+fly deploy
 
-- **Web:** connect the repo in Vercel — it auto-deploys `main` and gives preview
-  deploys per PR.
-- **API:** add a workflow step that runs `flyctl deploy --remote-only` with a
-  `FLY_API_TOKEN` repo secret (`fly tokens create deploy`).
+# 4. Confirm:
+fly status
+fly logs
+```
 
-## Notes & alternatives
+`fly deploy` runs the release command first; if `vibegrid migrate` fails (e.g.
+bad `DATABASE_URL`), the release aborts and old machines keep serving. Watch
+`fly logs` for `migrations applied` then `vibegrid listening`.
 
-- **Migrations** run via the Fly `release_command`; instances also no-op migrate
-  on boot (idempotent), so first deploy is safe.
-- **Connection limits:** the API pool caps at 10 connections per instance — keep
-  `min_machines_running` low or use Neon's pooler (the pooled string) so you stay
-  under Postgres limits.
-- **Caching:** `/api/puzzles/today` and `/api/puzzles` send `Cache-Control` for
-  CDN/edge caching.
-- **Simpler one-platform option:** Render or Railway can host the API, the web
-  app, and Postgres together — one bill, no cross-origin/proxy subtlety. Fewer
-  moving parts for a demo; the Vercel+Fly+Neon split shows more range.
-- **Rollback:** `fly releases` / `fly deploy --image <previous>`; Vercel keeps
-  every deployment for instant rollback.
+Set these only when needed:
+- `VIBEGRID_ALLOWED_ORIGINS` — only if another origin must call the API directly.
+  The normal single-container deploy is same-origin and needs no CORS.
+- `VIBEGRID_TIMEZONE` — `fly.toml` sets `UTC`. This defines when "today" rolls
+  over. **Pick one canonical zone and keep it stable** (changing it later shifts
+  every daily puzzle's boundary). Note: the code default if unset is
+  `Asia/Kolkata`, so always set it explicitly in production (`fly.toml` does).
+
+---
+
+## 4. Domain + TLS
+
+On Fly:
+
+```bash
+fly certs add vibegrid.example.com
+fly certs show vibegrid.example.com     # prints the A/AAAA/CNAME records to create
+```
+
+Create those DNS records at your DNS provider (Cloudflare is fine **as DNS**).
+If you use Cloudflare, re-read the grey-cloud / `CF-Connecting-IP` /
+SSL-Full-strict caveats in the box at the top.
+
+Then set the public URL for correct absolute links in the statically-exported
+metadata (optional — the Go server already injects correct per-request OG tags,
+but this keeps Next's metadata consistent). It is a **build-time** value, so it
+must be baked during the image build, e.g. add to the Dockerfile web stage:
+
+```dockerfile
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+```
+
+and `fly deploy --build-arg NEXT_PUBLIC_APP_URL=https://vibegrid.example.com`.
+
+---
+
+## 5. Backups, monitoring, alerting
+
+1. **Backups/PITR** — enable on the managed Postgres (step 1). Run **one restore
+   drill** into a scratch DB before sharing the link widely, and confirm the
+   restore passes `vibegrid migrate` and `/readyz`.
+2. **Uptime checks** (Better Stack / UptimeRobot / Pingdom / provider):
+   - `GET /healthz` every 60s, alert after 2 failures (process liveness)
+   - `GET /readyz` every 60s, alert after 2 failures (DB reachable)
+   - `GET /` and `GET /api/puzzles/today` every 5m, alert on non-2xx
+3. **Metrics** — scrape `GET /metrics` (Prometheus text). Import the templates in
+   `monitoring/` (`prometheus.yml`, `alert-rules.yml`, `grafana-dashboard.json`)
+   after replacing the placeholder domain. Beyond HTTP request/latency series,
+   `/metrics` also exposes (see `docs/observability.md`):
+   - connection pool: `vibegrid_db_open_connections`, `..._in_use_connections`,
+     `..._idle_connections`, `..._wait_count_total`, `..._wait_seconds_total`
+     (watch the wait series for pool saturation)
+   - puzzle cache: `vibegrid_puzzle_cache_hits_total` / `..._misses_total` /
+     `..._evictions_total` / `..._entries` (hit rate of the per-request cache)
+4. **Log drain** — ship stdout/stderr to a durable store (Axiom, Datadog, Loki,
+   Logtail). The server emits structured `slog` JSON with method, path, status,
+   `duration_ms`, `client_ip`, `user_agent`. On Fly: `fly logs` for ad hoc, or a
+   log-shipper for retention.
+5. **Error tracking** — add Sentry (or similar) when you have credentials. Until
+   then, alert from `/metrics` on 5xx rate and from logs on `panic`/`error`.
+
+---
+
+## 6. Verify production
+
+Run through this after the first deploy:
+
+- `https://<domain>/` loads today's puzzle.
+- Play a guess, refresh, confirm the attempt persists (the `vibegrid_session`
+  cookie should be present and `Secure`).
+- `https://<domain>/create` creates a community puzzle; `/p/<id>` opens it.
+- Report that puzzle from the sidebar, then in `/admin` (log in with the admin
+  password) confirm it appears in the moderation queue; archive it, reopen
+  `/p/<id>`, submit an appeal, and reinstate it from the queue.
+- `curl -sI https://<domain>/readyz` → 200 (DB reachable).
+- `curl -s https://<domain>/metrics | grep vibegrid_` shows the HTTP, pool, and
+  cache series.
+- `curl -s https://<domain>/robots.txt` advertises the sitemap; `/sitemap.xml`
+  lists `/` and the live puzzle `/p/<id>` URLs (and **not** future-dated ones).
+- `curl -sI https://<domain>/api/og/puzzles/<id>.svg` returns an image.
+- Publish one editorial puzzle for today from `/admin` and confirm `/` serves it.
+
+---
+
+## 7. Rollback
+
+```bash
+fly releases                      # find the previous good release/image
+fly deploy --image <previous-image>
+```
+
+Migrations are forward-only operationally — review every migration before deploy
+and prefer additive, backward-compatible schema changes so a rollback of the
+binary stays compatible with the migrated schema.
+
+---
+
+## 8. Local production smoke (optional, before deploying)
+
+Reproduce the container build path locally:
+
+```bash
+npm ci && npm run build
+mkdir -p backend/internal/frontend/out && cp -R out/. backend/internal/frontend/out
+( cd backend && CGO_ENABLED=0 go build -o ../dist/vibegrid ./cmd/vibegrid )
+
+# With a local Postgres (durable path):
+DATABASE_URL="postgres://localhost/vibegrid?sslmode=disable" \
+VIBEGRID_ADMIN_PASSWORD=dev VIBEGRID_ADMIN_SESSION_SECRET=devsecret \
+VIBEGRID_ADDR=:8081 ./dist/vibegrid
+# migrations: ./dist/vibegrid migrate  (run once; or rely on it via DATABASE_URL)
+
+# Without a database (in-memory, non-durable, seed puzzles only):
+VIBEGRID_ADDR=:8081 ./dist/vibegrid
+```
+
+Then open `http://localhost:8081/`, `/p/vibegrid-2026-06-02`, `/metrics`,
+`/robots.txt`, `/sitemap.xml`.
+
+Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 vibegrid`.
+
+---
+
+## Environment variable reference
+
+| Variable | Required | Where | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | Yes (prod) | secret | Postgres DSN. Unset ⇒ in-memory, non-durable. Mind the pooler gotcha (step 1). |
+| `VIBEGRID_ADMIN_PASSWORD` | Yes (prod) | secret | Admin browser login. |
+| `VIBEGRID_ADMIN_SESSION_SECRET` | Yes (prod) | secret | HMAC key for the admin session cookie. Required alongside the password. |
+| `VIBEGRID_ADMIN_TOKEN` | Optional | secret | Legacy bearer token for automation/API. |
+| `VIBEGRID_SECURE_COOKIES` | Yes (prod) | `fly.toml` | `true` ⇒ `Secure` cookies. Requires HTTPS. |
+| `VIBEGRID_TIMEZONE` | Yes (prod) | `fly.toml` | Defines daily rollover. Set explicitly (code default is `Asia/Kolkata`). |
+| `VIBEGRID_ADDR` | No | `fly.toml`/image | Listen address, default `:8081`. |
+| `VIBEGRID_ALLOWED_ORIGINS` | Only cross-origin | secret/env | Comma-separated browser origins for CORS. Not needed same-origin. |
+| `VIBEGRID_BLOCKED_TERMS` | Optional | secret/env | Comma-separated blocked terms for community puzzles. |
+| `NEXT_PUBLIC_APP_URL` | Recommended | **build arg** | Public URL baked into the frontend export. Build-time only. |
+
+---
+
+## Other hosts (non-Fly)
+
+Any host that runs a container works. You need to replicate three things from
+`fly.toml`:
+1. Run `/vibegrid migrate` **once per release** before traffic (release/pre-deploy
+   hook), with `DATABASE_URL` set.
+2. Set the env/secrets from the table above (`VIBEGRID_SECURE_COOKIES=true`, a
+   fixed `VIBEGRID_TIMEZONE`).
+3. Point the platform health check at **`/readyz`** and route HTTPS to port 8081.
+
+Render: a Web Service from the `Dockerfile` + a pre-deploy command of
+`/vibegrid migrate`. Railway: deploy the `Dockerfile`, add a release command,
+attach Postgres.

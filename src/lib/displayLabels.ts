@@ -1,4 +1,4 @@
-import type { Difficulty, PuzzleStatus } from "@/types/puzzle";
+import type { Difficulty, PuzzleOrigin, PuzzleStatus } from "@/types/puzzle";
 
 export function formatDifficulty(difficulty: Difficulty) {
   switch (difficulty) {
@@ -21,5 +21,15 @@ export function formatStatus(status: PuzzleStatus) {
     case "DRAFT":
     default:
       return "Draft";
+  }
+}
+
+export function formatOrigin(origin: PuzzleOrigin) {
+  switch (origin) {
+    case "COMMUNITY":
+      return "Community";
+    case "EDITORIAL":
+    default:
+      return "Editorial";
   }
 }

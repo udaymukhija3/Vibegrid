@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, Flag, RotateCcw, Send, Share2, Shuffle, Sparkles } from "lucide-react";
+import { Archive, Flag, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
+import { toast } from "sonner";
 import {
+  ATTEMPT_STORAGE_PREFIX,
   buildShareGrid,
   buildShareText,
+  cleanupStoredAttempts,
   formatElapsedTime,
   formatSeconds,
   MIN_STATS_PLAYERS
 } from "@/lib/game";
-import { fetchPuzzleStats, fetchStreak, type PuzzleStats, type StreakSummary } from "@/lib/api";
+import { fetchPuzzleStats, fetchStreak, reportPuzzle, type PuzzleStats, type StreakSummary } from "@/lib/api";
+import { apiFetch } from "@/lib/http";
 import { HowToPlay } from "@/components/HowToPlay";
 import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
 
@@ -55,10 +59,19 @@ const groupColors = [
 // Background-only palette (matching groupColors) for the share-grid squares.
 const squareColors = ["bg-mint", "bg-yolk", "bg-tomato", "bg-plum"];
 
-const reportEmail = process.env.NEXT_PUBLIC_REPORT_EMAIL ?? "hello@vibegrid.app";
+const reportReasons = [
+  { value: "OFFENSIVE", label: "Hateful or abusive" },
+  { value: "PERSONAL_INFO", label: "Personal information" },
+  { value: "SPAM", label: "Spam or scam" },
+  { value: "UNFAIR", label: "Broken or unfair" },
+  { value: "COPYRIGHT", label: "Copyright issue" },
+  { value: "OTHER", label: "Something else" }
+] as const;
+
+type ReportReason = (typeof reportReasons)[number]["value"];
 
 export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
-  const storageKey = `vibegrid:attempt:${puzzle.id}`;
+  const storageKey = `${ATTEMPT_STORAGE_PREFIX}${puzzle.id}`;
   const [attempt, setAttempt] = useState<StoredAttempt>(() => emptyAttempt(puzzle.id));
   const [message, setMessage] = useState("Fresh grid. Dangerous confidence optional.");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -67,8 +80,15 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const [tileOrder, setTileOrder] = useState(() => puzzle.tiles.map((tile) => tile.id));
   const [stats, setStats] = useState<PuzzleStats | null>(null);
   const [streak, setStreak] = useState<StreakSummary | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState<ReportReason>("OFFENSIVE");
+  const [reportDetails, setReportDetails] = useState("");
+  const [reportContact, setReportContact] = useState("");
+  const [isReporting, setIsReporting] = useState(false);
 
   useEffect(() => {
+    cleanupStoredAttempts(window.localStorage);
+
     const storedAttempt = window.localStorage.getItem(storageKey);
 
     if (!storedAttempt) {
@@ -103,7 +123,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
 
     async function loadAttempt() {
       try {
-        const response = await fetch(`/api/attempts/${puzzle.id}`, {
+        const response = await apiFetch(`/api/attempts/${puzzle.id}`, {
           credentials: "include"
         });
 
@@ -117,6 +137,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
         }
       } catch {
         setMessage("Could not sync attempt. Local board is still here.");
+        toast.error("Could not sync attempt.");
       }
     }
 
@@ -249,7 +270,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     setCopied(false);
 
     try {
-      const response = await fetch("/api/guesses", {
+      const response = await apiFetch("/api/guesses", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -266,6 +287,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       setAttempt((current) => {
         if (!result.ok) {
           setMessage(result.error);
+          toast.error(result.error);
           return current;
         }
 
@@ -293,17 +315,10 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       });
     } catch {
       setMessage("Could not submit. The grid is being dramatic.");
+      toast.error("Could not submit that guess.");
     } finally {
       setIsSubmitting(false);
     }
-  }
-
-  function resetAttempt() {
-    const nextAttempt = emptyAttempt(puzzle.id);
-    setAttempt(nextAttempt);
-    setCopied(false);
-    setMessage("Fresh grid. Dangerous confidence optional.");
-    window.localStorage.setItem(storageKey, JSON.stringify(nextAttempt));
   }
 
   // colorByTile maps every tile to its group's colour index. Once the puzzle is
@@ -328,7 +343,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     return new URL(`/p/${puzzle.id}`, process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").toString();
   }, [puzzle.id]);
 
-  function currentShareUrl() {
+  const currentShareUrl = useCallback(() => {
     if (typeof window === "undefined") {
       return fallbackShareUrl;
     }
@@ -336,21 +351,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     const url = new URL(window.location.href);
     url.hash = "";
     return url.toString();
-  }
-
-  const reportHref = useMemo(() => {
-    const body = [
-      `Puzzle: ${puzzle.id}`,
-      `Number: ${puzzle.puzzleNumber}`,
-      `URL: ${fallbackShareUrl}`,
-      "",
-      "What should we know?"
-    ].join("\n");
-
-    return `mailto:${reportEmail}?subject=${encodeURIComponent(
-      `Report VibeGrid #${puzzle.puzzleNumber}`
-    )}&body=${encodeURIComponent(body)}`;
-  }, [fallbackShareUrl, puzzle.id, puzzle.puzzleNumber]);
+  }, [fallbackShareUrl]);
 
   async function shareResult() {
     const shareText = buildShareText({
@@ -366,8 +367,39 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       shareUrl: currentShareUrl()
     });
 
-    await navigator.clipboard.writeText(shareText);
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setCopied(true);
+      toast.success("Copied result.");
+    } catch {
+      toast.error("Could not copy result.");
+    }
+  }
+
+  async function submitReport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isReporting) {
+      return;
+    }
+
+    setIsReporting(true);
+    try {
+      await reportPuzzle({
+        puzzleId: puzzle.id,
+        reason: reportReason,
+        details: reportDetails,
+        contact: reportContact
+      });
+      setReportDetails("");
+      setReportContact("");
+      setReportReason("OFFENSIVE");
+      setReportOpen(false);
+      toast.success("Report sent.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not send that report.");
+    } finally {
+      setIsReporting(false);
+    }
   }
 
   return (
@@ -422,15 +454,6 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           >
             <Shuffle aria-hidden size={18} />
           </button>
-          <button
-            aria-label="Reset attempt"
-            title="Reset attempt"
-            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
-            type="button"
-            onClick={resetAttempt}
-          >
-            <RotateCcw aria-hidden size={18} />
-          </button>
         </nav>
       </header>
 
@@ -480,7 +503,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
                 <button
                   key={tile.id}
                   className={clsx(
-                    "flex aspect-[1.45] min-h-20 items-center justify-center rounded border-2 border-ink px-2 text-center text-base font-black shadow-tile transition sm:text-lg",
+                    "flex aspect-[1.45] min-h-20 items-center justify-center rounded border-2 border-ink px-2 text-center text-base font-black shadow-tile transition [touch-action:manipulation] sm:text-lg",
                     isSelected
                       ? "translate-y-1 bg-ink text-white shadow-[0_4px_0_rgba(23,23,23,0.18)]"
                       : "bg-white hover:-translate-y-0.5 hover:bg-yolk"
@@ -595,13 +618,71 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
               <Sparkles aria-hidden size={16} />
               Make your own
             </Link>
-            <a
-              href={reportHref}
+            <button
+              type="button"
+              onClick={() => setReportOpen((open) => !open)}
               className="inline-flex h-10 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
             >
               <Flag aria-hidden size={16} />
               Report this grid
-            </a>
+            </button>
+            {reportOpen && (
+              <form className="grid gap-2 border-t border-neutral-200 pt-3" onSubmit={submitReport}>
+                <label className="grid gap-1 text-xs font-black text-neutral-600">
+                  Reason
+                  <select
+                    value={reportReason}
+                    onChange={(event) => setReportReason(event.target.value as ReportReason)}
+                    className="h-10 rounded border border-neutral-300 bg-white px-2 text-sm font-semibold text-ink"
+                  >
+                    {reportReasons.map((reason) => (
+                      <option key={reason.value} value={reason.value}>
+                        {reason.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-black text-neutral-600">
+                  Details
+                  <textarea
+                    value={reportDetails}
+                    onChange={(event) => setReportDetails(event.target.value)}
+                    maxLength={1000}
+                    rows={3}
+                    placeholder="What should moderators review?"
+                    className="resize-none rounded border border-neutral-300 px-2 py-2 text-sm font-semibold text-ink"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-black text-neutral-600">
+                  Contact
+                  <input
+                    value={reportContact}
+                    onChange={(event) => setReportContact(event.target.value)}
+                    maxLength={200}
+                    placeholder="Optional email"
+                    className="h-10 rounded border border-neutral-300 px-2 text-sm font-semibold text-ink"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReportOpen(false)}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-3 text-sm font-black text-neutral-700"
+                  >
+                    <X aria-hidden size={15} />
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isReporting}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded border-2 border-ink bg-yolk px-3 text-sm font-black shadow-[0_3px_0_#171717] disabled:opacity-50"
+                  >
+                    <Send aria-hidden size={15} />
+                    {isReporting ? "Sending" : "Send"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </aside>
       </section>

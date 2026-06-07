@@ -1,0 +1,65 @@
+{
+  "title": "VibeGrid Production",
+  "tags": ["vibegrid", "launch"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "App up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "vibegrid_up{job=\"vibegrid\"}",
+          "legendFormat": "up"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per second",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(vibegrid_http_requests_total{job=\"vibegrid\"}[5m])) by (route)",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "5xx responses",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(vibegrid_http_requests_total{job=\"vibegrid\",status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx/s"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 request latency",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(vibegrid_http_request_duration_seconds_bucket{job=\"vibegrid\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Status by route",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(vibegrid_http_requests_total{job=\"vibegrid\"}[5m])) by (route, status)",
+          "legendFormat": "{{route}} {{status}}"
+        }
+      ]
+    }
+  ]
+}

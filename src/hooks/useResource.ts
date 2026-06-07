@@ -30,7 +30,7 @@ export function useResource<T>(loader: () => Promise<T>, errorMessage: string): 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [errorMessage, loader]);
 
   return state;
 }

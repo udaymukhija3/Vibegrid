@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const goBackendUrl = process.env.GO_BACKEND_URL ?? "http://127.0.0.1:8081";
+const isStaticExport = process.env.VIBEGRID_STATIC_EXPORT === "true";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -15,19 +16,29 @@ const securityHeaders = [
 const nextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: projectRoot,
-  async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+  images: {
+    unoptimized: true
   },
-  async rewrites() {
-    return {
-      beforeFiles: [
-        {
-          source: "/api/:path*",
-          destination: `${goBackendUrl}/api/:path*`
+  ...(isStaticExport
+    ? {
+        output: "export",
+        trailingSlash: true
+      }
+    : {
+        async headers() {
+          return [{ source: "/:path*", headers: securityHeaders }];
+        },
+        async rewrites() {
+          return {
+            beforeFiles: [
+              {
+                source: "/api/:path*",
+                destination: `${goBackendUrl}/api/:path*`
+              }
+            ]
+          };
         }
-      ]
-    };
-  }
+      })
 };
 
 export default nextConfig;

@@ -1,6 +1,5 @@
 // Package db holds the SQL migrations for VibeGrid's durable state, embedded so
-// the binary can migrate its own database on startup without shipping loose
-// .sql files alongside it.
+// the release-time migrate command can run without shipping loose .sql files.
 package db
 
 import "embed"

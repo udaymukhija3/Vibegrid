@@ -2,8 +2,6 @@ package vibegrid
 
 import (
 	"context"
-	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,6 +27,8 @@ const (
 type AdminPuzzleStore interface {
 	CreateDraft(ctx context.Context, input AdminPuzzleInput) (Puzzle, error)
 	Publish(ctx context.Context, puzzleID, publishDate string) error
+	Archive(ctx context.Context, puzzleID string) error
+	Reinstate(ctx context.Context, puzzleID string) error
 }
 
 type AdminGroupInput struct {
@@ -138,21 +138,20 @@ func (input AdminPuzzleInput) toPuzzle(puzzleNumber int) Puzzle {
 	}
 }
 
-// requireAdmin gates admin handlers behind a bearer token compared in constant
-// time. With no token configured or no database wired, admin is unavailable.
+// requireAdmin gates admin handlers behind either the signed admin session
+// cookie used by the browser UI or the legacy bearer token used by scripts.
 func (server *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if server.adminToken == "" || server.adminPuzzles == nil {
+		hasSessionAuth := server.adminPassword != "" && server.adminSessionSecret != ""
+		if server.adminPuzzles == nil || (server.adminToken == "" && !hasSessionAuth) {
 			writeError(w, http.StatusServiceUnavailable, "Admin is not configured on this server.")
 			return
 		}
 
-		token := bearerToken(r)
-		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(server.adminToken)) != 1 {
+		if !server.isAdminRequest(r) {
 			writeError(w, http.StatusUnauthorized, "Admin authorization required.")
 			return
 		}
-
 		next(w, r)
 	}
 }
@@ -176,10 +175,8 @@ func (server *Server) handleAdminListPuzzles(w http.ResponseWriter, r *http.Requ
 }
 
 func (server *Server) handleAdminCreatePuzzle(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)
 	var input AdminPuzzleInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "That puzzle payload is not valid JSON.")
+	if !decodeJSONBody(w, r, maxAdminBodyBytes, &input, "That puzzle payload is not valid JSON.") {
 		return
 	}
 
@@ -197,7 +194,6 @@ func (server *Server) handleAdminCreatePuzzle(w http.ResponseWriter, r *http.Req
 }
 
 func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)
 	puzzleID := r.PathValue("id")
 	if puzzleID == "" {
 		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
@@ -205,8 +201,7 @@ func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Re
 	}
 
 	var request publishRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "That publish payload is not valid JSON.")
+	if !decodeJSONBody(w, r, maxAdminBodyBytes, &request, "That publish payload is not valid JSON.") {
 		return
 	}
 	if !isValidDate(request.PublishDate) {
@@ -217,6 +212,13 @@ func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Re
 	err := server.adminPuzzles.Publish(r.Context(), puzzleID, request.PublishDate)
 	switch {
 	case err == nil:
+		if server.moderation != nil {
+			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
+				PuzzleID: puzzleID,
+				Actor:    adminActor(r),
+				Action:   "PUZZLE_PUBLISHED",
+			})
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case errors.Is(err, ErrPublishDateTaken):
 		writeError(w, http.StatusConflict, "A puzzle is already published for that date.")
@@ -224,6 +226,56 @@ func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 	default:
 		writeError(w, http.StatusInternalServerError, "Could not publish that puzzle.")
+	}
+}
+
+func (server *Server) handleAdminArchivePuzzle(w http.ResponseWriter, r *http.Request) {
+	puzzleID := r.PathValue("id")
+	if puzzleID == "" {
+		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
+		return
+	}
+
+	err := server.adminPuzzles.Archive(r.Context(), puzzleID)
+	switch {
+	case err == nil:
+		if server.moderation != nil {
+			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
+				PuzzleID: puzzleID,
+				Actor:    adminActor(r),
+				Action:   "PUZZLE_ARCHIVED",
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, ErrPuzzleNotFound):
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+	default:
+		writeError(w, http.StatusInternalServerError, "Could not archive that puzzle.")
+	}
+}
+
+func (server *Server) handleAdminReinstatePuzzle(w http.ResponseWriter, r *http.Request) {
+	puzzleID := r.PathValue("id")
+	if puzzleID == "" {
+		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
+		return
+	}
+
+	err := server.adminPuzzles.Reinstate(r.Context(), puzzleID)
+	switch {
+	case err == nil:
+		if server.moderation != nil {
+			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
+				PuzzleID: puzzleID,
+				Actor:    adminActor(r),
+				Action:   "PUZZLE_REINSTATED",
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, ErrPuzzleNotFound):
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+	default:
+		writeError(w, http.StatusInternalServerError, "Could not reinstate that puzzle.")
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 )
 
 const testAdminToken = "test-admin-token"
+const testAdminPassword = "test-admin-password"
+const testAdminSessionSecret = "test-admin-session-secret"
 
 // newAdminTestServer connects to TEST_DATABASE_URL, clears all puzzle and
 // attempt data, and returns a server handler wired with admin enabled plus the
@@ -29,18 +31,22 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
 	puzzleStore := NewPostgresPuzzleStore(database)
 	handler := NewServer(ServerConfig{
-		Puzzles:      puzzleStore,
-		Store:        NewPostgresAttemptStore(database),
-		AdminPuzzles: puzzleStore,
-		Community:    puzzleStore,
-		AdminToken:   testAdminToken,
-		Clock:        fixedClock,
+		Puzzles:            puzzleStore,
+		Store:              NewPostgresAttemptStore(database),
+		AdminPuzzles:       puzzleStore,
+		Community:          puzzleStore,
+		RateLimits:         NewPostgresRateLimitStore(database),
+		Moderation:         NewPostgresModerationStore(database),
+		AdminToken:         testAdminToken,
+		AdminPassword:      testAdminPassword,
+		AdminSessionSecret: testAdminSessionSecret,
+		Clock:              fixedClock,
 	})
 	return handler, puzzleStore
 }
@@ -93,6 +99,27 @@ func TestAdminRequiresValidToken(t *testing.T) {
 	wrongToken := adminRequest(t, handler, http.MethodGet, "/api/admin/puzzles", "nope", nil)
 	if wrongToken.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 with wrong token, got %d", wrongToken.Code)
+	}
+}
+
+func TestAdminSessionCookieAuthenticatesAdminUI(t *testing.T) {
+	handler, _ := newAdminTestServer(t)
+
+	login := adminRequest(t, handler, http.MethodPost, "/api/admin/session", "", adminSessionRequest{Password: testAdminPassword})
+	if login.Code != http.StatusOK {
+		t.Fatalf("expected 200 on admin login, got %d: %s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected admin login to set a cookie")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/puzzles", nil)
+	req.AddCookie(cookies[0])
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected admin cookie to authorize puzzles, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -183,6 +210,105 @@ func TestAdminCreateAndPublishFlow(t *testing.T) {
 	}
 	if got := len(PublishedPuzzles(puzzles)); got != 1 {
 		t.Fatalf("expected one published puzzle, got %d", got)
+	}
+}
+
+func TestAdminArchiveHidesPublishedPuzzle(t *testing.T) {
+	handler, _ := newAdminTestServer(t)
+
+	puzzleID := mustCreateDraft(t, handler)
+	published := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+puzzleID+"/publish", testAdminToken, publishRequest{PublishDate: "2026-06-02"})
+	if published.Code != http.StatusOK {
+		t.Fatalf("publish failed: %d %s", published.Code, published.Body.String())
+	}
+
+	public := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+puzzleID, "", nil)
+	if public.Code != http.StatusOK {
+		t.Fatalf("expected published puzzle to be public, got %d: %s", public.Code, public.Body.String())
+	}
+
+	archived := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+puzzleID+"/archive", testAdminToken, nil)
+	if archived.Code != http.StatusOK {
+		t.Fatalf("archive failed: %d %s", archived.Code, archived.Body.String())
+	}
+
+	hidden := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+puzzleID, "", nil)
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("expected archived puzzle to be hidden, got %d: %s", hidden.Code, hidden.Body.String())
+	}
+}
+
+func TestModerationReportArchiveAppealReinstateFlow(t *testing.T) {
+	handler, _ := newAdminTestServer(t)
+
+	created := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create community puzzle failed: %d %s", created.Code, created.Body.String())
+	}
+	var createdBody createdPuzzleResponse
+	if err := json.NewDecoder(created.Body).Decode(&createdBody); err != nil {
+		t.Fatal(err)
+	}
+
+	reported := adminRequest(t, handler, http.MethodPost, "/api/reports", "", ReportInput{
+		PuzzleID: createdBody.ID,
+		Reason:   "SPAM",
+		Details:  "test report",
+	})
+	if reported.Code != http.StatusCreated {
+		t.Fatalf("report failed: %d %s", reported.Code, reported.Body.String())
+	}
+
+	reportsResponse := adminRequest(t, handler, http.MethodGet, "/api/admin/moderation/reports", testAdminToken, nil)
+	if reportsResponse.Code != http.StatusOK {
+		t.Fatalf("load reports failed: %d %s", reportsResponse.Code, reportsResponse.Body.String())
+	}
+	var reports moderationQueueResponse
+	if err := json.NewDecoder(reportsResponse.Body).Decode(&reports); err != nil {
+		t.Fatal(err)
+	}
+	if len(reports.Reports) != 1 || reports.Reports[0].PuzzleID != createdBody.ID {
+		t.Fatalf("expected one report for created puzzle, got %#v", reports.Reports)
+	}
+
+	actioned := adminRequest(t, handler, http.MethodPost, "/api/admin/moderation/reports/"+reports.Reports[0].ID+"/resolve", testAdminToken, resolveReportRequest{Action: "ARCHIVE", Note: "test archive"})
+	if actioned.Code != http.StatusOK {
+		t.Fatalf("resolve report failed: %d %s", actioned.Code, actioned.Body.String())
+	}
+
+	hidden := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+createdBody.ID, "", nil)
+	if hidden.Code != http.StatusNotFound {
+		t.Fatalf("expected archived community puzzle to be hidden, got %d: %s", hidden.Code, hidden.Body.String())
+	}
+
+	appealed := adminRequest(t, handler, http.MethodPost, "/api/appeals", "", AppealInput{
+		PuzzleID: createdBody.ID,
+		Message:  "please restore this test puzzle",
+	})
+	if appealed.Code != http.StatusCreated {
+		t.Fatalf("appeal failed: %d %s", appealed.Code, appealed.Body.String())
+	}
+
+	appealsResponse := adminRequest(t, handler, http.MethodGet, "/api/admin/moderation/appeals", testAdminToken, nil)
+	if appealsResponse.Code != http.StatusOK {
+		t.Fatalf("load appeals failed: %d %s", appealsResponse.Code, appealsResponse.Body.String())
+	}
+	var appeals appealQueueResponse
+	if err := json.NewDecoder(appealsResponse.Body).Decode(&appeals); err != nil {
+		t.Fatal(err)
+	}
+	if len(appeals.Appeals) != 1 || appeals.Appeals[0].PuzzleID != createdBody.ID {
+		t.Fatalf("expected one appeal for created puzzle, got %#v", appeals.Appeals)
+	}
+
+	reinstated := adminRequest(t, handler, http.MethodPost, "/api/admin/moderation/appeals/"+appeals.Appeals[0].ID+"/resolve", testAdminToken, resolveAppealRequest{Action: "REINSTATE", Note: "test reinstate"})
+	if reinstated.Code != http.StatusOK {
+		t.Fatalf("resolve appeal failed: %d %s", reinstated.Code, reinstated.Body.String())
+	}
+
+	public := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+createdBody.ID, "", nil)
+	if public.Code != http.StatusOK {
+		t.Fatalf("expected reinstated puzzle to be public, got %d: %s", public.Code, public.Body.String())
 	}
 }
 

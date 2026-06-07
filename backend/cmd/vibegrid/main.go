@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vibegrid/vibegrid/backend/internal/frontend"
 	"github.com/vibegrid/vibegrid/backend/internal/vibegrid"
 )
 
@@ -45,12 +47,9 @@ func runMigrate(logger *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	database, err := vibegrid.OpenDB(ctx, databaseURL) // OpenDB applies migrations
-	if err != nil {
+	if err := vibegrid.MigrateDB(ctx, databaseURL); err != nil {
 		return err
 	}
-	defer database.Close()
-
 	logger.Info("migrations applied")
 	return nil
 }
@@ -60,8 +59,11 @@ func run(logger *slog.Logger) error {
 	timeZone := env("VIBEGRID_TIMEZONE", "Asia/Kolkata")
 	databaseURL := os.Getenv("DATABASE_URL")
 	adminToken := os.Getenv("VIBEGRID_ADMIN_TOKEN")
+	adminPassword := os.Getenv("VIBEGRID_ADMIN_PASSWORD")
+	adminSessionSecret := os.Getenv("VIBEGRID_ADMIN_SESSION_SECRET")
 	secureCookies := os.Getenv("VIBEGRID_SECURE_COOKIES") == "true"
-	allowedOrigins := splitOrigins(os.Getenv("VIBEGRID_ALLOWED_ORIGINS"))
+	allowedOrigins := splitCommaList(os.Getenv("VIBEGRID_ALLOWED_ORIGINS"))
+	blockedTerms := splitCommaList(os.Getenv("VIBEGRID_BLOCKED_TERMS"))
 
 	// Root context cancelled on SIGINT/SIGTERM so startup and shutdown share one
 	// lifecycle signal.
@@ -76,22 +78,32 @@ func run(logger *slog.Logger) error {
 
 	if deps.adminPuzzles == nil {
 		logger.Warn("admin endpoints disabled (requires DATABASE_URL)")
-	} else if adminToken == "" {
-		logger.Warn("admin endpoints disabled: set VIBEGRID_ADMIN_TOKEN to enable")
+	} else if adminPassword == "" && adminToken == "" {
+		logger.Warn("admin endpoints disabled: set VIBEGRID_ADMIN_PASSWORD or VIBEGRID_ADMIN_TOKEN to enable")
+	} else if adminPassword != "" && adminSessionSecret == "" {
+		logger.Warn("admin password set without VIBEGRID_ADMIN_SESSION_SECRET; browser admin login disabled")
 	}
 
 	handler := vibegrid.NewServer(vibegrid.ServerConfig{
-		Puzzles:        deps.puzzles,
-		Store:          deps.attempts,
-		AdminPuzzles:   deps.adminPuzzles,
-		Community:      deps.community,
-		Stats:          deps.stats,
-		ReadyCheck:     deps.ready,
-		AdminToken:     adminToken,
-		Clock:          time.Now,
-		TimeZone:       timeZone,
-		AllowedOrigins: allowedOrigins,
-		SecureCookies:  secureCookies,
+		Puzzles:            deps.puzzles,
+		Store:              deps.attempts,
+		AdminPuzzles:       deps.adminPuzzles,
+		Community:          deps.community,
+		Stats:              deps.stats,
+		RateLimits:         deps.rateLimits,
+		Moderation:         deps.moderation,
+		ReadyCheck:         deps.ready,
+		Frontend:           frontend.NewHandler(frontend.Embedded()),
+		AdminToken:         adminToken,
+		AdminPassword:      adminPassword,
+		AdminSessionSecret: adminSessionSecret,
+		Clock:              time.Now,
+		TimeZone:           timeZone,
+		AllowedOrigins:     allowedOrigins,
+		SecureCookies:      secureCookies,
+		BlockedTerms:       blockedTerms,
+		DBStats:            deps.dbStats,
+		PuzzleCacheStats:   deps.puzzleCacheStats,
 	})
 
 	server := &http.Server{
@@ -105,7 +117,7 @@ func run(logger *slog.Logger) error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("vibegrid backend listening", "addr", addr)
+		logger.Info("vibegrid listening", "addr", addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
@@ -125,13 +137,17 @@ func run(logger *slog.Logger) error {
 // deps bundles the store implementations the server needs, plus a close hook
 // and a readiness probe (nil when there is no database to check).
 type deps struct {
-	attempts     vibegrid.Store
-	puzzles      vibegrid.PuzzleSource
-	adminPuzzles vibegrid.AdminPuzzleStore
-	community    vibegrid.CommunityPuzzleStore
-	stats        vibegrid.StatsStore
-	ready        func(context.Context) error
-	close        func()
+	attempts         vibegrid.Store
+	puzzles          vibegrid.PuzzleSource
+	adminPuzzles     vibegrid.AdminPuzzleStore
+	community        vibegrid.CommunityPuzzleStore
+	stats            vibegrid.StatsStore
+	rateLimits       vibegrid.RateLimitStore
+	moderation       vibegrid.ModerationStore
+	ready            func(context.Context) error
+	dbStats          func() sql.DBStats
+	puzzleCacheStats func() vibegrid.CacheStats
+	close            func()
 }
 
 // buildDeps wires the durable Postgres stores when DATABASE_URL is set and
@@ -147,7 +163,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		}, nil
 	}
 
-	database, err := vibegrid.OpenDB(ctx, databaseURL)
+	database, err := vibegrid.ConnectDB(ctx, databaseURL)
 	if err != nil {
 		return deps{}, err
 	}
@@ -158,14 +174,30 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		return deps{}, fmt.Errorf("seed puzzles: %w", err)
 	}
 
-	logger.Info("connected to postgres, migrations applied, puzzles seeded")
+	// Cache immutable puzzle content in process so the per-guess read path does
+	// not reload groups and tiles from Postgres on every request. The same
+	// instance backs the public, admin, and community surfaces, so status changes
+	// (publish/archive/reinstate) invalidate the cached copy.
+	puzzles := vibegrid.NewCachedPuzzleStore(puzzleStore, 5*time.Minute)
+
+	// Expose cache effectiveness on /metrics when the decorator is active.
+	var puzzleCacheStats func() vibegrid.CacheStats
+	if provider, ok := puzzles.(interface{ CacheStats() vibegrid.CacheStats }); ok {
+		puzzleCacheStats = provider.CacheStats
+	}
+
+	logger.Info("connected to postgres, puzzles seeded")
 	return deps{
-		attempts:     vibegrid.NewPostgresAttemptStore(database),
-		puzzles:      puzzleStore,
-		adminPuzzles: puzzleStore,
-		community:    puzzleStore,
-		stats:        vibegrid.NewPostgresStatsStore(database),
-		ready:        database.PingContext,
+		attempts:         vibegrid.NewPostgresAttemptStore(database),
+		puzzles:          puzzles,
+		adminPuzzles:     puzzles,
+		community:        puzzles,
+		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
+		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
+		moderation:       vibegrid.NewPostgresModerationStore(database),
+		ready:            database.PingContext,
+		dbStats:          database.Stats,
+		puzzleCacheStats: puzzleCacheStats,
 		close: func() {
 			if err := database.Close(); err != nil {
 				logger.Error("closing postgres pool", "error", err)
@@ -174,7 +206,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 	}, nil
 }
 
-func splitOrigins(raw string) []string {
+func splitCommaList(raw string) []string {
 	if raw == "" {
 		return nil
 	}

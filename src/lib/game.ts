@@ -4,6 +4,11 @@ export const MAX_MISTAKES = 4;
 // fresh puzzle doesn't display noisy 1-or-2-player stats.
 export const MIN_STATS_PLAYERS = 20;
 
+export const ATTEMPT_STORAGE_PREFIX = "vibegrid:attempt:";
+export const ATTEMPT_STORAGE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+type AttemptStorage = Pick<Storage, "length" | "key" | "getItem" | "removeItem">;
+
 export function formatElapsedTime(startedAt: string, finishedAt = new Date().toISOString()) {
   const elapsedMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
   const totalSeconds = Math.floor(elapsedMs / 1000);
@@ -18,6 +23,44 @@ export function formatSeconds(totalSeconds: number) {
   const minutes = Math.floor(safe / 60);
   const seconds = safe % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+export function cleanupStoredAttempts(storage: AttemptStorage, nowMs = Date.now()) {
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index);
+    if (key?.startsWith(ATTEMPT_STORAGE_PREFIX)) {
+      keys.push(key);
+    }
+  }
+
+  for (const key of keys) {
+    const raw = storage.getItem(key);
+    if (!raw) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as { startedAt?: unknown; completedAt?: unknown };
+      const timestamp = latestAttemptTimestamp(parsed);
+      if (timestamp === null || nowMs - timestamp > ATTEMPT_STORAGE_TTL_MS) {
+        storage.removeItem(key);
+      }
+    } catch {
+      storage.removeItem(key);
+    }
+  }
+}
+
+function latestAttemptTimestamp(attempt: { startedAt?: unknown; completedAt?: unknown }) {
+  const timestamps = [attempt.startedAt, attempt.completedAt]
+    .map((value) => (typeof value === "string" ? Date.parse(value) : NaN))
+    .filter((value) => Number.isFinite(value));
+
+  if (timestamps.length === 0) {
+    return null;
+  }
+  return Math.max(...timestamps);
 }
 
 // Coloured squares for the spoiler-safe share grid, indexed by a group's

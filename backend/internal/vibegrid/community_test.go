@@ -1,10 +1,22 @@
 package vibegrid
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+type fakeCommunityStore struct{}
+
+func (fakeCommunityStore) CreateCommunityPuzzle(_ context.Context, input AdminPuzzleInput) (Puzzle, error) {
+	puzzle := input.toPuzzle(999)
+	puzzle.Status = PuzzleStatusPublished
+	puzzle.Origin = OriginCommunity
+	return puzzle, nil
+}
 
 func TestCommunityCreateNeedsNoToken(t *testing.T) {
 	handler, _ := newAdminTestServer(t)
@@ -37,6 +49,47 @@ func TestCommunityCreateRejectsOverlongTiles(t *testing.T) {
 	response := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", input)
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 for overlong public tile, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCommunityCreateRejectsBlockedTerms(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles:      StaticPuzzleSource(SeedPuzzles()),
+		Community:    fakeCommunityStore{},
+		BlockedTerms: []string{"forbidden phrase"},
+	})
+
+	input := validPuzzleInput()
+	input.Groups[0].Tiles[0] = "forbidden phrase"
+
+	response := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", input)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for blocked term, got %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "blocked word or phrase") {
+		t.Fatalf("expected blocked-term message, got %s", response.Body.String())
+	}
+}
+
+func TestClientIPUsesTrustedProxyHeaders(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/community/puzzles", nil)
+	request.RemoteAddr = "203.0.113.10:12345"
+	request.Header.Set("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
+	request.Header.Set("X-Real-IP", "198.51.100.9")
+	request.Header.Set("Fly-Client-IP", "198.51.100.8")
+
+	if got := clientIP(request); got != "198.51.100.8" {
+		t.Fatalf("expected Fly-Client-IP, got %q", got)
+	}
+
+	request.Header.Del("Fly-Client-IP")
+	if got := clientIP(request); got != "198.51.100.9" {
+		t.Fatalf("expected X-Real-IP fallback, got %q", got)
+	}
+
+	request.Header.Del("X-Real-IP")
+	if got := clientIP(request); got != "203.0.113.10" {
+		t.Fatalf("expected RemoteAddr fallback, got %q", got)
 	}
 }
 

@@ -19,10 +19,27 @@ import (
 // violation. We use it to detect a replayed client guess racing against itself.
 const pgUniqueViolation = "23505"
 
+// Keep DB work below the outer HTTP timeout so handlers can return intentional
+// errors instead of letting http.TimeoutHandler be the first line of defense.
+const databaseOperationTimeout = 4 * time.Second
+
+func withDatabaseTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, databaseOperationTimeout)
+}
+
+// ConnectDB opens a connection pool and verifies connectivity. The attempt
+// store and puzzle store share the returned pool; the caller owns Close.
+func ConnectDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
+	return openDB(ctx, databaseURL, false)
+}
+
 // OpenDB opens a connection pool, verifies connectivity, and applies migrations.
-// The attempt store and puzzle store share the returned pool; the caller owns
-// Close.
+// It is used by the explicit migrate command and integration tests.
 func OpenDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
+	return openDB(ctx, databaseURL, true)
+}
+
+func openDB(ctx context.Context, databaseURL string, applyMigrations bool) (*sql.DB, error) {
 	database, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
@@ -39,12 +56,25 @@ func OpenDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	if err := runMigrations(database); err != nil {
-		_ = database.Close()
-		return nil, err
+	if applyMigrations {
+		if err := runMigrations(database); err != nil {
+			_ = database.Close()
+			return nil, err
+		}
 	}
 
 	return database, nil
+}
+
+func MigrateDB(ctx context.Context, databaseURL string) error {
+	database, err := OpenDB(ctx, databaseURL)
+	if err != nil {
+		return err
+	}
+	if err := database.Close(); err != nil {
+		return fmt.Errorf("close migrated postgres pool: %w", err)
+	}
+	return nil
 }
 
 func runMigrations(database *sql.DB) error {
@@ -71,12 +101,17 @@ func NewPostgresAttemptStore(database *sql.DB) *PostgresAttemptStore {
 	return &PostgresAttemptStore{db: database}
 }
 
-func (store *PostgresAttemptStore) GetOrCreate(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
-	if err := store.ensureAttempt(ctx, puzzle.ID, sessionID, now); err != nil {
-		return AttemptSnapshot{}, err
-	}
+func (store *PostgresAttemptStore) GetAttempt(ctx context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
 
+	// Read-only: the attempt row is created lazily on the first guess (see
+	// SubmitGuess -> ensureAttempt), so loading a board never writes. A session
+	// that has not guessed yet gets a fresh, empty snapshot.
 	state, err := store.readState(ctx, store.db, puzzle.ID, sessionID, false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return buildSnapshot(puzzle, freshState(puzzle.ID, sessionID, now)), nil
+	}
 	if err != nil {
 		return AttemptSnapshot{}, err
 	}
@@ -84,6 +119,9 @@ func (store *PostgresAttemptStore) GetOrCreate(ctx context.Context, puzzle Puzzl
 }
 
 func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
 	if err := store.ensureAttempt(ctx, puzzle.ID, sessionID, now); err != nil {
 		return GuessSubmission{}, err
 	}

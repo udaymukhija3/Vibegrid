@@ -27,7 +27,7 @@ func newTestStore(t *testing.T) *PostgresAttemptStore {
 
 	// Truncating puzzles cascades to groups, tiles, attempts, and guesses, giving
 	// each test a clean slate regardless of what other tests left behind.
-	if _, err := database.Exec(`truncate puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	// Attempts reference puzzles by foreign key, so the seed puzzle must exist
@@ -135,7 +135,7 @@ func TestPostgresConcurrentDuplicateGuessCountsOnce(t *testing.T) {
 	}
 	wg.Wait()
 
-	snapshot, err := store.GetOrCreate(ctx, puzzle, "session-race", fixedClock())
+	snapshot, err := store.GetAttempt(ctx, puzzle, "session-race", fixedClock())
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPostgresConcurrentDistinctGuessesSerialize(t *testing.T) {
 	}
 	wg.Wait()
 
-	snapshot, err := store.GetOrCreate(ctx, puzzle, "session-serial", time.Now())
+	snapshot, err := store.GetAttempt(ctx, puzzle, "session-serial", time.Now())
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

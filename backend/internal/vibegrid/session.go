@@ -14,7 +14,7 @@ const sessionCookieName = "vibegrid_session"
 const sessionTTL = 24 * time.Hour * 183
 
 func EnsureSessionID(w http.ResponseWriter, r *http.Request, secure bool) string {
-	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && validSessionID(cookie.Value) {
 		return cookie.Value
 	}
 
@@ -36,8 +36,16 @@ func EnsureSessionID(w http.ResponseWriter, r *http.Request, secure bool) string
 func randomSessionID() string {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format(time.RFC3339Nano)))
+		panic("crypto/rand failed while generating session id: " + err.Error())
 	}
 
 	return hex.EncodeToString(bytes)
+}
+
+func validSessionID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }

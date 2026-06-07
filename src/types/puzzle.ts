@@ -1,5 +1,7 @@
 export type Difficulty = "EASY" | "MEDIUM" | "HARD";
 export type PuzzleStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+export type PuzzleOrigin = "EDITORIAL" | "COMMUNITY";
+export type ModerationStatus = "OPEN" | "ACTIONED" | "DISMISSED" | "RESOLVED";
 
 export type Tile = {
   id: string;
@@ -9,7 +11,7 @@ export type Tile = {
 export type PublicPuzzle = {
   id: string;
   puzzleNumber: number;
-  publishDate: string;
+  publishDate?: string;
   difficulty: Difficulty;
   tiles: Tile[];
   groupCount: number;
@@ -39,6 +41,7 @@ export type AdminPuzzle = {
   publishDate: string;
   status: PuzzleStatus;
   difficulty: Difficulty;
+  origin: PuzzleOrigin;
   groups: AdminGroup[];
 };
 
@@ -51,6 +54,48 @@ export type DraftGroupInput = {
 export type DraftPuzzleInput = {
   difficulty: Difficulty;
   groups: DraftGroupInput[];
+};
+
+export type ModerationReport = {
+  id: string;
+  puzzleId: string;
+  puzzleNumber: number;
+  puzzleStatus: PuzzleStatus;
+  puzzleOrigin: PuzzleOrigin;
+  reason: string;
+  details: string;
+  contact: string;
+  status: ModerationStatus;
+  createdAt: string;
+  resolvedAt?: string;
+  resolutionNote: string;
+};
+
+export type ModerationAppeal = {
+  id: string;
+  puzzleId: string;
+  puzzleNumber: number;
+  puzzleStatus: PuzzleStatus;
+  puzzleOrigin: PuzzleOrigin;
+  contact: string;
+  message: string;
+  status: ModerationStatus;
+  createdAt: string;
+  resolvedAt?: string;
+  resolutionNote: string;
+};
+
+export type ModerationAction = {
+  id: string;
+  reportId?: string;
+  appealId?: string;
+  puzzleId?: string;
+  puzzleNumber?: number;
+  actor: string;
+  action: string;
+  reason: string;
+  note: string;
+  createdAt: string;
 };
 
 export type AttemptSnapshot = {

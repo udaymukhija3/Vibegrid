@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Copy, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 import { createCommunityPuzzle } from "@/lib/api";
 import { PuzzleDraftForm } from "@/components/PuzzleDraftForm";
 
@@ -16,8 +17,13 @@ export function CreatePuzzle() {
     if (!share) {
       return;
     }
-    await navigator.clipboard.writeText(share.url);
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(share.url);
+      setCopied(true);
+      toast.success("Copied link.");
+    } catch {
+      toast.error("Could not copy link.");
+    }
   }
 
   return (
@@ -62,8 +68,24 @@ export function CreatePuzzle() {
               number: created.puzzleNumber
             });
             setCopied(false);
+            toast.success("Your grid is live.");
           }}
         />
+        <p className="mt-4 text-xs font-semibold leading-5 text-neutral-500">
+          By creating a grid, you agree to the{" "}
+          <Link href="/policy" className="font-black text-ink underline decoration-2 underline-offset-4">
+            community rules
+          </Link>
+          ,{" "}
+          <Link href="/terms" className="font-black text-ink underline decoration-2 underline-offset-4">
+            terms
+          </Link>
+          , and{" "}
+          <Link href="/privacy" className="font-black text-ink underline decoration-2 underline-offset-4">
+            privacy notice
+          </Link>
+          .
+        </p>
       </section>
     </div>
   );
