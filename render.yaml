@@ -1,0 +1,31 @@
+# Render Blueprint — free, effectively-always-on VibeGrid deploy.
+#
+# Pairs with a free Neon Postgres. See docs/deployment.md ("Free tier") for the
+# full click-path. Notes:
+#   * plan: free spins down after ~15 min idle; a free uptime ping to /healthz
+#     keeps it warm (see the runbook).
+#   * The free plan has no pre-deploy hook, so migrations run on boot via
+#     VIBEGRID_MIGRATE_ON_BOOT=true (safe here: one instance, nothing to race).
+#   * VIBEGRID_ADDR is intentionally unset so the app binds Render's $PORT.
+#   * sync: false vars are secrets — set them in the Render dashboard, never here.
+services:
+  - type: web
+    name: vibegrid
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /readyz
+    autoDeploy: true
+    envVars:
+      - key: VIBEGRID_TIMEZONE
+        value: UTC
+      - key: VIBEGRID_SECURE_COOKIES
+        value: "true"
+      - key: VIBEGRID_MIGRATE_ON_BOOT
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: VIBEGRID_ADMIN_PASSWORD
+        sync: false
+      - key: VIBEGRID_ADMIN_SESSION_SECRET
+        sync: false

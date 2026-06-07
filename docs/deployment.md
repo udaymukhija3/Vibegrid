@@ -261,10 +261,48 @@ Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 
 | `VIBEGRID_ADMIN_TOKEN` | Optional | secret | Legacy bearer token for automation/API. |
 | `VIBEGRID_SECURE_COOKIES` | Yes (prod) | `fly.toml` | `true` ⇒ `Secure` cookies. Requires HTTPS. |
 | `VIBEGRID_TIMEZONE` | Yes (prod) | `fly.toml` | Defines daily rollover. Set explicitly (code default is `Asia/Kolkata`). |
-| `VIBEGRID_ADDR` | No | `fly.toml`/image | Listen address, default `:8081`. |
+| `VIBEGRID_ADDR` | No | `fly.toml`/image | Listen address. Unset ⇒ binds `:$PORT` if the platform injects `PORT`, else `:8081`. |
+| `VIBEGRID_MIGRATE_ON_BOOT` | No | env | `true` ⇒ apply migrations on startup (single-instance hosts with no release hook, e.g. Render free). Don't use multi-instance. |
 | `VIBEGRID_ALLOWED_ORIGINS` | Only cross-origin | secret/env | Comma-separated browser origins for CORS. Not needed same-origin. |
 | `VIBEGRID_BLOCKED_TERMS` | Optional | secret/env | Comma-separated blocked terms for community puzzles. |
 | `NEXT_PUBLIC_APP_URL` | Recommended | **build arg** | Public URL baked into the frontend export. Build-time only. |
+
+---
+
+## Free tier (Render + Neon, $0)
+
+For a portfolio link that should stay up without a bill, deploy the same
+container on **Render's free Web Service** and point it at a **free Neon
+Postgres**. The repo ships a [`render.yaml`](../render.yaml) blueprint for this.
+
+Two things differ from the Fly path and are already handled:
+- **No release hook on free.** The free plan can't run `/vibegrid migrate` as a
+  pre-deploy step, so the blueprint sets `VIBEGRID_MIGRATE_ON_BOOT=true` — the
+  server applies migrations on startup. Safe here because the free plan runs a
+  single instance (nothing races). Do **not** use this on multi-instance hosts.
+- **Port.** The binary binds `$PORT` when set (Render injects it), so
+  `VIBEGRID_ADDR` is left unset in the blueprint.
+
+Steps:
+1. **Neon** — create a free project; copy the connection string. Use the
+   **direct** (non-pooled) string to dodge the PgBouncer prepared-statement
+   gotcha in step 1 above; at one instance × `SetMaxOpenConns(10)` you are well
+   under the free connection cap. Ensure it ends with `?sslmode=require`.
+2. **Render** — New ➜ **Blueprint**, point it at this repo. Render reads
+   `render.yaml` and creates the service. In the dashboard set the three
+   `sync: false` secrets: `DATABASE_URL` (from Neon),
+   `VIBEGRID_ADMIN_PASSWORD`, `VIBEGRID_ADMIN_SESSION_SECRET` (generate per
+   step 2 above). Deploy.
+3. **Keep it warm (optional but recommended).** Render free **spins down after
+   ~15 min idle** (first hit then wakes in ~30–60 s). A free uptime monitor
+   (UptimeRobot / cron-job.org) hitting `GET /healthz` every ~10 min keeps it
+   awake and doubles as your liveness alert — within the free monthly hours.
+4. Verify with the **section 6** checklist against your `…onrender.com` URL.
+
+> **Truly always-on for $0 (no cold start)?** Only by running your own
+> always-free VM (e.g. Oracle Cloud Always Free) with Docker + this image — more
+> setup, no spin-down. Or pay ~$7/mo for a Render paid instance, or ~$2–5/mo on
+> Fly/Railway, to drop the cold start entirely.
 
 ---
 
@@ -272,12 +310,16 @@ Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 
 
 Any host that runs a container works. You need to replicate three things from
 `fly.toml`:
-1. Run `/vibegrid migrate` **once per release** before traffic (release/pre-deploy
-   hook), with `DATABASE_URL` set.
+1. Apply migrations before serving — either run `/vibegrid migrate` **once per
+   release** (release/pre-deploy hook), or set `VIBEGRID_MIGRATE_ON_BOOT=true`
+   on single-instance deploys (see the free-tier section). Either way
+   `DATABASE_URL` must be set.
 2. Set the env/secrets from the table above (`VIBEGRID_SECURE_COOKIES=true`, a
    fixed `VIBEGRID_TIMEZONE`).
-3. Point the platform health check at **`/readyz`** and route HTTPS to port 8081.
+3. Point the platform health check at **`/readyz`** and route HTTPS to the app's
+   port — it listens on `$PORT` if the platform injects one, else `8081`.
 
-Render: a Web Service from the `Dockerfile` + a pre-deploy command of
-`/vibegrid migrate`. Railway: deploy the `Dockerfile`, add a release command,
-attach Postgres.
+Render: use the [`render.yaml`](../render.yaml) blueprint (free), or a Web
+Service from the `Dockerfile` + a pre-deploy `/vibegrid migrate` on paid.
+Railway: deploy the `Dockerfile`, attach Postgres, and either add a release
+command or set `VIBEGRID_MIGRATE_ON_BOOT=true`.

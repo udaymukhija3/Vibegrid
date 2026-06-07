@@ -55,7 +55,7 @@ func runMigrate(logger *slog.Logger) error {
 }
 
 func run(logger *slog.Logger) error {
-	addr := env("VIBEGRID_ADDR", ":8081")
+	addr := resolveAddr()
 	timeZone := env("VIBEGRID_TIMEZONE", "Asia/Kolkata")
 	databaseURL := os.Getenv("DATABASE_URL")
 	adminToken := os.Getenv("VIBEGRID_ADMIN_TOKEN")
@@ -69,6 +69,21 @@ func run(logger *slog.Logger) error {
 	// lifecycle signal.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Single-instance hosts without a release/pre-deploy hook (e.g. Render's free
+	// tier) can apply migrations here instead of via the `vibegrid migrate`
+	// release command. Leave this unset on multi-instance hosts so instances do
+	// not race to migrate on boot — use the release command there.
+	if os.Getenv("VIBEGRID_MIGRATE_ON_BOOT") == "true" {
+		if databaseURL == "" {
+			return errors.New("VIBEGRID_MIGRATE_ON_BOOT=true but DATABASE_URL is empty")
+		}
+		logger.Info("applying migrations on boot (VIBEGRID_MIGRATE_ON_BOOT=true)")
+		if err := vibegrid.MigrateDB(ctx, databaseURL); err != nil {
+			return fmt.Errorf("migrate on boot: %w", err)
+		}
+		logger.Info("migrations applied on boot")
+	}
 
 	deps, err := buildDeps(ctx, logger, databaseURL)
 	if err != nil {
@@ -219,6 +234,20 @@ func splitCommaList(raw string) []string {
 		}
 	}
 	return origins
+}
+
+// resolveAddr picks the listen address. An explicit VIBEGRID_ADDR always wins
+// (Fly sets it in fly.toml); otherwise it honors the PORT env injected by PaaS
+// hosts (Render, Railway, Cloud Run, Koyeb), falling back to :8081 for local and
+// plain `docker run`.
+func resolveAddr() string {
+	if addr := os.Getenv("VIBEGRID_ADDR"); addr != "" {
+		return addr
+	}
+	if port := os.Getenv("PORT"); port != "" {
+		return ":" + port
+	}
+	return ":8081"
 }
 
 func env(key, fallback string) string {
