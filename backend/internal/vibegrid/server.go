@@ -136,6 +136,8 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
+	mux.HandleFunc("GET /robots.txt", server.handleRobots)
+	mux.HandleFunc("GET /sitemap.xml", server.handleSitemap)
 	mux.HandleFunc("GET /api/attempts/", server.handleAttempt)
 	mux.HandleFunc("GET /api/streak", server.handleStreak)
 	mux.HandleFunc("POST /api/guesses", server.handleGuess)
