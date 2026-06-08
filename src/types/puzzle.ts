@@ -108,6 +108,9 @@ export type AttemptSnapshot = {
   completedAt?: string;
   failed: boolean;
   completed: boolean;
+  // Server-authoritative ordered guess history (tile ids per guess) so any
+  // client can rebuild the share grid, even a tab that never saw the guesses.
+  guessHistory: string[][];
 };
 
 export type GuessResponse =

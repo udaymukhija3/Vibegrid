@@ -27,6 +27,17 @@ func withDatabaseTimeout(ctx context.Context) (context.Context, context.CancelFu
 	return context.WithTimeout(ctx, databaseOperationTimeout)
 }
 
+// seedTimeout bounds the one-time startup seed. Unlike request handlers, the
+// seed inserts many rows in a single transaction and runs off the request path,
+// so the tight per-request databaseOperationTimeout is far too small for it —
+// especially when the database is remote (app and DB in different regions),
+// where the per-statement round trips add up.
+const seedTimeout = 2 * time.Minute
+
+func withSeedTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, seedTimeout)
+}
+
 // ConnectDB opens a connection pool and verifies connectivity. The attempt
 // store and puzzle store share the returned pool; the caller owns Close.
 func ConnectDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
@@ -115,6 +126,13 @@ func (store *PostgresAttemptStore) GetAttempt(ctx context.Context, puzzle Puzzle
 	if err != nil {
 		return AttemptSnapshot{}, err
 	}
+
+	history, err := store.guessHistoryBySession(ctx, store.db, puzzle.ID, sessionID)
+	if err != nil {
+		return AttemptSnapshot{}, err
+	}
+	state.GuessHistory = history
+
 	return buildSnapshot(puzzle, state), nil
 }
 
@@ -147,6 +165,15 @@ func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzl
 		return GuessSubmission{}, fmt.Errorf("load attempt id: %w", err)
 	}
 
+	// Hydrate the prior guess history under the same lock so both the
+	// idempotent-replay response and a freshly applied guess return the full,
+	// ordered list a second tab needs to rebuild the share grid.
+	history, err := store.guessHistoryByAttempt(ctx, tx, attemptID)
+	if err != nil {
+		return GuessSubmission{}, err
+	}
+	state.GuessHistory = history
+
 	// Idempotency: a previously recorded client guess returns its original result.
 	if stored, ok, err := store.findGuess(ctx, tx, attemptID, request.ClientGuessID); err != nil {
 		return GuessSubmission{}, err
@@ -166,7 +193,7 @@ func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzl
 		return GuessSubmission{}, err
 	}
 
-	storedGuess := state.applyGuess(puzzle, matchedGroup, now)
+	storedGuess := state.applyGuess(puzzle, matchedGroup, request.SelectedTileIDs, now)
 
 	if err := store.insertGuess(ctx, tx, attemptID, request, storedGuess); err != nil {
 		// A concurrent insert of the same client guess id won the race. Treat it
@@ -210,6 +237,60 @@ func (store *PostgresAttemptStore) ensureAttempt(ctx context.Context, puzzleID, 
 // locked (in a transaction) or unlocked (for plain reads).
 type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// rowsQuerier is satisfied by both *sql.DB and *sql.Tx so guess history can be
+// loaded locked (inside SubmitGuess's transaction) or unlocked (plain reads).
+type rowsQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// guessHistoryByAttempt returns every guess for an attempt as ordered tile-id
+// rows. Guesses for one attempt are serialized by the row lock in SubmitGuess,
+// so created_at is strictly increasing and gives a stable submission order.
+func (store *PostgresAttemptStore) guessHistoryByAttempt(ctx context.Context, q rowsQuerier, attemptID string) ([][]string, error) {
+	rows, err := q.QueryContext(ctx,
+		`select selected_tile_ids from attempt_guesses
+		 where attempt_id = $1 order by created_at asc`,
+		attemptID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load guess history: %w", err)
+	}
+	defer rows.Close()
+	return scanGuessHistory(rows)
+}
+
+// guessHistoryBySession loads guess history without a known attempt id, joining
+// through attempts on (puzzle_id, session_id). Used by the read paths.
+func (store *PostgresAttemptStore) guessHistoryBySession(ctx context.Context, q rowsQuerier, puzzleID, sessionID string) ([][]string, error) {
+	rows, err := q.QueryContext(ctx,
+		`select g.selected_tile_ids from attempt_guesses g
+		 join attempts a on a.id = g.attempt_id
+		 where a.puzzle_id = $1 and a.session_id = $2
+		 order by g.created_at asc`,
+		puzzleID, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load guess history: %w", err)
+	}
+	defer rows.Close()
+	return scanGuessHistory(rows)
+}
+
+func scanGuessHistory(rows *sql.Rows) ([][]string, error) {
+	history := [][]string{}
+	for rows.Next() {
+		var tileIDs []string
+		if err := rows.Scan(pq.Array(&tileIDs)); err != nil {
+			return nil, fmt.Errorf("scan guess history: %w", err)
+		}
+		history = append(history, tileIDs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate guess history: %w", err)
+	}
+	return history, nil
 }
 
 func (store *PostgresAttemptStore) readState(ctx context.Context, q rowQuerier, puzzleID, sessionID string, forUpdate bool) (attemptState, error) {
@@ -332,6 +413,12 @@ func (store *PostgresAttemptStore) replayGuess(ctx context.Context, puzzle Puzzl
 	if err != nil {
 		return GuessSubmission{}, err
 	}
+
+	history, err := store.guessHistoryBySession(ctx, store.db, puzzle.ID, sessionID)
+	if err != nil {
+		return GuessSubmission{}, err
+	}
+	state.GuessHistory = history
 
 	var attemptID string
 	if err := store.db.QueryRowContext(ctx,

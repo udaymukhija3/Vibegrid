@@ -472,6 +472,123 @@ func TestFourthMistakeRevealsGroups(t *testing.T) {
 	}
 }
 
+// TestAttemptEndpointReturnsGuessHistory proves the share grid is rebuilt from
+// the server, not local state: after two guesses a fresh GET of the attempt —
+// exactly what a second tab issues on load — returns the full ordered history.
+func TestAttemptEndpointReturnsGuessHistory(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
+		Store:   NewMemoryAttemptStore(),
+		Clock:   fixedClock,
+	})
+
+	wrong := []string{"p1-espresso", "p1-linen", "p1-slack", "p1-balcony"}
+	correct := []string{"p1-espresso", "p1-linen", "p1-vespa", "p1-balcony"}
+
+	first := postGuess(t, handler, "", GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "wrong-1",
+		SelectedTileIDs: wrong,
+	})
+	sessionCookie := first.Result().Cookies()[0].String()
+	postGuess(t, handler, sessionCookie, GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "right-1",
+		SelectedTileIDs: correct,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/attempts/vibegrid-2026-06-02", nil)
+	req.Header.Set("Cookie", sessionCookie)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var snapshot AttemptSnapshot
+	if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.GuessHistory) != 2 {
+		t.Fatalf("expected 2 guesses in history, got %#v", snapshot.GuessHistory)
+	}
+	assertSameTileSet(t, "first guess", snapshot.GuessHistory[0], wrong)
+	assertSameTileSet(t, "second guess", snapshot.GuessHistory[1], correct)
+}
+
+// TestDocumentRequestEnsuresSessionCookie proves a document navigation mints the
+// session cookie up front (so two tabs opened together share one session and
+// cannot diverge), a request already carrying a valid cookie is not re-minted,
+// and static assets do not get one.
+func TestDocumentRequestEnsuresSessionCookie(t *testing.T) {
+	doc := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html><head></head><body>vibegrid</body></html>"))
+	})
+	handler := NewServer(ServerConfig{
+		Puzzles:  StaticPuzzleSource(SeedPuzzles()),
+		Store:    NewMemoryAttemptStore(),
+		Clock:    fixedClock,
+		Frontend: doc,
+	})
+
+	sessionCookie := func(rec *httptest.ResponseRecorder) *http.Cookie {
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == sessionCookieName {
+				return c
+			}
+		}
+		return nil
+	}
+
+	// First load: no cookie yet → the server mints and sets a valid one.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	minted := sessionCookie(rec)
+	if minted == nil || !validSessionID(minted.Value) {
+		t.Fatalf("expected a valid %s cookie on document load, got %#v", sessionCookieName, rec.Result().Cookies())
+	}
+
+	// Second load carrying that cookie: must not re-mint.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(minted)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req)
+	if reminted := sessionCookie(rec2); reminted != nil {
+		t.Fatalf("a valid session must not be re-minted, got Set-Cookie %q", reminted.String())
+	}
+
+	// A static asset is not a document route and must not get a session cookie.
+	rec3 := httptest.NewRecorder()
+	handler.ServeHTTP(rec3, httptest.NewRequest(http.MethodGet, "/app.js", nil))
+	if stray := sessionCookie(rec3); stray != nil {
+		t.Fatalf("static asset must not set a session cookie, got %q", stray.String())
+	}
+}
+
+// assertSameTileSet compares two tile-id lists ignoring order. Order within a
+// single guess is preserved as submitted, but tests assert on membership so a
+// future normalization tweak does not make them brittle.
+func assertSameTileSet(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: want %d tiles %v, got %d %v", label, len(want), want, len(got), got)
+	}
+	counts := map[string]int{}
+	for _, id := range want {
+		counts[id]++
+	}
+	for _, id := range got {
+		counts[id]--
+	}
+	for id, remaining := range counts {
+		if remaining != 0 {
+			t.Fatalf("%s: tile sets differ at %q (want %v, got %v)", label, id, want, got)
+		}
+	}
+}
+
 func postGuess(t *testing.T, handler http.Handler, cookie string, request GuessRequest) *httptest.ResponseRecorder {
 	t.Helper()
 

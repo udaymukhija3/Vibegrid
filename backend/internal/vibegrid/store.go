@@ -62,6 +62,10 @@ type attemptState struct {
 	CompletedAt    *time.Time
 	Failed         bool
 	SolvedGroupIDs map[string]bool
+	// GuessHistory is every submitted guess in order, each as the tile ids that
+	// were guessed. The Postgres store hydrates it from attempt_guesses; the
+	// memory store accumulates it as guesses are applied.
+	GuessHistory [][]string
 }
 
 func (state attemptState) completed(puzzle Puzzle) bool {
@@ -72,8 +76,9 @@ func (state attemptState) completed(puzzle Puzzle) bool {
 // StoredGuess that should be persisted. matchedGroup is nil for a valid-but-wrong
 // guess. This is the single source of truth for mistake/completion/failure
 // transitions, shared by both stores.
-func (state *attemptState) applyGuess(puzzle Puzzle, matchedGroup *PuzzleGroup, now time.Time) StoredGuess {
+func (state *attemptState) applyGuess(puzzle Puzzle, matchedGroup *PuzzleGroup, selectedTileIDs []string, now time.Time) StoredGuess {
 	state.GuessCount++
+	state.GuessHistory = append(state.GuessHistory, append([]string(nil), selectedTileIDs...))
 	storedGuess := StoredGuess{}
 
 	if matchedGroup != nil {
@@ -119,6 +124,11 @@ func buildSnapshot(puzzle Puzzle, state attemptState) AttemptSnapshot {
 		revealedGroups = AllSolvedGroups(puzzle)
 	}
 
+	guessHistory := state.GuessHistory
+	if guessHistory == nil {
+		guessHistory = [][]string{}
+	}
+
 	return AttemptSnapshot{
 		PuzzleID:       state.PuzzleID,
 		SolvedGroups:   solvedGroups,
@@ -129,6 +139,7 @@ func buildSnapshot(puzzle Puzzle, state attemptState) AttemptSnapshot {
 		CompletedAt:    completedAt,
 		Failed:         state.Failed,
 		Completed:      state.completed(puzzle),
+		GuessHistory:   guessHistory,
 	}
 }
 
@@ -199,7 +210,7 @@ func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, s
 		return GuessSubmission{}, err
 	}
 
-	storedGuess := attempt.state.applyGuess(puzzle, matchedGroup, now)
+	storedGuess := attempt.state.applyGuess(puzzle, matchedGroup, request.SelectedTileIDs, now)
 	attempt.guesses[request.ClientGuessID] = storedGuess
 	return buildSubmission(puzzle, attempt.state, storedGuess), nil
 }

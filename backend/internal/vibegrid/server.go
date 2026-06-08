@@ -479,6 +479,12 @@ func (server *Server) withFrontendMetadata(next http.Handler) http.Handler {
 		}
 
 		recorder := newBufferedResponse()
+		// A document navigation is the first thing both tabs load. Establishing the
+		// session cookie here — rather than waiting for the first /api call — means
+		// two tabs opened together share one session, so their server-side attempt
+		// state cannot diverge into two anonymous sessions. EnsureSessionID is a
+		// no-op when the request already carries a valid cookie.
+		EnsureSessionID(recorder, r, server.secureCookies)
 		next.ServeHTTP(recorder, r)
 
 		status := recorder.status

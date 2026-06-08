@@ -173,3 +173,47 @@ func TestPostgresConcurrentDistinctGuessesSerialize(t *testing.T) {
 			snapshot.Mistakes, snapshot.Failed)
 	}
 }
+
+// TestPostgresHydratesGuessHistory proves the durable store rebuilds the full,
+// ordered guess history from attempt_guesses on both the submission response and
+// a fresh read, and that an idempotent replay never duplicates a history row.
+func TestPostgresHydratesGuessHistory(t *testing.T) {
+	store := newTestStore(t)
+	puzzle := SeedPuzzles()[0]
+	ctx := context.Background()
+
+	if _, err := store.SubmitGuess(ctx, puzzle, "session-hist", wrongGuess("w1"), fixedClock()); err != nil {
+		t.Fatalf("wrong submit: %v", err)
+	}
+	submission, err := store.SubmitGuess(ctx, puzzle, "session-hist", correctGuess("c1"), fixedClock())
+	if err != nil {
+		t.Fatalf("correct submit: %v", err)
+	}
+	if len(submission.Attempt.GuessHistory) != 2 {
+		t.Fatalf("submission should carry full history, got %#v", submission.Attempt.GuessHistory)
+	}
+
+	// A fresh read is what a second tab does on load: it must rebuild the same
+	// ordered history from the database with no client state involved.
+	snapshot, err := store.GetAttempt(ctx, puzzle, "session-hist", fixedClock())
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(snapshot.GuessHistory) != 2 {
+		t.Fatalf("fresh read should rebuild 2 guesses, got %#v", snapshot.GuessHistory)
+	}
+	assertSameTileSet(t, "first guess", snapshot.GuessHistory[0], wrongGuess("").SelectedTileIDs)
+	assertSameTileSet(t, "second guess", snapshot.GuessHistory[1], correctGuess("").SelectedTileIDs)
+
+	// A replayed (idempotent) guess must not append a duplicate history row.
+	if _, err := store.SubmitGuess(ctx, puzzle, "session-hist", wrongGuess("w1"), fixedClock()); err != nil {
+		t.Fatalf("replay submit: %v", err)
+	}
+	replayed, err := store.GetAttempt(ctx, puzzle, "session-hist", fixedClock())
+	if err != nil {
+		t.Fatalf("get after replay: %v", err)
+	}
+	if len(replayed.GuessHistory) != 2 {
+		t.Fatalf("idempotent replay must not grow history, got %d rows", len(replayed.GuessHistory))
+	}
+}
