@@ -197,7 +197,7 @@ func (store *PostgresPuzzleStore) attachTiles(ctx context.Context, puzzles map[s
 // Seed inserts the given puzzles if they are not already present. on conflict do
 // nothing makes it a safe bootstrap that never clobbers admin edits.
 func (store *PostgresPuzzleStore) Seed(ctx context.Context, puzzles []Puzzle) error {
-	ctx, cancel := withDatabaseTimeout(ctx)
+	ctx, cancel := withSeedTimeout(ctx)
 	defer cancel()
 
 	tx, err := store.db.BeginTx(ctx, nil)

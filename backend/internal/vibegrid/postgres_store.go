@@ -27,6 +27,17 @@ func withDatabaseTimeout(ctx context.Context) (context.Context, context.CancelFu
 	return context.WithTimeout(ctx, databaseOperationTimeout)
 }
 
+// seedTimeout bounds the one-time startup seed. Unlike request handlers, the
+// seed inserts many rows in a single transaction and runs off the request path,
+// so the tight per-request databaseOperationTimeout is far too small for it —
+// especially when the database is remote (app and DB in different regions),
+// where the per-statement round trips add up.
+const seedTimeout = 2 * time.Minute
+
+func withSeedTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, seedTimeout)
+}
+
 // ConnectDB opens a connection pool and verifies connectivity. The attempt
 // store and puzzle store share the returned pool; the caller owns Close.
 func ConnectDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
