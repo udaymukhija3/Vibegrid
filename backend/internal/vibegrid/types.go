@@ -74,6 +74,10 @@ type AttemptSnapshot struct {
 	CompletedAt    *string       `json:"completedAt,omitempty"`
 	Failed         bool          `json:"failed"`
 	Completed      bool          `json:"completed"`
+	// GuessHistory is the ordered list of every submitted guess (the tile ids per
+	// guess). It is server-authoritative so any client — including a second tab
+	// that never witnessed the guesses — can render the spoiler-safe share grid.
+	GuessHistory [][]string `json:"guessHistory"`
 }
 
 type StreakSummary struct {

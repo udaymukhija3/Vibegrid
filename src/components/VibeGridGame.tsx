@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
@@ -85,6 +85,17 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const [reportDetails, setReportDetails] = useState("");
   const [reportContact, setReportContact] = useState("");
   const [isReporting, setIsReporting] = useState(false);
+  const [syncState, setSyncState] = useState<"idle" | "syncing" | "error">("idle");
+
+  // attemptRef mirrors the latest attempt so event handlers (storage/visibility)
+  // can read current state without being re-bound on every change.
+  const attemptRef = useRef(attempt);
+  useEffect(() => {
+    attemptRef.current = attempt;
+  }, [attempt]);
+
+  // syncSeq guards against out-of-order responses: only the newest sync applies.
+  const syncSeq = useRef(0);
 
   useEffect(() => {
     cleanupStoredAttempts(window.localStorage);
@@ -114,39 +125,85 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     setHasLoadedAttempt(true);
   }, [puzzle.id, storageKey]);
 
+  // syncAttempt pulls the server-authoritative attempt and merges it in. The
+  // server is the source of truth, so this reconciles whatever a stale tab or
+  // localStorage holds. A failure surfaces a visible "Resync" affordance rather
+  // than silently leaving stale state on screen.
+  const syncAttempt = useCallback(async () => {
+    const seq = ++syncSeq.current;
+    setSyncState("syncing");
+
+    try {
+      const response = await apiFetch(`/api/attempts/${puzzle.id}`, {
+        credentials: "include"
+      });
+
+      if (!response.ok) {
+        throw new Error(`sync failed: ${response.status}`);
+      }
+
+      const serverAttempt = (await response.json()) as AttemptSnapshot;
+      if (seq !== syncSeq.current) {
+        return; // a newer sync superseded this one
+      }
+
+      setAttempt((current) => mergeServerAttempt(current, serverAttempt));
+      setSyncState("idle");
+    } catch {
+      if (seq !== syncSeq.current) {
+        return;
+      }
+      setSyncState("error");
+    }
+  }, [puzzle.id]);
+
+  // Reconcile with the server once the local board has loaded.
+  useEffect(() => {
+    if (!hasLoadedAttempt) {
+      return;
+    }
+    void syncAttempt();
+  }, [hasLoadedAttempt, syncAttempt]);
+
+  // Live cross-tab sync: a tab that solved the puzzle elsewhere updates without
+  // a manual refresh. `storage` fires in *other* tabs when localStorage changes;
+  // `visibilitychange` catches anything missed while this tab was backgrounded.
   useEffect(() => {
     if (!hasLoadedAttempt) {
       return;
     }
 
-    let cancelled = false;
-
-    async function loadAttempt() {
-      try {
-        const response = await apiFetch(`/api/attempts/${puzzle.id}`, {
-          credentials: "include"
-        });
-
-        if (!response.ok) {
-          return;
-        }
-
-        const serverAttempt = (await response.json()) as AttemptSnapshot;
-        if (!cancelled) {
-          setAttempt((current) => mergeServerAttempt(current, serverAttempt));
-        }
-      } catch {
-        setMessage("Could not sync attempt. Local board is still here.");
-        toast.error("Could not sync attempt.");
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        void syncAttempt();
       }
     }
 
-    void loadAttempt();
+    function handleStorage(event: StorageEvent) {
+      if (event.key !== storageKey || !event.newValue) {
+        return;
+      }
+      try {
+        const peer = JSON.parse(event.newValue) as StoredAttempt;
+        // Only resync when another tab actually advanced the game — a new guess,
+        // a win, or a loss — not on every tile toggle it writes to storage.
+        const advanced =
+          peer.guessCount > attemptRef.current.guessCount || peer.completed || peer.failed;
+        if (advanced) {
+          void syncAttempt();
+        }
+      } catch {
+        // Ignore unparseable peer state; the next focus or refresh will resync.
+      }
+    }
 
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("storage", handleStorage);
     return () => {
-      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("storage", handleStorage);
     };
-  }, [hasLoadedAttempt, puzzle.id]);
+  }, [hasLoadedAttempt, storageKey, syncAttempt]);
 
   useEffect(() => {
     if (!hasLoadedAttempt) {
@@ -291,7 +348,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           return current;
         }
 
-        const submittedTiles = current.selectedTileIds;
+        // The guess response carries the full server-authoritative history
+        // (including this guess), so mergeServerAttempt sets guessHistory for us.
         const nextAttempt = mergeServerAttempt(
           {
             ...current,
@@ -299,7 +357,6 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
           },
           result.attempt
         );
-        nextAttempt.guessHistory = [...current.guessHistory, submittedTiles];
 
         if (result.isCorrect) {
           setMessage(nextAttempt.completed ? "All vibes found. Suspiciously competent." : result.group.name);
@@ -480,11 +537,11 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
                       {isSolved ? "Locked" : "Revealed"}
                     </p>
                   </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="mt-4 grid grid-cols-4 gap-1.5 sm:gap-2">
                     {group.tiles.map((tile) => (
                       <div
                         key={tile.id}
-                        className="flex min-h-14 items-center justify-center rounded border border-ink bg-white/80 px-2 text-center text-sm font-black"
+                        className="flex min-h-14 items-center justify-center rounded border border-ink bg-white/80 px-1 text-center text-[0.7rem] font-black leading-tight sm:px-2 sm:text-sm"
                       >
                         {tile.text}
                       </div>
@@ -495,7 +552,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
             })}
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+          <div className="mt-4 grid grid-cols-4 gap-1.5 sm:gap-3">
             {remainingTiles.map((tile) => {
               const isSelected = selectedTileIds.has(tile.id);
 
@@ -503,7 +560,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
                 <button
                   key={tile.id}
                   className={clsx(
-                    "flex aspect-[1.45] min-h-20 items-center justify-center rounded border-2 border-ink px-2 text-center text-base font-black shadow-tile transition [touch-action:manipulation] sm:text-lg",
+                    "flex aspect-square min-h-16 items-center justify-center rounded border-2 border-ink px-1 text-center text-[0.7rem] font-black shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
                     isSelected
                       ? "translate-y-1 bg-ink text-white shadow-[0_4px_0_rgba(23,23,23,0.18)]"
                       : "bg-white hover:-translate-y-0.5 hover:bg-yolk"
@@ -547,6 +604,19 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
             </div>
 
             <p className="mt-5 min-h-12 text-lg font-black leading-snug">{message}</p>
+
+            {syncState === "error" && (
+              <div className="mt-3 flex items-center justify-between gap-2 rounded border-2 border-tomato bg-tomato/10 px-3 py-2 text-sm font-bold">
+                <span>Couldn&apos;t sync — showing saved progress.</span>
+                <button
+                  type="button"
+                  onClick={() => void syncAttempt()}
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded border-2 border-ink bg-white px-2 text-xs font-black shadow-[0_3px_0_#171717]"
+                >
+                  Resync
+                </button>
+              </div>
+            )}
 
             <div className="mt-4 border-t border-neutral-200 pt-4 text-sm font-semibold text-neutral-600">
               <p>Elapsed {formatElapsedTime(attempt.startedAt, attempt.completedAt)}</p>
@@ -709,6 +779,13 @@ function mergeServerAttempt(current: StoredAttempt, serverAttempt: AttemptSnapsh
     startedAt: serverAttempt.startedAt,
     completedAt: serverAttempt.completedAt,
     failed: serverAttempt.failed,
-    completed: serverAttempt.completed
+    completed: serverAttempt.completed,
+    // The server now owns guess history, so a tab that never witnessed the
+    // guesses still rebuilds the share grid. Fall back to the local copy only
+    // when the server has none yet (a brand-new attempt).
+    guessHistory:
+      serverAttempt.guessHistory && serverAttempt.guessHistory.length > 0
+        ? serverAttempt.guessHistory
+        : current.guessHistory
   };
 }
