@@ -49,6 +49,37 @@ const emptyAttempt = (puzzleId: string): StoredAttempt => ({
   completed: false
 });
 
+// safeStorage returns localStorage, or null when it is unavailable (private
+// mode, blocked cookies/storage). Even reading window.localStorage can throw, so
+// every access goes through here and degrades to an in-memory-only session.
+function safeStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const asCount = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+// normalizeStoredAttempt defends against tampered or schema-drifted localStorage:
+// a valid-JSON-but-wrong-shape blob (e.g. solvedGroups not an array) would crash
+// the board on render, so every field is coerced back to a safe type.
+function normalizeStoredAttempt(puzzleId: string, parsed: Partial<StoredAttempt>): StoredAttempt {
+  return {
+    ...emptyAttempt(puzzleId),
+    ...parsed,
+    puzzleId,
+    selectedTileIds: asArray<string>(parsed.selectedTileIds),
+    solvedGroups: asArray<SolvedGroup>(parsed.solvedGroups),
+    revealedGroups: asArray<SolvedGroup>(parsed.revealedGroups),
+    guessHistory: asArray<string[]>(parsed.guessHistory),
+    mistakes: asCount(parsed.mistakes),
+    guessCount: asCount(parsed.guessCount)
+  };
+}
+
 const groupColors = [
   "bg-mint text-ink",
   "bg-yolk text-ink",
@@ -97,29 +128,47 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   // syncSeq guards against out-of-order responses: only the newest sync applies.
   const syncSeq = useRef(0);
 
+  // pendingGuessIdRef holds the client guess id for the in-flight submission. It
+  // persists across network-failure retries so a lost response can't double-count
+  // a mistake (the server dedupes by this id); it resets once a guess is settled
+  // or the selection changes. submittingRef pauses sync while a guess is in flight.
+  const pendingGuessIdRef = useRef<string | null>(null);
+  const submittingRef = useRef(false);
+
   useEffect(() => {
-    cleanupStoredAttempts(window.localStorage);
-
-    const storedAttempt = window.localStorage.getItem(storageKey);
-
-    if (!storedAttempt) {
+    const storage = safeStorage();
+    if (!storage) {
+      // No durable storage (private mode etc.) — play on with an in-memory board.
       setHasLoadedAttempt(true);
       return;
     }
 
     try {
-      const parsed = JSON.parse(storedAttempt) as StoredAttempt;
-
-      if (parsed.puzzleId === puzzle.id) {
-        setAttempt({
-          ...emptyAttempt(puzzle.id),
-          ...parsed,
-          revealedGroups: parsed.revealedGroups ?? [],
-          guessHistory: parsed.guessHistory ?? []
-        });
-      }
+      cleanupStoredAttempts(storage);
     } catch {
-      window.localStorage.removeItem(storageKey);
+      // Cleanup is best-effort; never let it block loading the board.
+    }
+
+    let storedAttempt: string | null = null;
+    try {
+      storedAttempt = storage.getItem(storageKey);
+    } catch {
+      storedAttempt = null;
+    }
+
+    if (storedAttempt) {
+      try {
+        const parsed = JSON.parse(storedAttempt) as Partial<StoredAttempt>;
+        if (parsed.puzzleId === puzzle.id) {
+          setAttempt(normalizeStoredAttempt(puzzle.id, parsed));
+        }
+      } catch {
+        try {
+          storage.removeItem(storageKey);
+        } catch {
+          // Ignore — a removal failure is harmless.
+        }
+      }
     }
 
     setHasLoadedAttempt(true);
@@ -130,6 +179,12 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   // localStorage holds. A failure surfaces a visible "Resync" affordance rather
   // than silently leaving stale state on screen.
   const syncAttempt = useCallback(async () => {
+    // A guess submission already returns a fresh server snapshot, so don't race a
+    // sync against it — the in-flight guess wins and the next focus/storage event
+    // (or the monotonic merge) reconciles anything missed.
+    if (submittingRef.current) {
+      return;
+    }
     const seq = ++syncSeq.current;
     setSyncState("syncing");
 
@@ -210,7 +265,16 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       return;
     }
 
-    window.localStorage.setItem(storageKey, JSON.stringify(attempt));
+    const storage = safeStorage();
+    if (!storage) {
+      return;
+    }
+    try {
+      storage.setItem(storageKey, JSON.stringify(attempt));
+    } catch {
+      // Quota or a security exception — the in-memory board is still authoritative
+      // for this tab, and the server holds the durable copy.
+    }
   }, [attempt, hasLoadedAttempt, storageKey]);
 
   const displayedGroups = useMemo(() => {
@@ -286,6 +350,9 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       return;
     }
 
+    // Changing the selection means the next submit is a different logical guess,
+    // so drop any retained id from a prior failed attempt.
+    pendingGuessIdRef.current = null;
     setCopied(false);
     setAttempt((current) => {
       const isSelected = current.selectedTileIds.includes(tileId);
@@ -324,30 +391,52 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     }
 
     setIsSubmitting(true);
+    submittingRef.current = true;
+    // Invalidate any sync already in flight so its (older) snapshot can't land
+    // on top of this guess's result.
+    syncSeq.current++;
     setCopied(false);
+
+    // Reuse the id from a prior failed attempt at this same selection so a retry
+    // after a lost response is deduped server-side rather than counted twice.
+    const clientGuessId = pendingGuessIdRef.current ?? crypto.randomUUID();
+    pendingGuessIdRef.current = clientGuessId;
 
     try {
       const response = await apiFetch("/api/guesses", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           puzzleId: puzzle.id,
           selectedTileIds: attempt.selectedTileIds,
-          clientGuessId: crypto.randomUUID()
+          clientGuessId
         })
       });
 
       const result = (await response.json()) as GuessResponse;
+      // We got a server response, so this guess id is settled — the next submit
+      // is a new guess. (Only a network failure keeps the id, in the catch.)
+      pendingGuessIdRef.current = null;
 
-      setAttempt((current) => {
-        if (!result.ok) {
+      if (!result.ok) {
+        // 409 (attempt finished) or an already-locked group means this tab is
+        // simply behind another tab. Reconcile silently instead of alarming the
+        // player with an error they didn't cause.
+        const behindServer =
+          response.status === 409 || /already locked/i.test(result.error ?? "");
+        if (behindServer) {
+          void syncAttempt();
+        } else {
           setMessage(result.error);
           toast.error(result.error);
-          return current;
         }
+        return;
+      }
 
+      setAttempt((current) => {
         // The guess response carries the full server-authoritative history
         // (including this guess), so mergeServerAttempt sets guessHistory for us.
         const nextAttempt = mergeServerAttempt(
@@ -371,9 +460,13 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
         return nextAttempt;
       });
     } catch {
+      // Network failure: we don't know if the server recorded the guess, so keep
+      // pendingGuessIdRef — a retry of the same selection reuses the id and is
+      // deduped rather than double-counted.
       setMessage("Could not submit. The grid is being dramatic.");
       toast.error("Could not submit that guess.");
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   }
@@ -760,32 +853,59 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   );
 }
 
+// mergeServerAttempt reconciles local and server state forward-only. The server
+// is normally the authoritative superset, so in steady play this just adopts it.
+// But the merge never moves the board *backward*: if the server ever reports
+// less than we already have — a brand-new/empty session after a cleared or
+// expired cookie, or an in-memory store that reset on a redeploy — we keep the
+// player's progress instead of wiping a solved board to blank. Solved/revealed
+// groups union, terminal flags are sticky, and counts only climb.
 function mergeServerAttempt(current: StoredAttempt, serverAttempt: AttemptSnapshot): StoredAttempt {
+  const serverHistory = serverAttempt.guessHistory ?? [];
+  const solvedGroups = mergeGroupsById(current.solvedGroups, serverAttempt.solvedGroups);
+  const revealedGroups = mergeGroupsById(current.revealedGroups, serverAttempt.revealedGroups);
+  const failed = current.failed || serverAttempt.failed;
+  const completed = current.completed || serverAttempt.completed;
+
+  // Once the server has its own real attempt it owns startedAt; before then we
+  // keep the local start so a fresh/empty session can't reset the elapsed timer.
+  const serverHasProgress =
+    serverAttempt.guessCount > 0 || serverAttempt.solvedGroups.length > 0 || serverAttempt.failed;
+
   const displayedTileIds = new Set(
-    [...serverAttempt.solvedGroups, ...serverAttempt.revealedGroups].flatMap((group) => group.tileIds)
+    [...solvedGroups, ...revealedGroups].flatMap((group) => group.tileIds)
   );
 
   return {
     ...current,
     puzzleId: serverAttempt.puzzleId,
     selectedTileIds:
-      serverAttempt.completed || serverAttempt.failed
+      completed || failed
         ? []
         : current.selectedTileIds.filter((tileId) => !displayedTileIds.has(tileId)),
-    solvedGroups: serverAttempt.solvedGroups,
-    revealedGroups: serverAttempt.revealedGroups,
-    mistakes: serverAttempt.mistakes,
-    guessCount: serverAttempt.guessCount,
-    startedAt: serverAttempt.startedAt,
-    completedAt: serverAttempt.completedAt,
-    failed: serverAttempt.failed,
-    completed: serverAttempt.completed,
-    // The server now owns guess history, so a tab that never witnessed the
-    // guesses still rebuilds the share grid. Fall back to the local copy only
-    // when the server has none yet (a brand-new attempt).
-    guessHistory:
-      serverAttempt.guessHistory && serverAttempt.guessHistory.length > 0
-        ? serverAttempt.guessHistory
-        : current.guessHistory
+    solvedGroups,
+    revealedGroups,
+    mistakes: Math.max(current.mistakes, serverAttempt.mistakes),
+    guessCount: Math.max(current.guessCount, serverAttempt.guessCount),
+    startedAt: serverHasProgress ? serverAttempt.startedAt : current.startedAt,
+    completedAt: current.completedAt ?? serverAttempt.completedAt,
+    failed,
+    completed,
+    // Server owns guess history (so a tab that never saw the guesses rebuilds the
+    // share grid), but only adopt it when it is at least as complete as ours.
+    guessHistory: serverHistory.length >= current.guessHistory.length ? serverHistory : current.guessHistory
   };
+}
+
+// mergeGroupsById unions two group lists by id (the server copy wins for the
+// same id, being the fresher content) and sorts by colour for stable display.
+function mergeGroupsById(local: SolvedGroup[], server: SolvedGroup[]): SolvedGroup[] {
+  const byId = new Map<string, SolvedGroup>();
+  for (const group of local) {
+    byId.set(group.id, group);
+  }
+  for (const group of server) {
+    byId.set(group.id, group);
+  }
+  return [...byId.values()].sort((left, right) => left.colorIndex - right.colorIndex);
 }
