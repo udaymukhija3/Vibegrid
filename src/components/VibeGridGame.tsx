@@ -15,10 +15,17 @@ import {
   formatSeconds,
   MIN_STATS_PLAYERS
 } from "@/lib/game";
-import { fetchPuzzleStats, fetchStreak, reportPuzzle, type PuzzleStats, type StreakSummary } from "@/lib/api";
+import {
+  fetchPuzzleStats,
+  fetchStreak,
+  fetchVibes,
+  reportPuzzle,
+  type PuzzleStats,
+  type StreakSummary
+} from "@/lib/api";
 import { apiFetch } from "@/lib/http";
 import { HowToPlay } from "@/components/HowToPlay";
-import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile } from "@/types/puzzle";
+import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile, VibeHint } from "@/types/puzzle";
 
 type StoredAttempt = {
   puzzleId: string;
@@ -90,6 +97,12 @@ const groupColors = [
 // Background-only palette (matching groupColors) for the share-grid squares.
 const squareColors = ["bg-mint", "bg-yolk", "bg-tomato", "bg-plum"];
 
+// Standard = guided (reveal one vibe at a time to match); Hard = all vibes
+// hidden (the original deduce-it-yourself game). The choice is a per-browser
+// preference, not a per-puzzle one.
+type GameMode = "standard" | "hard";
+const MODE_STORAGE_KEY = "vibegrid_mode";
+
 const reportReasons = [
   { value: "OFFENSIVE", label: "Hateful or abusive" },
   { value: "PERSONAL_INFO", label: "Personal information" },
@@ -117,6 +130,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const [reportContact, setReportContact] = useState("");
   const [isReporting, setIsReporting] = useState(false);
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "error">("idle");
+  const [mode, setMode] = useState<GameMode>("standard");
+  const [vibes, setVibes] = useState<VibeHint[] | null>(null);
 
   // attemptRef mirrors the latest attempt so event handlers (storage/visibility)
   // can read current state without being re-bound on every change.
@@ -277,6 +292,40 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
     }
   }, [attempt, hasLoadedAttempt, storageKey]);
 
+  // Mode is a per-browser preference. Read it after mount (not in initial state)
+  // so the server-rendered markup and first client paint agree; default standard.
+  useEffect(() => {
+    const saved = safeStorage()?.getItem(MODE_STORAGE_KEY);
+    if (saved === "hard" || saved === "standard") {
+      setMode(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    safeStorage()?.setItem(MODE_STORAGE_KEY, mode);
+  }, [mode]);
+
+  // Standard mode reveals one vibe (group name) at a time. Fetch just the names —
+  // never the tile→group mapping — lazily, only when guided mode is actually used.
+  useEffect(() => {
+    if (mode !== "standard" || vibes !== null) {
+      return;
+    }
+    let cancelled = false;
+    fetchVibes(puzzle.id)
+      .then((loaded) => {
+        if (!cancelled) {
+          setVibes(loaded);
+        }
+      })
+      .catch(() => {
+        // A hint fetch failure shouldn't break play; Standard just shows no banner.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, vibes, puzzle.id]);
+
   const displayedGroups = useMemo(() => {
     const solvedGroupIds = new Set(attempt.solvedGroups.map((group) => group.id));
     const revealedOnly = attempt.revealedGroups.filter((group) => !solvedGroupIds.has(group.id));
@@ -294,6 +343,18 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const selectedTileIds = new Set(attempt.selectedTileIds);
   const isComplete = attempt.completed || attempt.solvedGroups.length === puzzle.groupCount;
   const isOver = isComplete || attempt.failed;
+
+  // In Standard mode the target is the first vibe whose group is still unsolved;
+  // solving any group advances it (each group owns a unique colorIndex). Null in
+  // Hard mode, before the vibes load, or once the board is over.
+  const solvedColorIndexes = useMemo(
+    () => new Set(attempt.solvedGroups.map((group) => group.colorIndex)),
+    [attempt.solvedGroups]
+  );
+  const currentVibe =
+    mode === "standard" && vibes && !isOver
+      ? vibes.find((vibe) => !solvedColorIndexes.has(vibe.colorIndex)) ?? null
+      : null;
 
   useEffect(() => {
     if (!isOver) {
@@ -609,6 +670,20 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
 
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0">
+          {currentVibe && (
+            <div
+              className={clsx(
+                "mb-4 rounded border-2 border-ink p-4 shadow-[0_5px_0_#171717]",
+                groupColors[currentVibe.colorIndex % groupColors.length]
+              )}
+            >
+              <p className="text-xs font-black uppercase tracking-wide opacity-80">
+                Match this vibe · {attempt.solvedGroups.length + 1} of {puzzle.groupCount}
+              </p>
+              <p className="mt-1 text-2xl font-black leading-tight">{currentVibe.name}</p>
+              <p className="mt-1 text-sm font-bold opacity-80">Pick the 4 tiles that fit it.</p>
+            </div>
+          )}
           <div className="grid gap-3">
             {displayedGroups.map((group) => {
               const isSolved = attempt.solvedGroups.some((solvedGroup) => solvedGroup.id === group.id);
@@ -671,6 +746,32 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
 
         <aside className="flex flex-col justify-between gap-4 rounded border-2 border-ink bg-white p-4 shadow-[0_6px_0_#171717]">
           <div>
+            {!isOver && (
+              <div className="mb-4">
+                <div className="flex gap-1 rounded border-2 border-ink p-1">
+                  {(["standard", "hard"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setMode(option)}
+                      aria-pressed={mode === option}
+                      className={clsx(
+                        "h-9 flex-1 rounded text-sm font-black capitalize",
+                        mode === option ? "bg-ink text-white" : "bg-white text-ink"
+                      )}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs font-semibold text-neutral-600">
+                  {mode === "standard"
+                    ? "Guided: we name one vibe at a time — match its 4 tiles."
+                    : "Hard: all four vibes hidden. Deduce them yourself."}
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded border border-neutral-200 p-3">
                 <p className="text-xs font-black text-neutral-500">Selected</p>

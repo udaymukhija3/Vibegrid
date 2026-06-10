@@ -55,6 +55,14 @@ type PublicPuzzle struct {
 	MistakesAllowed int        `json:"mistakesAllowed"`
 }
 
+// VibeHint is a single group's name + colour, with no tile mapping. It powers
+// the guided Standard mode (reveal one vibe at a time to match) without leaking
+// which tiles belong to which group — the guess engine stays the sole authority.
+type VibeHint struct {
+	Name       string `json:"name"`
+	ColorIndex int    `json:"colorIndex"`
+}
+
 type SolvedGroup struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -135,6 +136,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles", server.handlePuzzles)
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
+	mux.HandleFunc("GET /api/puzzles/{id}/vibes", server.handlePuzzleVibes)
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
 	mux.HandleFunc("GET /robots.txt", server.handleRobots)
 	mux.HandleFunc("GET /sitemap.xml", server.handleSitemap)
@@ -318,6 +320,29 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+// handlePuzzleVibes returns the puzzle's group names ("vibes") with their colour
+// index, in a stable colour order. It powers the guided Standard mode, which
+// reveals one vibe at a time for the player to match. It deliberately omits the
+// tile→group mapping and the explanation, so the answer is never exposed: the
+// guess engine remains the only authority on whether four tiles form a group.
+func (server *Server) handlePuzzleVibes(w http.ResponseWriter, r *http.Request) {
+	puzzle, err := server.publicPuzzleByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+		return
+	}
+
+	vibes := make([]VibeHint, 0, len(puzzle.Groups))
+	for _, group := range puzzle.Groups {
+		vibes = append(vibes, VibeHint{Name: group.Name, ColorIndex: group.ColorIndex})
+	}
+	sort.Slice(vibes, func(i, j int) bool { return vibes[i].ColorIndex < vibes[j].ColorIndex })
+
+	// Names are static for a puzzle, so cache like the other public reads.
+	w.Header().Set("Cache-Control", "public, max-age=300, s-maxage=900")
+	writeJSON(w, http.StatusOK, map[string]any{"vibes": vibes})
 }
 
 func (server *Server) handlePuzzleOGImage(w http.ResponseWriter, r *http.Request) {
