@@ -24,12 +24,16 @@ export const emptyDraft = (): DraftPuzzleInput => ({
 // "make your own" page; the parent supplies what happens on submit.
 export function PuzzleDraftForm({
   onSubmit,
-  submitLabel
+  submitLabel,
+  initialDraft
 }: {
   onSubmit: (input: DraftPuzzleInput) => Promise<void>;
   submitLabel: string;
+  // Prefill the builder (e.g. when a template is chosen). Remount the form with a
+  // changing `key` to load a new initialDraft, since this only seeds initial state.
+  initialDraft?: DraftPuzzleInput;
 }) {
-  const [draft, setDraft] = useState<DraftPuzzleInput>(emptyDraft);
+  const [draft, setDraft] = useState<DraftPuzzleInput>(() => initialDraft ?? emptyDraft());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
