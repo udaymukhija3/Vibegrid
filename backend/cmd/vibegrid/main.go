@@ -173,7 +173,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		logger.Warn("DATABASE_URL not set, using in-memory store and seed puzzles (non-durable)")
 		return deps{
 			attempts: vibegrid.NewMemoryAttemptStore(),
-			puzzles:  vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()),
+			puzzles:  vibegrid.NewBankPuzzleSource(vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()), vibegrid.PuzzleBank()),
 			close:    func() {},
 		}, nil
 	}
@@ -193,20 +193,25 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 	// not reload groups and tiles from Postgres on every request. The same
 	// instance backs the public, admin, and community surfaces, so status changes
 	// (publish/archive/reinstate) invalidate the cached copy.
-	puzzles := vibegrid.NewCachedPuzzleStore(puzzleStore, 5*time.Minute)
+	cached := vibegrid.NewCachedPuzzleStore(puzzleStore, 5*time.Minute)
 
 	// Expose cache effectiveness on /metrics when the decorator is active.
 	var puzzleCacheStats func() vibegrid.CacheStats
-	if provider, ok := puzzles.(interface{ CacheStats() vibegrid.CacheStats }); ok {
+	if provider, ok := cached.(interface{ CacheStats() vibegrid.CacheStats }); ok {
 		puzzleCacheStats = provider.CacheStats
 	}
+
+	// Public reads go through the bank decorator so the daily never runs dry when
+	// nothing is explicitly scheduled. Admin/community management uses the concrete
+	// cached store directly (the bank only synthesizes the read-only daily).
+	banked := vibegrid.NewBankPuzzleSource(cached, vibegrid.PuzzleBank())
 
 	logger.Info("connected to postgres, puzzles seeded")
 	return deps{
 		attempts:         vibegrid.NewPostgresAttemptStore(database),
-		puzzles:          puzzles,
-		adminPuzzles:     puzzles,
-		community:        puzzles,
+		puzzles:          banked,
+		adminPuzzles:     cached,
+		community:        cached,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
 		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
 		moderation:       vibegrid.NewPostgresModerationStore(database),
