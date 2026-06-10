@@ -109,6 +109,57 @@ func TestFutureAndDraftPuzzlesAreNotPubliclyPlayable(t *testing.T) {
 	}
 }
 
+func TestPuzzleVibesEndpoint(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles:  StaticPuzzleSource(SeedPuzzles()),
+		Clock:    func() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) },
+		TimeZone: "UTC",
+	})
+
+	want := 0
+	for _, puzzle := range SeedPuzzles() {
+		if puzzle.ID == "vibegrid-2026-06-02" {
+			want = len(puzzle.Groups)
+		}
+	}
+	if want == 0 {
+		t.Fatal("seed puzzle vibegrid-2026-06-02 not found")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/puzzles/vibegrid-2026-06-02/vibes", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Vibes []VibeHint `json:"vibes"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Vibes) != want {
+		t.Fatalf("expected %d vibes, got %d", want, len(payload.Vibes))
+	}
+	for index, vibe := range payload.Vibes {
+		if vibe.Name == "" {
+			t.Fatalf("vibe %d has an empty name", index)
+		}
+		if index > 0 && vibe.ColorIndex <= payload.Vibes[index-1].ColorIndex {
+			t.Fatalf("vibes are not in ascending colour order: %#v", payload.Vibes)
+		}
+	}
+
+	// A future/unpublished puzzle must not leak its vibes.
+	future := httptest.NewRequest(http.MethodGet, "/api/puzzles/vibegrid-2026-06-03/vibes", nil)
+	futureRec := httptest.NewRecorder()
+	handler.ServeHTTP(futureRec, future)
+	if futureRec.Code != http.StatusNotFound {
+		t.Fatalf("future vibes: expected 404, got %d", futureRec.Code)
+	}
+}
+
 func TestTodayCacheControlExpiresAtMidnight(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles:  StaticPuzzleSource(SeedPuzzles()),
