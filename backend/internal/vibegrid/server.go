@@ -137,6 +137,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
 	mux.HandleFunc("GET /api/puzzles/{id}/vibes", server.handlePuzzleVibes)
+	mux.HandleFunc("GET /api/puzzle-templates", server.handlePuzzleTemplates)
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
 	mux.HandleFunc("GET /robots.txt", server.handleRobots)
 	mux.HandleFunc("GET /sitemap.xml", server.handleSitemap)
@@ -343,6 +344,14 @@ func (server *Server) handlePuzzleVibes(w http.ResponseWriter, r *http.Request) 
 	// Names are static for a puzzle, so cache like the other public reads.
 	w.Header().Set("Cache-Control", "public, max-age=300, s-maxage=900")
 	writeJSON(w, http.StatusOK, map[string]any{"vibes": vibes})
+}
+
+// handlePuzzleTemplates serves the curated starter puzzles for the create page.
+// Templates are static, fully-exposed content (separate from the daily bank), so
+// it caches like the other public reads.
+func (server *Server) handlePuzzleTemplates(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300, s-maxage=900")
+	writeJSON(w, http.StatusOK, map[string]any{"templates": PuzzleTemplates()})
 }
 
 func (server *Server) handlePuzzleOGImage(w http.ResponseWriter, r *http.Request) {

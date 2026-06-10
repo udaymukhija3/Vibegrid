@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/http";
-import type { DraftPuzzleInput, PublicPuzzle, VibeHint } from "@/types/puzzle";
+import type { DraftPuzzleInput, PublicPuzzle, PuzzleTemplate, VibeHint } from "@/types/puzzle";
 
 // Runtime schemas for the public API surface. Validating responses at the
 // boundary means a contract drift between the Go backend and the UI fails loudly
@@ -61,6 +61,28 @@ export async function fetchVibes(id: string): Promise<VibeHint[]> {
     .object({ vibes: z.array(vibeHintSchema) })
     .parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}/vibes`));
   return payload.vibes;
+}
+
+const puzzleTemplateSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
+  groups: z.array(
+    z.object({
+      name: z.string(),
+      explanation: z.string(),
+      tiles: z.array(z.string())
+    })
+  )
+});
+
+// fetchPuzzleTemplates returns the curated starter packs for the create page —
+// either played as-is or loaded into the builder to tweak.
+export async function fetchPuzzleTemplates(): Promise<PuzzleTemplate[]> {
+  const payload = z
+    .object({ templates: z.array(puzzleTemplateSchema) })
+    .parse(await getJSON("/api/puzzle-templates"));
+  return payload.templates;
 }
 
 const puzzleStatsSchema = z.object({

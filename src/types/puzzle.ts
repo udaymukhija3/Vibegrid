@@ -63,6 +63,15 @@ export type DraftPuzzleInput = {
   groups: DraftGroupInput[];
 };
 
+// A ready-made starter for the create page. Its groups match DraftGroupInput, so
+// it can be played as-is or loaded into the builder to tweak.
+export type PuzzleTemplate = {
+  id: string;
+  title: string;
+  difficulty: Difficulty;
+  groups: DraftGroupInput[];
+};
+
 export type ModerationReport = {
   id: string;
   puzzleId: string;
