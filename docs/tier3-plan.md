@@ -91,79 +91,39 @@ routes (it already produces correct per-puzzle tags):
 
 ---
 
-## Item B — Explicit "no puzzle today" state
+## Item B — Daily supply without daily manual authoring
 
 ### Why
-`handleTodayPuzzle` → `PostgresPuzzleStore.TodaysPuzzle` runs
-`... where publish_date <= today order by publish_date desc limit 1`. On any day
-with no puzzle for *today*, it silently serves the **previous** day's board — and
-a returning player who already solved it sees a finished grid with no new game.
-Seed content (`seed.go`) runs out within days, so this fires quickly in practice.
+The daily game should not require an operator to write and publish a puzzle every
+night. Exact-date editorial puzzles should still win when they exist, but an
+empty date must not replay yesterday or go dark.
 
-### Decision needed from product (ask before implementing)
-1. **Cadence semantics** — pick one:
-   - **(A) Strict daily (recommended for a "daily" brand):** "today" = puzzle with
-     `publish_date == today`. If none, return an explicit empty state.
-   - **(B) Rolling with banner:** keep serving the latest, but when
-     `latest.publish_date < today` mark it stale (`stale: true`) and show a banner
-     ("No new puzzle today — here's the latest").
-   (A) is honest and pushes the real fix — an authoring/scheduling pipeline. (B) is
-   gentler if cadence is intentionally sparse.
-2. **Streak fairness** (matters for A, see below): should days with *no published
-   puzzle* be skipped so they don't break streaks? Recommended **yes**.
-3. **Fallback affordance:** when there's no puzzle today, offer "play the most
-   recent," archive, and create — or just archive/create?
-
-### Backend changes (for Option A)
-- Add a store method for the strict case, e.g.
-  `TodaysPuzzleStrict(ctx, today)` returning the puzzle where
-  `publish_date == today::date` (or `ErrPuzzleNotFound`), plus reuse a
-  `LatestPublished(ctx, today)` for the fallback link. Add to the `PuzzleSource`
-  interface and implement in `PostgresPuzzleStore`, `StaticPuzzleSource`, and the
-  `cachedPuzzleStore` delegate (and the test fake).
-- Change `handleTodayPuzzle` to a **200 with a discriminated payload** rather than
-  404-on-missing:
-  - Found: `{ "available": true, "puzzle": <PublicPuzzle> }`.
-  - Missing: `{ "available": false, "latest": { "id", "puzzleNumber",
-    "publishDate" } | null }`.
-  (200-with-`available:false` is cleaner for the client than overloading 404.)
-- Keep `dailyCacheControl()` (it already caps `s-maxage` near rollover); the
-  no-puzzle payload flips at rollover too, so the capped TTL is correct.
-
-### Streak fairness (the subtle part)
-`computeStreak` / `PostgresStatsStore.SessionStreak` count consecutive calendar
-days the session completed an editorial daily. With strict-daily, a date that had
-**no puzzle published** is an unplayable gap; today it would *break* a streak
-unfairly (completed 06-04 and 06-06, nothing on 06-05 → gap).
-Fix: compute streaks over the set of **published daily dates**, treating
-no-puzzle days as non-breaking (skip, don't reset). This means `SessionStreak`
-needs the published-date calendar (a `select distinct publish_date from puzzles
-where origin='EDITORIAL' and status='PUBLISHED' and publish_date <= today`) joined
-against the session's completions. Update `computeStreak` to walk the published
-calendar rather than raw consecutive dates. Add unit tests for the gap case.
-
-### Frontend changes
-- `src/lib/api.ts` `fetchTodayPuzzle`: change the schema to the discriminated
-  union (`available: true/false`). Return a typed result the caller can branch on.
-- `src/components/VibeGridApp.tsx`: when `available === false`, render an explicit
-  "No puzzle today" card (brand header + "Come back tomorrow", plus CTAs: Archive,
-  Create, and — if `latest` present and Option allows — "Play the latest"). Today
-  this component only has loading / ready / error states; add the empty state.
-- Keep the existing error state for real failures (distinct from "no puzzle").
+### Shipped contract
+- `handleTodayPuzzle` computes "today" from the configured server timezone.
+- `PostgresPuzzleStore.TodaysPuzzle` can still return the latest published
+  editorial puzzle through today, but `bankPuzzleSource` only accepts that result
+  when its `publish_date` is exactly today.
+- If no exact-date editorial puzzle exists, `bankPuzzleSource` composes a
+  deterministic `vibegrid-YYYY-MM-DD` board from the curated bank group pool.
+- Generated daily answers stay server-side and use the normal attempt/guess path.
+- The generated daily can be resolved later by id, so share links and result
+  URLs keep working.
 
 ### Tests
-- Backend: `TodaysPuzzleStrict` returns only an exact-date match; `handleTodayPuzzle`
-  returns `available:false` (+ latest) when today is empty, `available:true` when
-  present. Streak: a no-puzzle gap day does not break the streak.
-- Frontend: `fetchTodayPuzzle` parses both payload shapes; `VibeGridApp` renders the
-  empty state on `available:false` (component test or rely on typecheck + manual).
+- Same date produces the same generated daily.
+- A one-year window of generated dates has no repeated group set.
+- Every generated board has four groups, four tiles per group, stable color
+  indexes, and no duplicate tile text.
+- A scheduled exact-date puzzle overrides the generator.
+- `/api/puzzles/today` does not 404 when only the bank source is available.
 
-### Risks / notes
-- This is the product risk made concrete — the real mitigation is an authoring
-  cadence + draft queue + preview (out of scope here, but the empty state is what
-  makes the gap visible enough to force that work).
-- Coordinate the API contract change with the frontend in the same PR so `today`
-  never returns an unhandled shape.
+### Remaining work
+- Add admin visibility for the source of today's puzzle (editorial vs generated)
+  and the size/health of the bank group pool.
+- Add draft preview and a scheduling calendar so generated dailies are a safety
+  net, not a substitute for editorial quality.
+- If the product later wants deliberate off-days, put a strict empty-state
+  contract behind a feature flag and update streak semantics at the same time.
 
 ---
 

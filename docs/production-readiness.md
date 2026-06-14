@@ -117,20 +117,19 @@ sense; they are under-specified behaviors and product risks.
 
 ### Decisions to make
 
-1. **Daily rollover & timezone.** "Today" = latest published puzzle with
-   `publish_date <= today` in a server timezone (default Asia/Kolkata). Pick one
-   global launch timezone (UTC is the safe default) and document when "today"
-   flips for users elsewhere. **Define the no-puzzle-today fallback:** today the
-   logic silently serves the most recent published puzzle (i.e., replays
-   yesterday's) if none is published for the date — decide if that is desired or
-   if there should be an explicit "no puzzle today" state.
+1. **Daily rollover & timezone.** "Today" is computed in one server timezone
+   (default Asia/Kolkata; production config should set UTC). Pick one global
+   launch timezone and document when "today" flips for users elsewhere. No cron
+   is required for rollover: the `/api/puzzles/today` request computes the date.
+   If no editorial puzzle is published exactly for that date, the evergreen
+   generator composes a deterministic date-specific board from the curated bank.
 
-2. **Content sustainability — the #1 product risk for a daily game.** The daily
-   model depends on a human authoring a good puzzle every day. There is no
-   scheduling calendar, no draft queue depth, and **no preview** (admins publish
-   blind — there is no "play this draft as a player" before publishing). Plan a
-   publishing cadence, a calendar/queue view, and a preview mode. The deferred
-   AI-assisted-draft (human-reviewed) idea is the relevant mitigation.
+2. **Content sustainability.** The daily no longer depends on a human authoring
+   a puzzle every day, but editorial quality still does. There is no scheduling
+   calendar, no draft queue depth, and **no preview** (admins publish blind —
+   there is no "play this draft as a player" before publishing). Plan a calendar
+   view, queue-health view, and preview mode. The deferred AI-assisted-draft
+   (human-reviewed) idea is a quality accelerator, not a rollover requirement.
 
 3. **Identity model (decided for launch).** Public players stay in guest mode for
    v1. "One attempt per puzzle" and the 4-mistake cap are **cookie-bound, not

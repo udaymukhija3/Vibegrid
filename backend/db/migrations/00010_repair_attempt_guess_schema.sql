@@ -27,6 +27,11 @@ update attempt_guesses
 alter table attempt_guesses
   alter column client_guess_id set not null;
 
+-- goose splits a migration into statements on semicolons, so a dollar-quoted
+-- block (which has its own internal semicolons) must be fenced as one statement.
+-- Without these markers goose cuts the block at the first inner ";" and Postgres
+-- sees an unterminated "$$" string (SQLSTATE 42601).
+-- +goose StatementBegin
 do $$
 begin
   if not exists (
@@ -40,6 +45,7 @@ begin
       unique (attempt_id, client_guess_id);
   end if;
 end $$;
+-- +goose StatementEnd
 
 -- Bank-generated daily puzzles are virtual content served from code when no
 -- scheduled DB puzzle exists. Attempts still need to be writable for them.

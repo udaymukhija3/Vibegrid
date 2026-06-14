@@ -30,8 +30,8 @@ and monitoring templates are all present in the repo.
 - **Working local app:** `npm run dev` starts the Go API on
   `http://localhost:8081` and the Next.js frontend on `http://localhost:3000`.
 - **No database required for a quick demo:** without `DATABASE_URL`, the backend
-  uses in-memory attempts plus seeded/banked daily puzzles so the game is
-  playable immediately.
+  uses in-memory attempts plus the same date-driven daily generator, so the game
+  is playable immediately.
 - **Guided public demo path:** `/demo` starts a fresh seeded room, and the room
   URL can be opened in a private window or second browser to show another guest
   attempt without sign-in or setup.
@@ -53,7 +53,7 @@ and monitoring templates are all present in the repo.
 | Player game | Daily 4x4 grid, Standard guided mode, Hard mode, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
 | Game rules | Go validates guesses server-side. The browser receives tile ids/text and vibe hints, but never receives tile-to-group answer mappings. |
 | Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts. |
-| Daily content | Seed puzzles plus an evergreen puzzle bank keep the daily playable when no explicit editorial puzzle is scheduled. |
+| Daily content | Explicitly scheduled editorial puzzles win for their publish date. Empty days are filled by a deterministic evergreen generator that composes a date-specific board from curated bank groups, so the daily keeps changing without a cron job or manual authoring every night. |
 | Archive/share links | Published editorial puzzles appear in `/archive`; any playable puzzle can be opened at `/p/<id>`. |
 | Community puzzles | `/create` lets users build a 4x4 puzzle from scratch or from starter packs and receive a shareable `/p/<id>` link. Requires Postgres. |
 | Admin desk | `/admin` supports password-backed admin login, draft creation, publish-by-date, archive/reinstate, and per-puzzle analytics. Requires Postgres and admin env vars. |

@@ -134,6 +134,10 @@ Set these only when needed:
   over. **Pick one canonical zone and keep it stable** (changing it later shifts
   every daily puzzle's boundary). Note: the code default if unset is
   `Asia/Kolkata`, so always set it explicitly in production (`fly.toml` does).
+  No cron is required for daily rollover: `/api/puzzles/today` computes the
+  current date on request. If no editorial puzzle is published exactly for that
+  date, the evergreen generator composes a deterministic date-specific board from
+  the curated bank.
 
 ---
 

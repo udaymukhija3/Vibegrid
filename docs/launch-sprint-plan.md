@@ -39,8 +39,8 @@ These are the "best practices" guardrails; they are not re-listed per sprint.
    real Postgres for stores/handlers, a thin e2e/smoke layer for routes. Don't
    push coverage up the pyramid (no logic-in-e2e).
 4. **Feature-flag risky slices.** Anything that changes the live daily contract
-   (no-puzzle-today, accounts) goes behind an env flag so it can be dark-launched
-   and rolled back without a redeploy.
+   (accounts, strict empty states, major content-source changes) goes behind an
+   env flag so it can be dark-launched and rolled back without a redeploy.
 5. **Observability per slice.** A slice isn't done until its failure mode is
    visible — a metric, a log line, or an alert rule under [`monitoring/`](../monitoring).
 6. **Reversibility.** Each slice has a rollback note (flag off, revert migration,
@@ -58,8 +58,8 @@ listed for completeness.)
 | # | Decision | Gates | Recommended default |
 |---|----------|-------|---------------------|
 | D1 | **Launch timezone** for "today" rollover | Sprint 0, 2 | `UTC` (document the flip time) |
-| D2 | **No-puzzle-today**: strict-daily empty state vs. rolling "stale" banner | Sprint 2 | Strict-daily (A) — honest for a "daily" brand |
-| D3 | **Streak fairness**: skip no-puzzle days so they don't break streaks | Sprint 2 | Yes (skip gaps) |
+| ✓ | **No-puzzle-today fallback** | — | Done: exact-date editorial puzzles win; otherwise the evergreen generator composes a date-specific daily. |
+| ✓ | **Streak fairness for no-puzzle days** | — | No empty days in v1 because the generator fills the daily. |
 | ✓ | **Public login model** | — | Guest play for v1; admin login only |
 | D4 | **Optional accounts trigger**: when to add cross-device identity | Sprint 8 | Only after retention or cross-device streak demand is proven |
 | D5 | **Community numbering**: shared `puzzle_number` vs. separate label | Sprint 2 (cheap) | Separate "Community" label in share text |
@@ -80,7 +80,7 @@ community puzzle links, not live rooms.
 |--------|-----------------------------|------|-----------|
 | **0** | The app is live on a public HTTPS URL and a stranger can play today's puzzle | M | D1 |
 | **1** | Shared links render real preview cards everywhere (iMessage/Slack/X) | M | — |
-| **2** | The daily never silently replays yesterday; streaks survive gap days | L | D1, D2, D3, D5 |
+| **2** | Daily supply is observable and editorial quality can be managed | M | D1, D5 |
 | **3** | Trust & durability: backups, dep-scanning, retention, abuse confirmed | M | D7 |
 | **4** | Quality gates: browser e2e + component + load + a11y in CI | L | — |
 | **5** | We can see the funnel and whether difficulty labels are honest | M | — |
@@ -178,47 +178,43 @@ decode); injection test updated (`TestSharedPuzzleHTMLInjectsOGMetadata`,
 
 ---
 
-## Sprint 2 — The daily holds up day-to-day (Tier-3 Item B)
+## Sprint 2 — Daily supply is launch-grade
 
-**Slice goal:** on a day with no published puzzle, players see an explicit "no
-puzzle today" state (not a silently replayed yesterday), and a missing day does
-not unfairly break a streak.
+**Slice goal:** the daily keeps changing without a human writing a puzzle every
+day, and operators can still publish exact-date editorial puzzles when they want
+to override the generated daily.
 
-**Why now:** `TodaysPuzzle` runs `... where publish_date <= today ... limit 1`, so
-an empty day silently serves the **previous** puzzle — and seed content runs out
-within days, so this fires fast in production. This is the product risk made
-concrete. (Full design in [`tier3-plan.md`](tier3-plan.md) Item B.)
+**Why now:** a daily game cannot depend on emergency manual authoring. The app now
+uses an evergreen generator: exact-date editorial puzzles win, otherwise the
+server composes a deterministic date-specific board from the curated bank group
+pool. This removes the "yesterday replay" failure while keeping all answer data
+server-side.
 
-**Decisions:** D2 (strict empty-state vs. rolling banner), D3 (skip gap days for
-streaks), D1 (timezone), D5 (community numbering — cheap to fold in here).
+**Decisions:** D1 (timezone), D5 (community numbering - cheap to fold in here).
 
-**Scope (Option A / strict-daily, recommended)**
-- Add `TodaysPuzzleStrict(ctx, today)` (exact `publish_date == today`) +
-  `LatestPublished(ctx, today)` for the fallback link to the `PuzzleSource`
-  interface; implement in `PostgresPuzzleStore`, `StaticPuzzleSource`,
-  `cachedPuzzleStore`, and the test fake.
-- Change `handleTodayPuzzle` to a **200 with a discriminated payload**:
-  `{available:true, puzzle}` or `{available:false, latest:{...}|null}` (cleaner
-  than overloading 404). Keep `dailyCacheControl()` (caps `s-maxage` near rollover).
-- **Streak fairness (D3):** compute streaks over the set of *published daily
-  dates* so no-puzzle days are non-breaking; update `computeStreak` +
-  `SessionStreak` and add a gap-day unit test.
-- **Frontend (same PR):** `fetchTodayPuzzle` returns the discriminated union;
-  `VibeGridApp` renders a "No puzzle today" card (Come back tomorrow + CTAs:
-  Archive, Create, and — if allowed — Play the latest). Keep the error state
-  distinct from the empty state.
+**Scope**
+- Keep `VIBEGRID_TIMEZONE` explicit in production (`UTC` by default in deploy
+  config) and document the global flip time.
+- Keep the generated daily source under backend tests: same date is stable,
+  generated boards are valid, and at least one year of dates has no repeated
+  group set.
+- Add operator visibility for generated-vs-editorial source and bank queue
+  health when an admin dashboard slice needs it.
 - **D5:** if community puzzles should read differently, add a "Community" label to
   share text / OG card without changing the shared `puzzle_number` sequence.
 
 **Acceptance criteria**
-- Empty today → `available:false` (+ `latest`); populated today → `available:true`.
-- Player on an empty day sees the empty card, never a finished replayed grid.
-- Completed 06-04 and 06-06 with nothing published 06-05 → streak intact.
+- A day with no exact-date editorial puzzle still returns a playable daily.
+- A scheduled exact-date editorial puzzle overrides the generator.
+- The generated daily can be resolved later by `/p/vibegrid-YYYY-MM-DD`.
+- Backend tests prove deterministic generation, valid boards, and no full-board
+  repeat across a one-year window.
 
-**Testing:** backend store + handler tests for both shapes; streak gap-day test;
-frontend parses both payloads + renders the empty state.
+**Testing:** backend generator tests, endpoint smoke test, browser check around a
+date with no scheduled puzzle.
 
-**Rollback:** flag `VIBEGRID_STRICT_DAILY`; off = current behavior.
+**Rollback:** revert the generator change or feature-flag a strict empty-state
+contract if the product deliberately wants no puzzle on unscheduled days.
 
 **DoD:** verified in-browser for both an empty and a populated day; streak math
 covered by tests; API contract change shipped frontend+backend together.

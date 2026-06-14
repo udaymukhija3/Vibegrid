@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,7 +84,7 @@ func TestBankDailyNumberContinuesFromSeeds(t *testing.T) {
 	}
 }
 
-func TestBankRotationIsDeterministicAndCycles(t *testing.T) {
+func TestBankGenerationIsDeterministicAndFreshForAYear(t *testing.T) {
 	source := NewBankPuzzleSource(StaticPuzzleSource(nil), PuzzleBank()) // empty inner ⇒ always bank
 
 	a, err := source.TodaysPuzzle(context.Background(), "2026-09-01")
@@ -90,17 +92,25 @@ func TestBankRotationIsDeterministicAndCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := source.TodaysPuzzle(context.Background(), "2026-09-01")
-	if a.Groups[0].ID != b.Groups[0].ID {
-		t.Fatal("same date produced different bank entries")
+	if bankDailySignature(a) != bankDailySignature(b) {
+		t.Fatal("same date produced different generated daily")
 	}
 
-	// A date exactly len(bank) days later must select the same entry.
-	bank := PuzzleBank()
-	start, _ := parseDay("2026-09-01")
-	repeat := time.Unix((start+int64(len(bank)))*86400, 0).UTC().Format("2006-01-02")
-	c, _ := source.TodaysPuzzle(context.Background(), repeat)
-	if a.Groups[0].ID != c.Groups[0].ID {
-		t.Fatalf("rotation did not cycle after len(bank) days: %q vs %q", a.Groups[0].ID, c.Groups[0].ID)
+	seen := map[string]string{}
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for offset := 0; offset < 365; offset++ {
+		date := start.AddDate(0, 0, offset).Format("2006-01-02")
+		daily, err := source.TodaysPuzzle(context.Background(), date)
+		if err != nil {
+			t.Fatalf("%s: %v", date, err)
+		}
+		signature := bankDailySignature(daily)
+		if previousDate, exists := seen[signature]; exists {
+			t.Fatalf("generated daily repeated after %d days: %s and %s both use %s",
+				offset, previousDate, date, signature)
+		}
+		seen[signature] = date
+		assertPlayableGeneratedDaily(t, date, daily)
 	}
 }
 
@@ -167,6 +177,42 @@ func TestPuzzleBankIsWellFormed(t *testing.T) {
 		}
 		if len(colors) != 4 {
 			t.Fatalf("%s: expected 4 distinct colour indexes, got %d", puzzle.ID, len(colors))
+		}
+	}
+}
+
+func bankDailySignature(puzzle Puzzle) string {
+	groupIDs := make([]string, 0, len(puzzle.Groups))
+	for _, group := range puzzle.Groups {
+		groupIDs = append(groupIDs, group.ID)
+	}
+	sort.Strings(groupIDs)
+	return strings.Join(groupIDs, "|")
+}
+
+func assertPlayableGeneratedDaily(t *testing.T, date string, puzzle Puzzle) {
+	t.Helper()
+	if puzzle.ID != "vibegrid-"+date || puzzle.PublishDate != date || puzzle.PuzzleNumber == 0 {
+		t.Fatalf("%s: generated daily not stamped correctly: %#v", date, puzzle)
+	}
+	if len(puzzle.Groups) != GroupSize {
+		t.Fatalf("%s: expected %d groups, got %d", date, GroupSize, len(puzzle.Groups))
+	}
+
+	tileText := map[string]bool{}
+	for colorIndex, group := range puzzle.Groups {
+		if group.ColorIndex != colorIndex {
+			t.Fatalf("%s/%s: color index = %d, want %d", date, group.ID, group.ColorIndex, colorIndex)
+		}
+		if len(group.Tiles) != GroupSize {
+			t.Fatalf("%s/%s: expected %d tiles, got %d", date, group.ID, GroupSize, len(group.Tiles))
+		}
+		for _, tile := range group.Tiles {
+			key := normalizedTileText(tile.Text)
+			if tileText[key] {
+				t.Fatalf("%s: duplicate tile text %q in generated daily", date, tile.Text)
+			}
+			tileText[key] = true
 		}
 	}
 }
