@@ -7,133 +7,110 @@
     <a href="https://github.com/udaymukhija3/Vibegrid/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/udaymukhija3/Vibegrid/actions/workflows/ci.yml/badge.svg" /></a>
   </p>
   <p>
-    <a href="#demo-status">Demo status</a> ·
-    <a href="#what-to-try">What to try</a> ·
-    <a href="#architecture">Architecture</a> ·
-    <a href="docs/resume-points.md">Resume bullets</a>
+    <a href="#current-state">Current state</a> |
+    <a href="#what-is-built">What is built</a> |
+    <a href="#run-it-locally">Run locally</a> |
+    <a href="#deployment-status">Deployment</a> |
+    <a href="#for-portfolio-and-ai-agents">Portfolio notes</a>
   </p>
 </div>
 
-<!-- Add a screenshot or GIF here once deployed, e.g. docs/demo.png -->
+VibeGrid is a daily word-grouping game with real product plumbing behind it:
+guest attempts, server-authoritative guessing, spoiler-safe sharing, community
+puzzle links, admin publishing, moderation, analytics, and production-shaped
+observability. It ships as one Go binary that serves an exported Next.js front
+end and the API from the same origin.
 
-VibeGrid is a daily word-grouping game with real product plumbing: anonymous
-persistent attempts, spoiler-safe sharing, user-created puzzle links, admin
-publishing, moderation, analytics, and deploy-ready observability. It ships as
-one Go binary that serves an exported Next.js front end plus the API.
+This is not a static mockup. The core player loop, durable Postgres path, admin
+desk, moderation queue, migrations, CI workflow, Docker image, Fly/Render config,
+and monitoring templates are all present in the repo.
 
-## Demo status
+## Current State
 
-This checkout is demo-ready locally, but it is not on a permanent public host as
-of June 5, 2026. The intended production path is a single Fly.io web/API
-container plus managed Postgres; see [docs/deployment.md](docs/deployment.md).
+- **Working local app:** `npm run dev` starts the Go API on
+  `http://localhost:8081` and the Next.js frontend on `http://localhost:3000`.
+- **No database required for a quick demo:** without `DATABASE_URL`, the backend
+  uses in-memory attempts plus seeded/banked daily puzzles so the game is
+  playable immediately.
+- **Guided public demo path:** `/demo` starts a fresh seeded room, and the room
+  URL can be opened in a private window or second browser to show another guest
+  attempt without sign-in or setup.
+- **Postgres unlocks the full product:** durable attempts, stats, streaks,
+  community puzzle creation, admin publishing, reports, appeals, moderation, and
+  audit logs require `DATABASE_URL`.
+- **Deployment scaffolding is ready:** the repo includes a multi-stage
+  Node+Go `Dockerfile`, `fly.toml`, `render.yaml`, embedded SQL migrations,
+  `/healthz`, `/readyz`, `/metrics`, structured logs, alert rules, and a starter
+  Grafana dashboard.
+- **Permanent public hosting is not recorded here yet:** treat this as a
+  deploy-ready portfolio project until a real production URL, managed Postgres,
+  backup/restore drill, and external monitoring are verified and documented.
 
-For a same-day public demo of the core game, run the app and share a temporary
-tunnel to the Go server:
+## What Is Built
 
-```bash
-npm install
-npm run dev
-cloudflared tunnel --url http://localhost:8081
-```
-
-Then smoke-test the link:
-
-```bash
-npm run smoke:deploy -- --base-url https://<temporary-demo-url>
-```
-
-The temporary no-database demo supports play, refresh persistence, archive,
-shared puzzle pages, OG images, health/readiness, and metrics. The create,
-admin, moderation, and durable analytics flows require `DATABASE_URL` and are
-covered by the Postgres path documented below.
-
-## What to try
-
-- Play the daily puzzle at `/`.
-- Refresh after a guess; the anonymous attempt should persist.
-- Open `/archive` and play a previous daily grid.
-- On a database-backed run, create a puzzle at `/create`, then share the
-  generated `/p/<id>` link.
-- On a database-backed run, report a community puzzle, then review
-  moderation/admin behavior from `/admin`.
-
-## Highlights
-
-- **Server-authoritative gameplay.** The browser receives tile text and ids but
-  never group membership; the Go API validates every guess and only reveals a
-  group after a correct submission. The answer key never reaches the client.
-- **Transaction-safe, idempotent guesses.** Each guess runs inside a Postgres
-  transaction that `SELECT … FOR UPDATE`-locks the attempt row. A unique
-  `(attempt_id, client_guess_id)` constraint makes retries and double-clicks
-  idempotent, so concurrent submissions can't corrupt mistake counts or
-  completion state. (Proven by concurrency tests run under the race detector.)
-- **Pluggable storage.** A `Store`/`PuzzleSource` interface backs both a Postgres
-  implementation and an in-memory one, so the app runs (and tests) with or
-  without a database.
-- **Release-time migrations.** Embedded SQL migrations (goose) run through the
-  `vibegrid migrate` subcommand before serving traffic.
-- **User-generated content.** A public, rate-limited create flow lets anyone
-  author a puzzle and share a play-by-link; community puzzles stay out of the
-  daily rotation by design.
-- **Moderation workflow.** Players can report community puzzles in-app; admins
-  review reports, archive or reinstate puzzles, handle appeals, and keep an
-  audit log in Postgres.
-- **Analytics from first principles.** Completion stats (solve rate, median
-  mistakes/time) and an admin wrong-guess heatmap are computed straight from the
-  attempt and guess tables with SQL aggregates — no separate analytics pipeline.
-- **Production observability.** `/healthz`, `/readyz`, `/metrics`, structured
-  request logs, alert rules, and a starter Grafana dashboard are checked in for
-  launch operations.
-- **Tested and CI'd.** Go unit + integration tests (including a Postgres service
-  container in GitHub Actions) and a typed, lint-clean front end.
-
-## Tech stack
-
-| Layer | Choice |
+| Area | Current behavior |
 | --- | --- |
-| API | Go (stdlib `net/http`, `log/slog`) |
-| Database | Postgres (`pgx`, goose migrations) |
-| Web | Next.js App Router, React, TypeScript |
-| Styling | Tailwind CSS |
-| Identity | Anonymous session cookies |
+| Player game | Daily 4x4 grid, Standard guided mode, Hard mode, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
+| Game rules | Go validates guesses server-side. The browser receives tile ids/text and vibe hints, but never receives tile-to-group answer mappings. |
+| Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts. |
+| Daily content | Seed puzzles plus an evergreen puzzle bank keep the daily playable when no explicit editorial puzzle is scheduled. |
+| Archive/share links | Published editorial puzzles appear in `/archive`; any playable puzzle can be opened at `/p/<id>`. |
+| Community puzzles | `/create` lets users build a 4x4 puzzle from scratch or from starter packs and receive a shareable `/p/<id>` link. Requires Postgres. |
+| Admin desk | `/admin` supports password-backed admin login, draft creation, publish-by-date, archive/reinstate, and per-puzzle analytics. Requires Postgres and admin env vars. |
+| Moderation | Players can report puzzles without logging in; admins can review reports, archive/reinstate content, handle appeals, and inspect an audit log. Requires Postgres. |
+| Analytics | Public completion stats are computed from attempts/guesses and shown only after the player finishes and enough players exist; admins also get wrong-guess heatmaps. |
+| Operations | Health/readiness probes, Prometheus metrics, structured request logs, route-aware security headers, rate limits, body caps, Docker/Fly/Render config, and deploy smoke scripts are checked in. |
 
 ## Architecture
 
-```
-Browser ──▶ Go binary (embedded static Next export + /api/*) ──▶ Postgres
+```text
+Browser -> Go binary (embedded Next.js static export + /api/*) -> Postgres
 ```
 
-The Go service owns static file serving, game rules, sessions, attempts,
-idempotency, puzzle authoring, and dynamic OG images. In development, Next still
-uses a local `/api/*` rewrite to the Go API for fast UI iteration.
+In development, Next.js rewrites `/api/*` to the Go backend for fast UI
+iteration. In production, the Go binary serves the static frontend and API from
+one origin, which keeps cookies, CORS, and deployment simpler.
 
-## Getting started
+Important implementation points:
+
+- `backend/internal/vibegrid` owns game rules, sessions, attempts, puzzle stores,
+  admin routes, moderation, stats, metrics, and SEO helpers.
+- `backend/db/migrations` contains embedded SQL migrations. `vibegrid migrate`
+  is the release-time migration command.
+- `src/app`, `src/components`, `src/lib`, and `src/types` contain the Next.js
+  frontend, API client, runtime response validation, game UI, admin desk, create
+  flow, archive, policy, privacy, and terms pages.
+- `backend/internal/frontend` embeds the static Next.js export into the Go
+  binary for the single-container deploy path.
+- `scripts/dev.mjs`, `scripts/e2e.mjs`, and `scripts/smoke.mjs` are the local
+  development and smoke-test entry points.
+
+## Run It Locally
+
+Install dependencies and start both servers:
 
 ```bash
 npm install
 npm run dev
 ```
 
-`npm run dev` starts the Go API on `http://localhost:8081` and the Next front end
-on `http://localhost:3000`. Without a database it uses an in-memory store and a
-seeded puzzle, so it runs out of the box.
+Open `http://localhost:3000`.
 
 Useful commands:
 
 ```bash
-npm run dev:backend   # Go API only
-npm run dev:web       # Next.js only
+npm run dev:backend   # Go API only on :8081
+npm run dev:web       # Next.js only on :3000
 npm run migrate:backend
-npm run test          # front-end tests
-npm run test:backend  # Go tests
+npm run test          # Vitest frontend tests
+npm run test:backend  # Go backend tests
 npm run typecheck
 npm run build
 ```
 
-## Database
+### Run with Postgres
 
-Set `DATABASE_URL` to use the durable, transaction-safe Postgres path; run
-migrations before starting the backend.
+Use Postgres for the durable path:
 
 ```bash
 createdb vibegrid
@@ -141,43 +118,164 @@ DATABASE_URL="postgres://USER@localhost:5432/vibegrid?sslmode=disable" npm run m
 DATABASE_URL="postgres://USER@localhost:5432/vibegrid?sslmode=disable" npm run dev:backend
 ```
 
-Integration tests run against a real Postgres when `TEST_DATABASE_URL` is set,
-and are skipped otherwise:
+Then run `npm run dev:web` in another terminal and open
+`http://localhost:3000`.
+
+Integration tests use a real Postgres database when `TEST_DATABASE_URL` is set:
 
 ```bash
 createdb vibegrid_test
 TEST_DATABASE_URL="postgres://USER@localhost:5432/vibegrid_test?sslmode=disable" go test -race ./backend/...
 ```
 
-See [.env.example](.env.example) for all configuration
-(`VIBEGRID_ADMIN_PASSWORD`, `VIBEGRID_ADMIN_SESSION_SECRET`,
-`VIBEGRID_ADMIN_TOKEN`, `VIBEGRID_ALLOWED_ORIGINS`,
-`VIBEGRID_SECURE_COOKIES`, …).
+See [.env.example](.env.example) for environment variables such as
+`DATABASE_URL`, `VIBEGRID_ADMIN_PASSWORD`,
+`VIBEGRID_ADMIN_SESSION_SECRET`, `VIBEGRID_ADMIN_TOKEN`,
+`VIBEGRID_ALLOWED_ORIGINS`, `VIBEGRID_SECURE_COOKIES`,
+`VIBEGRID_TIMEZONE`, and `VIBEGRID_MIGRATE_ON_BOOT`.
 
-## Routes
+## Routes To Try
 
-- `/` — today's puzzle. `/archive` — past daily puzzles.
-- `/create` — public puzzle builder; returns a shareable `/p/<id>` link.
-- `/p/<id>` — play any puzzle by link.
-- `/admin` — Editor Desk (author drafts, publish one puzzle per date, review
-  reports and appeals). Requires a database and either
-  `VIBEGRID_ADMIN_PASSWORD` + `VIBEGRID_ADMIN_SESSION_SECRET` for the web UI or
-  `VIBEGRID_ADMIN_TOKEN` for legacy automation.
-- `/policy`, `/terms`, `/privacy` — community rules and launch policy copy.
+- `/` - today's puzzle.
+- `/demo` - starts a guided seeded demo room.
+- `/demo/<room>` - plays that seeded room; open the same link in a private
+  window or second browser to simulate another guest.
+- `/archive` - previous editorial daily puzzles.
+- `/create` - public puzzle builder; returns a shareable `/p/<id>` link.
+- `/p/<id>` - play a puzzle by link.
+- `/admin` - Editor Desk for drafts, publishing, archive/reinstate, analytics,
+  reports, appeals, and moderation audit logs.
+- `/policy`, `/terms`, `/privacy` - community rules and launch policy copy.
+- `/healthz`, `/readyz`, `/metrics`, `/robots.txt`, `/sitemap.xml` - operational
+  and SEO endpoints served by the Go binary.
 
-## Deployment
+## Deployment Status
 
-The repo is deploy-ready: a multi-stage Node+Go `Dockerfile`, `fly.toml` with
-migrations as a release command and a `/readyz` health check, a `vibegrid
-migrate` subcommand, embedded static frontend serving, route-aware CSP, and
-security/cache headers. Target topology is Fly.io (single web/API container) +
-managed Postgres. Step-by-step instructions are in
-[docs/deployment.md](docs/deployment.md).
+The intended production shape is a single web/API container plus managed
+Postgres. The checked-in deploy paths are:
 
-## Project docs
+- **Fly.io:** `fly.toml` uses the Dockerfile and runs `vibegrid migrate` as the
+  release command before traffic is served.
+- **Render + Neon:** `render.yaml` supports a free-tier portfolio deployment.
+  Because Render free has no release hook, it uses `VIBEGRID_MIGRATE_ON_BOOT=true`
+  for a single-instance boot migration.
+- **Any container host:** build the Dockerfile, set the env vars from
+  `.env.example`, attach Postgres, run migrations once per release, and route
+  health checks to `/readyz`.
 
-Product vision, daily puzzle operations, the decision register, the engineering
-roadmap, and the tech stack rationale live in [`docs/`](docs/).
+For a temporary public demo of the no-database game loop, run the app and tunnel
+the Go server:
+
+```bash
+npm install
+npm run dev
+cloudflared tunnel --url http://localhost:8081
+```
+
+Share `/demo` for a fresh guided walkthrough. If you want to show a second
+viewer, copy the generated `/demo/<room>` URL and open it in a private window or
+another browser; it uses the same seeded room with a separate guest attempt.
+
+Then smoke-test the temporary URL:
+
+```bash
+npm run smoke:deploy -- --base-url https://<temporary-demo-url>
+```
+
+Use [docs/deployment.md](docs/deployment.md) for the full production runbook.
+Before describing it as production live, verify the real host/domain, secure
+guest cookie persistence, managed Postgres backups/PITR, one restore drill,
+external uptime checks, and log/metrics retention.
+
+## Verification
+
+The local and CI verification ladder is:
+
+```bash
+npm run test
+npm run test:backend
+npm run typecheck
+npm run build
+```
+
+GitHub Actions is configured to run:
+
+- Go formatting, `go vet`, and `go test -race ./...` against a Postgres service.
+- `npm ci`, lint, typecheck, Vitest, and the static Next.js build.
+
+The deploy smoke script checks the runtime routes that matter for a public demo:
+play, archive, create/share where supported, policy pages, health/readiness,
+metrics, robots/sitemap, and OG metadata.
+
+## Known Gaps
+
+These are the main things not to overstate:
+
+- No permanent production URL is documented in the repo yet.
+- Public player accounts, OAuth, leaderboards, cross-device identity, and account
+  recovery are intentionally not implemented for v1.
+- Real-time multiplayer, live rooms, matchmaking, presence, and chat are out of
+  scope; the multiplayer loop is async sharing and community puzzle links.
+- AI-assisted puzzle generation is not part of the shipped app. Any future AI
+  work should be admin-reviewed draft assistance, not automatic publishing.
+- Shared puzzle metadata exists, but the current OG image endpoint is SVG. PNG
+  social cards for more reliable unfurls are a launch polish item.
+- External production ops still need provider setup: managed Postgres backups,
+  restore drill, dependency scanning, log drain, uptime monitor, and real alert
+  routing.
+
+## For Portfolio And AI Agents
+
+If you are using this README to update a portfolio website, use the framing below.
+It is intentionally specific and avoids claiming a public production launch.
+
+**Short portfolio title:** VibeGrid - daily semantic grouping puzzle.
+
+**One-sentence summary:** Built a Go/Postgres/Next.js daily puzzle app with
+server-authoritative game rules, guest attempt persistence, shareable community
+puzzles, admin publishing, moderation, analytics, CI, Docker deployment
+scaffolding, and Prometheus-style observability.
+
+**Good tags:** Go, Postgres, Next.js, TypeScript, Tailwind CSS, Docker, CI,
+observability, product engineering, moderation tooling.
+
+**Strong proof points to mention:**
+
+- Server-side validation prevents the browser from receiving the answer key.
+- Postgres attempt storage uses transactional/idempotent guess handling so
+  refreshes, retries, and double-clicks do not corrupt game state.
+- The project includes a full product surface, not only gameplay: create/share,
+  admin publishing, moderation, reports/appeals, analytics, policies, and ops
+  endpoints.
+- The deploy path is single-container and same-origin: the Go binary serves the
+  exported Next.js frontend and API.
+- The repo contains production-oriented scaffolding: migrations, health/readiness
+  probes, metrics, structured logs, security headers, rate limits, CI, Docker,
+  Fly/Render config, and smoke tests.
+
+**Do not claim unless a later commit proves it:**
+
+- A permanent public production URL is live.
+- Real users or production traffic exist.
+- Public accounts, OAuth, native mobile, live multiplayer, or leaderboards exist.
+- AI is generating or publishing puzzles.
+- Backups, restore drills, external monitoring, or alert routing are already
+  configured in a provider account.
+
+For resume wording, see [docs/resume-points.md](docs/resume-points.md). For the
+remaining launch plan, see [docs/launch-sprint-plan.md](docs/launch-sprint-plan.md)
+and [docs/production-readiness.md](docs/production-readiness.md).
+
+## Project Docs
+
+- [Deployment runbook](docs/deployment.md)
+- [Production readiness review](docs/production-readiness.md)
+- [Launch sprint plan](docs/launch-sprint-plan.md)
+- [Observability runbook](docs/observability.md)
+- [Product vision](docs/product-vision.md)
+- [Decision register](docs/decision-register.md)
+- [Tech stack notes](docs/tech-stack.md)
+- [Resume points](docs/resume-points.md)
 
 ## License
 

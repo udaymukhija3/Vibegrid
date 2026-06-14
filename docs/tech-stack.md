@@ -10,7 +10,7 @@
 | Styling | Tailwind CSS | Fast iteration with a small custom visual system. |
 | Backend data path | Go structs now, Postgres next | In-memory store ships the first slice; `backend/db/schema.sql` defines the durable target. |
 | Database | Postgres | Reliable relational fit for puzzles, groups, tiles, attempts, guesses, and stats. |
-| Identity | Anonymous cookie sessions first | Best v1 UX; accounts can be layered in later. |
+| Identity | Guest cookie sessions; admin login for operations | Best v1 UX; public accounts can be layered in later only if retention proves they matter. |
 | Validation | Go request validation at API edge | The backend is the source of truth for legal guesses and attempt state. |
 | Icons | Lucide React | Familiar controls without custom icon work. |
 | Deployment | Vercel frontend + Fly/Render/Railway Go API | Keeps frontend and backend deployable as independent services. |

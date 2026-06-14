@@ -61,6 +61,14 @@ func (handler *Handler) resolve(cleanPath string) string {
 		}
 	}
 
+	if isDemoRoomPath(cleanPath) {
+		for _, candidate := range []string{"demo/__room__/index.html", "demo/__room__.html", "demo/index.html"} {
+			if handler.exists(candidate) {
+				return candidate
+			}
+		}
+	}
+
 	if cleanPath == "/" {
 		if handler.exists("index.html") {
 			return "index.html"
@@ -121,6 +129,10 @@ func (handler *Handler) exists(name string) bool {
 
 func isSharedPuzzlePath(cleanPath string) bool {
 	return strings.HasPrefix(cleanPath, "/p/") && cleanPath != "/p/"
+}
+
+func isDemoRoomPath(cleanPath string) bool {
+	return strings.HasPrefix(cleanPath, "/demo/") && cleanPath != "/demo/"
 }
 
 func cacheControlFor(name string) string {

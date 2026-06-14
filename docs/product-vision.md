@@ -24,7 +24,7 @@ The core promise is a 2-5 minute ritual: open the grid, argue with yourself, fin
 - Incorrect guesses increment mistake count.
 - 4 mistakes ends the attempt.
 - Completed result shows time, mistakes, solved groups, and share text.
-- Anonymous attempt persists across refreshes.
+- Guest attempt persists across refreshes.
 - Seeded puzzle content exists before admin tooling is built.
 
 ## Voice
@@ -44,4 +44,3 @@ Avoid:
 - Generic category labels that could appear in any word game.
 - Punching down at people or identities.
 - References so obscure that solving becomes trivia instead of semantic grouping.
-

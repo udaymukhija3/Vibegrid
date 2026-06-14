@@ -32,6 +32,27 @@ export async function fetchTodayPuzzle(): Promise<PublicPuzzle> {
   return publicPuzzleSchema.parse(await getJSON("/api/puzzles/today"));
 }
 
+const sessionStatusSchema = z.object({
+  mode: z.literal("guest"),
+  guest: z.object({
+    active: z.boolean(),
+    label: z.string(),
+    cookieName: z.string(),
+    maxAgeDays: z.number()
+  }),
+  admin: z.object({
+    authenticated: z.boolean(),
+    cookieName: z.string(),
+    expiresAt: z.string().optional()
+  })
+});
+
+export type SessionStatus = z.infer<typeof sessionStatusSchema>;
+
+export async function fetchSessionStatus(): Promise<SessionStatus> {
+  return sessionStatusSchema.parse(await getJSON("/api/session"));
+}
+
 // The archive grows by one puzzle a day, so it is paginated. Callers page with
 // offset = number already loaded and stop when a short page (< ARCHIVE_PAGE_SIZE)
 // comes back.

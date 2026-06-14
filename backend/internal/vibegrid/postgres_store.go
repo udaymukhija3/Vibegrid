@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,6 +24,11 @@ const pgUniqueViolation = "23505"
 // Keep DB work below the outer HTTP timeout so handlers can return intentional
 // errors instead of letting http.TimeoutHandler be the first line of defense.
 const databaseOperationTimeout = 4 * time.Second
+
+const (
+	defaultQueryExecModeParam = "default_query_exec_mode"
+	simpleProtocolMode        = "simple_protocol"
+)
 
 func withDatabaseTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, databaseOperationTimeout)
@@ -51,6 +58,7 @@ func OpenDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
 }
 
 func openDB(ctx context.Context, databaseURL string, applyMigrations bool) (*sql.DB, error) {
+	databaseURL = withSimpleProtocol(databaseURL)
 	database, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
@@ -75,6 +83,28 @@ func openDB(ctx context.Context, databaseURL string, applyMigrations bool) (*sql
 	}
 
 	return database, nil
+}
+
+// withSimpleProtocol keeps the pgx database/sql driver compatible with
+// transaction-mode poolers (common on hosted Postgres free tiers). If a deploy
+// explicitly sets a query mode we preserve it.
+func withSimpleProtocol(databaseURL string) string {
+	if strings.Contains(databaseURL, defaultQueryExecModeParam+"=") {
+		return databaseURL
+	}
+
+	parsed, err := url.Parse(databaseURL)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		query := parsed.Query()
+		query.Set(defaultQueryExecModeParam, simpleProtocolMode)
+		parsed.RawQuery = query.Encode()
+		return parsed.String()
+	}
+
+	if strings.TrimSpace(databaseURL) == "" {
+		return databaseURL
+	}
+	return databaseURL + " " + defaultQueryExecModeParam + "=" + simpleProtocolMode
 }
 
 func MigrateDB(ctx context.Context, databaseURL string) error {
@@ -207,7 +237,7 @@ func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzl
 		return GuessSubmission{}, err
 	}
 
-	if err := store.updateAttempt(ctx, tx, attemptID, state); err != nil {
+	if err := store.updateAttempt(ctx, tx, attemptID, state, state.completed(puzzle)); err != nil {
 		return GuessSubmission{}, err
 	}
 
@@ -372,7 +402,7 @@ func (store *PostgresAttemptStore) insertGuess(ctx context.Context, tx *sql.Tx, 
 	return nil
 }
 
-func (store *PostgresAttemptStore) updateAttempt(ctx context.Context, tx *sql.Tx, attemptID string, state attemptState) error {
+func (store *PostgresAttemptStore) updateAttempt(ctx context.Context, tx *sql.Tx, attemptID string, state attemptState, completed bool) error {
 	solvedGroupIDs := make([]string, 0, len(state.SolvedGroupIDs))
 	for id := range state.SolvedGroupIDs {
 		solvedGroupIDs = append(solvedGroupIDs, id)
@@ -395,7 +425,7 @@ func (store *PostgresAttemptStore) updateAttempt(ctx context.Context, tx *sql.Tx
 		state.Mistakes,
 		state.GuessCount,
 		state.Failed,
-		completedAt.Valid,
+		completed,
 		completedAt,
 		pq.Array(solvedGroupIDs),
 		attemptID,

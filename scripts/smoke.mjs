@@ -88,6 +88,13 @@ export async function runSmoke({
   assert(jar.has("vibegrid_session"), "attempt did not set a vibegrid_session cookie");
   log("ok attempt session");
 
+  const session = await expectJSON("/api/session");
+  assert(session.payload.mode === "guest", "session did not report guest mode");
+  assert(session.payload.guest?.active === true, "guest session was not active");
+  assert(session.payload.guest?.cookieName === "vibegrid_session", "guest session named the wrong cookie");
+  assert(session.payload.admin?.authenticated === false, "public smoke should not be admin-authenticated");
+  log(`ok guest session (${session.payload.guest.label})`);
+
   const archive = await expectJSON("/api/puzzles");
   assert(Array.isArray(archive.payload), "archive did not return an array");
   log(`ok archive (${archive.payload.length} puzzle${archive.payload.length === 1 ? "" : "s"})`);
@@ -104,6 +111,15 @@ export async function runSmoke({
   const shared = await expectText(`/p/${encodeURIComponent(puzzle.id)}`);
   assert(isHTML(shared.response), "shared puzzle route did not return HTML");
   log("ok shared puzzle page");
+
+  const demoRoom = "smoke-room";
+  const demo = await expectText(`/demo/${demoRoom}`);
+  assert(isHTML(demo.response), "demo room route did not return HTML");
+  const demoPuzzle = await expectJSON(`/api/puzzles/demo-${demoRoom}`);
+  assert(demoPuzzle.payload.id === `demo-${demoRoom}`, "demo puzzle returned a different id");
+  assert(Array.isArray(demoPuzzle.payload.tiles) && demoPuzzle.payload.tiles.length === 16, "demo puzzle does not expose 16 tiles");
+  await expectJSON(`/api/attempts/demo-${demoRoom}`);
+  log("ok demo room");
 
   for (const route of ["/policy", "/terms", "/privacy"]) {
     const policy = await expectText(route);

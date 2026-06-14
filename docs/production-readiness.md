@@ -132,12 +132,14 @@ sense; they are under-specified behaviors and product risks.
    publishing cadence, a calendar/queue view, and a preview mode. The deferred
    AI-assisted-draft (human-reviewed) idea is the relevant mitigation.
 
-3. **Identity model.** "One attempt per puzzle" and the 4-mistake cap are
-   **cookie-bound, not identity-bound** — clearing cookies / incognito gives a
-   fresh attempt. Acceptable for a casual daily puzzle (Wordle/Connections are
-   similar), but it means stats are gameable and real **streaks/cross-device
-   continuity are impossible without accounts.** Decide: stay anonymous (fine for
-   v1) or add optional accounts later for integrity + retention.
+3. **Identity model (decided for launch).** Public players stay in guest mode for
+   v1. "One attempt per puzzle" and the 4-mistake cap are **cookie-bound, not
+   identity-bound** — clearing cookies / incognito gives a fresh attempt.
+   Acceptable for a casual daily puzzle (Wordle/Connections are similar), but it
+   means stats are gameable and real **streaks/cross-device continuity are
+   impossible without accounts.** Add optional accounts only after retention or
+   cross-device streak demand proves the friction is worth it; admin login stays
+   separate and already exists for the Editor Desk.
 
 4. **Puzzle fairness check.** Structural validation exists (4×4, unique tiles)
    but there is **no alternate-solution / ambiguity check** — a puzzle can
@@ -181,4 +183,5 @@ sense; they are under-specified behaviors and product risks.
 Real-time multiplayer, the contextual-bandit adaptive difficulty (cut: needs
 traffic it will not have and breaks the shared-daily ritual), payments/
 monetization, and native mobile. The async "play with friends" need is already
-met by community puzzles + share text.
+met by community puzzles + share text, so live rooms, presence, matchmaking, and
+chat moderation stay out of v1.

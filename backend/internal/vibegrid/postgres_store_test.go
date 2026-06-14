@@ -3,10 +3,37 @@ package vibegrid
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestWithSimpleProtocol(t *testing.T) {
+	t.Run("adds query mode to url dsn", func(t *testing.T) {
+		got := withSimpleProtocol("postgres://user:pass@example.com/vibegrid?sslmode=require")
+		if !strings.Contains(got, "default_query_exec_mode=simple_protocol") {
+			t.Fatalf("expected simple protocol query param, got %q", got)
+		}
+		if !strings.Contains(got, "sslmode=require") {
+			t.Fatalf("expected existing query params to be preserved, got %q", got)
+		}
+	})
+
+	t.Run("preserves explicit query mode", func(t *testing.T) {
+		raw := "postgres://user:pass@example.com/vibegrid?default_query_exec_mode=cache_statement"
+		if got := withSimpleProtocol(raw); got != raw {
+			t.Fatalf("expected explicit query mode to be preserved, got %q", got)
+		}
+	})
+
+	t.Run("adds query mode to keyword dsn", func(t *testing.T) {
+		got := withSimpleProtocol("host=localhost dbname=vibegrid sslmode=disable")
+		if !strings.Contains(got, " default_query_exec_mode=simple_protocol") {
+			t.Fatalf("expected simple protocol keyword option, got %q", got)
+		}
+	})
+}
 
 // newTestStore connects to TEST_DATABASE_URL and returns a store with empty
 // tables. Tests are skipped when the variable is unset so the suite still
@@ -89,6 +116,34 @@ func TestPostgresDuplicateClientGuessIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPostgresBankDailyCanRecordAttempts(t *testing.T) {
+	store := newTestStore(t)
+	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank())
+	puzzle, err := source.TodaysPuzzle(context.Background(), "2026-06-13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	guess := GuessRequest{
+		PuzzleID:      puzzle.ID,
+		ClientGuessID: "bank-daily",
+		SelectedTileIDs: []string{
+			puzzle.Groups[0].Tiles[0].ID,
+			puzzle.Groups[0].Tiles[1].ID,
+			puzzle.Groups[0].Tiles[2].ID,
+			puzzle.Groups[0].Tiles[3].ID,
+		},
+	}
+	submission, err := store.SubmitGuess(ctx, puzzle, "session-bank", guess, fixedClock())
+	if err != nil {
+		t.Fatalf("submit bank daily guess: %v", err)
+	}
+	if !submission.IsCorrect || submission.Attempt.GuessCount != 1 {
+		t.Fatalf("expected bank daily guess to record, got %#v", submission)
+	}
+}
+
 func TestPostgresFourMistakesFailsAndReveals(t *testing.T) {
 	store := newTestStore(t)
 	puzzle := SeedPuzzles()[0]
@@ -106,8 +161,23 @@ func TestPostgresFourMistakesFailsAndReveals(t *testing.T) {
 	if !last.Attempt.Failed {
 		t.Fatalf("expected failed attempt, got %#v", last.Attempt)
 	}
+	if last.Attempt.Completed || last.Attempt.CompletedAt == nil {
+		t.Fatalf("failed attempt should be terminal but not solved, got %#v", last.Attempt)
+	}
 	if len(last.Attempt.RevealedGroups) != len(puzzle.Groups) {
 		t.Fatalf("expected all groups revealed on failure, got %d", len(last.Attempt.RevealedGroups))
+	}
+
+	var completed, hasCompletedAt bool
+	if err := store.db.QueryRowContext(ctx,
+		`select completed, completed_at is not null from attempts
+		 where puzzle_id = $1 and session_id = $2`,
+		puzzle.ID, "session-c",
+	).Scan(&completed, &hasCompletedAt); err != nil {
+		t.Fatalf("load terminal flags: %v", err)
+	}
+	if completed || !hasCompletedAt {
+		t.Fatalf("expected failed row to have completed=false and completed_at set, got completed=%v completed_at_set=%v", completed, hasCompletedAt)
 	}
 
 	// A finished attempt rejects further guesses.

@@ -27,6 +27,23 @@ func TestHandlerServesSharedPuzzleFallback(t *testing.T) {
 	}
 }
 
+func TestHandlerServesDemoRoomFallback(t *testing.T) {
+	handler := NewHandler(fstest.MapFS{
+		"demo/__room__/index.html": {Data: []byte("<html>demo shell</html>")},
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/demo/investor-01", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if response.Body.String() != "<html>demo shell</html>" {
+		t.Fatalf("unexpected body: %q", response.Body.String())
+	}
+}
+
 func TestHandlerServesStaticAssetWithImmutableCache(t *testing.T) {
 	handler := NewHandler(fstest.MapFS{
 		"_next/static/chunks/app.js": {Data: []byte("console.log('ok')")},

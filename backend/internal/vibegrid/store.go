@@ -95,7 +95,9 @@ func (state *attemptState) applyGuess(puzzle Puzzle, matchedGroup *PuzzleGroup, 
 
 	state.Mistakes++
 	if state.Mistakes >= MaxMistakes {
+		completedAt := now.UTC()
 		state.Failed = true
+		state.CompletedAt = &completedAt
 		storedGuess.Revealed = true
 	}
 	return storedGuess

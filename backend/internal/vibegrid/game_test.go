@@ -109,6 +109,53 @@ func TestFutureAndDraftPuzzlesAreNotPubliclyPlayable(t *testing.T) {
 	}
 }
 
+func TestDemoRoomPuzzleIsPubliclyPlayable(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles: NewDemoPuzzleSource(StaticPuzzleSource(SeedPuzzles())),
+		Store:   NewMemoryAttemptStore(),
+		Clock:   fixedClock,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/puzzles/demo-investor-01", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var puzzle PublicPuzzle
+	if err := json.NewDecoder(rec.Body).Decode(&puzzle); err != nil {
+		t.Fatal(err)
+	}
+	if puzzle.ID != "demo-investor-01" || puzzle.PublishDate != "" || len(puzzle.Tiles) != 16 {
+		t.Fatalf("unexpected demo puzzle: %#v", puzzle)
+	}
+
+	response := postGuess(t, handler, "", GuessRequest{
+		PuzzleID:        "demo-investor-01",
+		ClientGuessID:   "demo-correct",
+		SelectedTileIDs: []string{"demo-g0-t0", "demo-g0-t1", "demo-g0-t2", "demo-g0-t3"},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("demo guess: expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var body GuessResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.OK || !body.IsCorrect || body.Group == nil || body.Group.Name != "Launch checks" {
+		t.Fatalf("unexpected demo guess response: %#v", body)
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/puzzles/demo-Investor_01", nil)
+	invalidRec := httptest.NewRecorder()
+	handler.ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusNotFound {
+		t.Fatalf("invalid demo room: expected 404, got %d", invalidRec.Code)
+	}
+}
+
 func TestPuzzleVibesEndpoint(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles:  StaticPuzzleSource(SeedPuzzles()),
@@ -463,6 +510,60 @@ func TestMalformedSessionCookieIsRotated(t *testing.T) {
 	}
 }
 
+func TestSessionStatusMintsGuestAndReportsAdminState(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles:            StaticPuzzleSource(SeedPuzzles()),
+		Store:              NewMemoryAttemptStore(),
+		Clock:              fixedClock,
+		AdminPassword:      "secret",
+		AdminSessionSecret: "test-admin-session-secret",
+	})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/session", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var status SessionStatus
+	if err := json.NewDecoder(rec.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Mode != "guest" || !status.Guest.Active || status.Guest.CookieName != sessionCookieName {
+		t.Fatalf("unexpected guest status: %#v", status)
+	}
+	if status.Admin.Authenticated {
+		t.Fatalf("expected admin to be unauthenticated, got %#v", status.Admin)
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) == 0 || cookies[0].Name != sessionCookieName {
+		t.Fatalf("expected guest session cookie, got %#v", cookies)
+	}
+
+	login := httptest.NewRequest(http.MethodPost, "/api/admin/session", strings.NewReader(`{"password":"secret"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.ServeHTTP(loginRec, login)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("admin login: expected 200, got %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	for _, cookie := range append(rec.Result().Cookies(), loginRec.Result().Cookies()...) {
+		req.AddCookie(cookie)
+	}
+	adminRec := httptest.NewRecorder()
+	handler.ServeHTTP(adminRec, req)
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("admin session status: expected 200, got %d: %s", adminRec.Code, adminRec.Body.String())
+	}
+	var adminStatus SessionStatus
+	if err := json.NewDecoder(adminRec.Body).Decode(&adminStatus); err != nil {
+		t.Fatal(err)
+	}
+	if !adminStatus.Admin.Authenticated || adminStatus.Admin.CookieName != adminSessionCookieName || adminStatus.Admin.ExpiresAt == nil {
+		t.Fatalf("expected authenticated admin state, got %#v", adminStatus.Admin)
+	}
+}
+
 func TestDuplicateClientGuessIsIdempotent(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles: StaticPuzzleSource(SeedPuzzles()),
@@ -517,6 +618,9 @@ func TestFourthMistakeRevealsGroups(t *testing.T) {
 
 	if body.Attempt == nil || !body.Attempt.Failed {
 		t.Fatalf("expected failed attempt, got %#v", body.Attempt)
+	}
+	if body.Attempt.Completed || body.Attempt.CompletedAt == nil {
+		t.Fatalf("failed attempt should be terminal but not solved, got %#v", body.Attempt)
 	}
 	if len(body.RevealedGroups) != 4 {
 		t.Fatalf("expected revealed groups, got %#v", body.RevealedGroups)

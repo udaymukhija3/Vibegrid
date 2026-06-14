@@ -138,6 +138,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
 	mux.HandleFunc("GET /api/puzzles/{id}/vibes", server.handlePuzzleVibes)
 	mux.HandleFunc("GET /api/puzzle-templates", server.handlePuzzleTemplates)
+	mux.HandleFunc("GET /api/session", server.handleSessionStatus)
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
 	mux.HandleFunc("GET /robots.txt", server.handleRobots)
 	mux.HandleFunc("GET /sitemap.xml", server.handleSitemap)
@@ -298,6 +299,7 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusUnprocessableEntity
 		default:
 			// Unexpected (storage/transaction) failures are 500s, not client errors.
+			slog.Error("guess submission failed", "error", err, "puzzle_id", request.PuzzleID)
 			writeError(w, http.StatusInternalServerError, "Could not record that guess.")
 			return
 		}

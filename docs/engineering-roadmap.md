@@ -6,7 +6,7 @@
 - Public puzzle payload that hides solution metadata.
 - Go guess submission API.
 - Exact group matching and duplicate-tile validation.
-- Anonymous session cookie.
+- Guest session cookie.
 - Attempt persistence in Postgres.
 - Idempotent guess handling through `clientGuessId`.
 - Completed and failed attempt states.

@@ -15,7 +15,7 @@ export default function PrivacyPage() {
         {
           title: "Gameplay data",
           body: [
-            "The app uses a browser session cookie to keep your attempt state, streak, guesses, completion status, and puzzle statistics connected across requests.",
+            "Public play is guest play. The app uses a browser session cookie to keep your attempt state, streak, guesses, completion status, and puzzle statistics connected across requests.",
             "Your browser may also store local attempt data so a board can recover after refresh."
           ]
         },
@@ -38,7 +38,7 @@ export default function PrivacyPage() {
           title: "Reliability and safety",
           body: [
             "The service may process IP address, request path, status code, latency, user agent, and rate-limit counters in logs or monitoring systems.",
-            "Admin access uses an HttpOnly session cookie. Public gameplay does not require an account."
+            "Admin access uses an HttpOnly session cookie. Public gameplay does not require a login."
           ]
         },
         {

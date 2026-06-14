@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, Flag, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
+import { Archive, Compass, Flag, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   ATTEMPT_STORAGE_PREFIX,
@@ -17,9 +17,11 @@ import {
 } from "@/lib/game";
 import {
   fetchPuzzleStats,
+  fetchSessionStatus,
   fetchStreak,
   fetchVibes,
   reportPuzzle,
+  type SessionStatus,
   type PuzzleStats,
   type StreakSummary
 } from "@/lib/api";
@@ -114,10 +116,35 @@ const reportReasons = [
 
 type ReportReason = (typeof reportReasons)[number]["value"];
 
-export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
+const openingMessages = [
+  "Select four tiles for the current vibe.",
+  "Start with the tiles that clearly belong together.",
+  "Pick four that share the same vibe.",
+  "Use the clue, then lock in four tiles.",
+  "Find the first group to get moving."
+];
+
+function openingMessageForPuzzle(puzzle: PublicPuzzle) {
+  if (puzzle.id.startsWith("demo-")) {
+    return "Demo room ready. Pick four tiles to begin.";
+  }
+
+  const seed = puzzle.publishDate ?? puzzle.id;
+  const hash = Array.from(seed).reduce((total, char) => total + char.charCodeAt(0), 0);
+  return openingMessages[hash % openingMessages.length];
+}
+
+export function VibeGridGame({
+  puzzle,
+  sessionStatus
+}: {
+  puzzle: PublicPuzzle;
+  sessionStatus?: SessionStatus | null;
+}) {
   const storageKey = `${ATTEMPT_STORAGE_PREFIX}${puzzle.id}`;
+  const isDemoPuzzle = puzzle.id.startsWith("demo-");
   const [attempt, setAttempt] = useState<StoredAttempt>(() => emptyAttempt(puzzle.id));
-  const [message, setMessage] = useState("Fresh grid. Dangerous confidence optional.");
+  const [message, setMessage] = useState(() => openingMessageForPuzzle(puzzle));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [hasLoadedAttempt, setHasLoadedAttempt] = useState(false);
@@ -132,6 +159,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "error">("idle");
   const [mode, setMode] = useState<GameMode>("standard");
   const [vibes, setVibes] = useState<VibeHint[] | null>(null);
+  const [timerNow, setTimerNow] = useState<string | null>(null);
+  const [resolvedSession, setResolvedSession] = useState<SessionStatus | null>(sessionStatus ?? null);
 
   // attemptRef mirrors the latest attempt so event handlers (storage/visibility)
   // can read current state without being re-bound on every change.
@@ -149,6 +178,32 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   // or the selection changes. submittingRef pauses sync while a guess is in flight.
   const pendingGuessIdRef = useRef<string | null>(null);
   const submittingRef = useRef(false);
+
+  useEffect(() => {
+    if (sessionStatus !== undefined) {
+      setResolvedSession(sessionStatus);
+    }
+  }, [sessionStatus]);
+
+  useEffect(() => {
+    if (sessionStatus !== undefined) {
+      return;
+    }
+
+    let cancelled = false;
+    fetchSessionStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setResolvedSession(status);
+        }
+      })
+      .catch(() => {
+        // The game can still run; attempt sync/submit will surface API failures.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionStatus]);
 
   useEffect(() => {
     const storage = safeStorage();
@@ -343,6 +398,19 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
   const selectedTileIds = new Set(attempt.selectedTileIds);
   const isComplete = attempt.completed || attempt.solvedGroups.length === puzzle.groupCount;
   const isOver = isComplete || attempt.failed;
+  const elapsedFinishedAt = attempt.completedAt ?? timerNow ?? attempt.startedAt;
+
+  useEffect(() => {
+    setTimerNow(new Date().toISOString());
+    if (isOver) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setTimerNow(new Date().toISOString());
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [isOver]);
 
   // In Standard mode the target is the first vibe whose group is still unsolved;
   // solving any group advances it (each group owns a unique colorIndex). Null in
@@ -605,7 +673,7 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
       setReportContact("");
       setReportReason("OFFENSIVE");
       setReportOpen(false);
-      toast.success("Report sent.");
+      toast.success("Report sent. Thanks for the flag.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not send that report.");
     } finally {
@@ -622,8 +690,8 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
             <h1 className="text-3xl font-black leading-none sm:text-4xl">VibeGrid</h1>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <p className="text-sm font-semibold text-neutral-600">
-                #{puzzle.puzzleNumber}
-                {puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
+                {isDemoPuzzle ? "Demo room" : `#${puzzle.puzzleNumber}`}
+                {!isDemoPuzzle && puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
               </p>
               {streak && streak.currentStreak > 0 && (
                 <span
@@ -639,6 +707,14 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
 
         <nav className="flex items-center gap-2">
           <HowToPlay />
+          <Link
+            href="/demo"
+            aria-label="Demo walkthrough"
+            title="Demo walkthrough"
+            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
+          >
+            <Compass aria-hidden size={18} />
+          </Link>
           <Link
             href="/create"
             aria-label="Make your own"
@@ -813,8 +889,14 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
             )}
 
             <div className="mt-4 border-t border-neutral-200 pt-4 text-sm font-semibold text-neutral-600">
-              <p>Elapsed {formatElapsedTime(attempt.startedAt, attempt.completedAt)}</p>
+              <p>Elapsed {formatElapsedTime(attempt.startedAt, elapsedFinishedAt)}</p>
               <p className="mt-1">Guesses {attempt.guessCount}</p>
+              <p className="mt-1">
+                {resolvedSession?.guest.label ?? "Guest session"}. Saved in this browser.
+              </p>
+              {resolvedSession?.admin.authenticated && (
+                <p className="mt-1 text-plum">Editor session active.</p>
+              )}
             </div>
 
             {isOver && stats && stats.players >= MIN_STATS_PLAYERS && (
@@ -888,10 +970,13 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
               className="inline-flex h-10 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
             >
               <Flag aria-hidden size={16} />
-              Report this grid
+              Report a problem
             </button>
             {reportOpen && (
               <form className="grid gap-2 border-t border-neutral-200 pt-3" onSubmit={submitReport}>
+                <p className="text-xs font-semibold leading-snug text-neutral-600">
+                  No login needed. We review the grid id, your reason, and any note you add.
+                </p>
                 <label className="grid gap-1 text-xs font-black text-neutral-600">
                   Reason
                   <select
@@ -907,23 +992,23 @@ export function VibeGridGame({ puzzle }: { puzzle: PublicPuzzle }) {
                   </select>
                 </label>
                 <label className="grid gap-1 text-xs font-black text-neutral-600">
-                  Details
+                  What happened?
                   <textarea
                     value={reportDetails}
                     onChange={(event) => setReportDetails(event.target.value)}
                     maxLength={1000}
                     rows={3}
-                    placeholder="What should moderators review?"
+                    placeholder="Tell us what feels unsafe, copied, broken, or unfair."
                     className="resize-none rounded border border-neutral-300 px-2 py-2 text-sm font-semibold text-ink"
                   />
                 </label>
                 <label className="grid gap-1 text-xs font-black text-neutral-600">
-                  Contact
+                  Email for reply (optional)
                   <input
                     value={reportContact}
                     onChange={(event) => setReportContact(event.target.value)}
                     maxLength={200}
-                    placeholder="Optional email"
+                    placeholder="Only if you want a reply"
                     className="h-10 rounded border border-neutral-300 px-2 text-sm font-semibold text-ink"
                   />
                 </label>

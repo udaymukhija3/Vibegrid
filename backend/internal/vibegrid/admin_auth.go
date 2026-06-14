@@ -81,12 +81,23 @@ func (server *Server) isAdminRequest(r *http.Request) bool {
 }
 
 func (server *Server) validAdminSession(r *http.Request) bool {
+	_, ok := server.adminSessionExpiresAt(r)
+	return ok
+}
+
+func (server *Server) adminSessionExpiresAt(r *http.Request) (time.Time, bool) {
+	if server.adminPassword == "" || server.adminSessionSecret == "" {
+		return time.Time{}, false
+	}
 	cookie, err := r.Cookie(adminSessionCookieName)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	expiresAt, ok := verifyAdminSession(cookie.Value, server.adminSessionSecret)
-	return ok && server.clock().Before(expiresAt)
+	if !ok || !server.clock().Before(expiresAt) {
+		return time.Time{}, false
+	}
+	return expiresAt, true
 }
 
 func adminCookie(value string, expiresAt time.Time, secure bool) *http.Cookie {

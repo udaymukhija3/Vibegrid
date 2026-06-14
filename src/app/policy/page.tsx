@@ -32,7 +32,7 @@ export default function CommunityPolicyPage() {
         {
           title: "Reports and review",
           body: [
-            "Players can report a grid from the puzzle screen. Reports include a reason code, optional details, the puzzle id, and an optional contact field.",
+            "Players can report a grid from the puzzle screen without logging in. Reports include a reason code, optional details, the puzzle id, and an optional contact field.",
             "Moderators can dismiss a report, archive the grid, leave a resolution note, and review the audit log for each moderation action."
           ]
         },

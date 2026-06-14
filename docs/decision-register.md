@@ -5,12 +5,13 @@
 | Area | Decision | Why |
 | --- | --- | --- |
 | Product shape | Daily puzzle, one grid per date | Keeps the ritual simple and shareable. |
-| Identity | Anonymous sessions first | Removes signup friction and still supports persistence. |
+| Identity | Guest play for public players; admin login only for the Editor Desk | Removes signup friction, keeps the daily playable on first load, and still supports operator access. |
 | Core rules | 16 tiles, 4 groups, 4 mistakes | Familiar enough to learn instantly. |
 | Validation | Go server-side guess validation | Prevents client source from becoming the answer key. |
 | Persistence | Postgres attempts (transaction-safe), in-memory fallback | Durable, idempotent, concurrency-safe attempt state; in-memory store keeps tests and no-DB runs fast. |
 | Stack | Go API, Next.js, TypeScript, Tailwind, Postgres | Keeps backend rules independent and frontend iteration fast. |
 | Launch timezone | Asia/Kolkata in the scaffold | Matches the current workspace context; should be revisited before public launch. |
+| Multiplayer | Async sharing and community puzzle links only for v1 | Preserves the shared-daily ritual without real-time rooms, presence, matchmaking, or chat moderation. |
 
 ## Product Decisions Waiting To Be Made
 
@@ -26,7 +27,6 @@
 | Global stats | Stats can motivate or shame depending on presentation. | Show median mistakes and solve rate after completion, not before. |
 | Admin workflow | Puzzle quality depends on review, preview, and publishing safety. | Draft -> preview -> publish, with one puzzle per date. |
 | Puzzle QA process | Bad puzzles break trust faster than bugs. | Require a human test solve before publishing. |
-| Auth path | Accounts unlock sync and leaderboards but add friction. | Delay accounts until anonymous retention is proven. |
 | Moderation posture | Later AI/admin content needs guardrails. | Keep all published puzzles human-reviewed. |
 | Brand/legal | Cultural references and trademarks may appear in tiles. | Allow common references, avoid using brands as insults or endorsements. |
 | Monetization | Can distort the toy if introduced too early. | No monetization in v1. |
@@ -39,3 +39,10 @@
 > these two are product/policy calls it deliberately did **not** decide. See
 > [`launch-sprint-plan.md`](launch-sprint-plan.md) for how decisions D1–D7 map to
 > specific sprints.
+
+## Deferred Bets
+
+| Area | Revisit When | Default Until Then |
+| --- | --- | --- |
+| Player login | Anonymous retention, streak usage, or cross-device support becomes a real product problem. | Keep public play as guest-first; do not block launch on accounts, OAuth, leaderboards, or account recovery. |
+| Real-time multiplayer | There is evidence that live rooms are worth the infra, moderation, and scheduling cost. | Treat share text and community puzzle links as the multiplayer loop. |

@@ -173,8 +173,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 		logger.Warn("DATABASE_URL not set, using in-memory store and seed puzzles (non-durable)")
 		return deps{
 			attempts: vibegrid.NewMemoryAttemptStore(),
-			puzzles:  vibegrid.NewBankPuzzleSource(vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()), vibegrid.PuzzleBank()),
-			close:    func() {},
+			puzzles: vibegrid.NewDemoPuzzleSource(
+				vibegrid.NewBankPuzzleSource(vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()), vibegrid.PuzzleBank()),
+			),
+			close: func() {},
 		}, nil
 	}
 
@@ -205,11 +207,12 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (de
 	// nothing is explicitly scheduled. Admin/community management uses the concrete
 	// cached store directly (the bank only synthesizes the read-only daily).
 	banked := vibegrid.NewBankPuzzleSource(cached, vibegrid.PuzzleBank())
+	publicPuzzles := vibegrid.NewDemoPuzzleSource(banked)
 
 	logger.Info("connected to postgres, puzzles seeded")
 	return deps{
 		attempts:         vibegrid.NewPostgresAttemptStore(database),
-		puzzles:          banked,
+		puzzles:          publicPuzzles,
 		adminPuzzles:     cached,
 		community:        cached,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
