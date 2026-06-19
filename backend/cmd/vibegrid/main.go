@@ -63,6 +63,8 @@ func run(logger *slog.Logger) error {
 	adminSessionSecret := os.Getenv("VIBEGRID_ADMIN_SESSION_SECRET")
 	secureCookies := os.Getenv("VIBEGRID_SECURE_COOKIES") == "true"
 	allowedOrigins := splitCommaList(os.Getenv("VIBEGRID_ALLOWED_ORIGINS"))
+	devCORS := os.Getenv("VIBEGRID_DEV_CORS") == "true"
+	requireDatabase := os.Getenv("VIBEGRID_REQUIRE_DATABASE") == "true"
 	blockedTerms := splitCommaList(os.Getenv("VIBEGRID_BLOCKED_TERMS"))
 
 	// Root context cancelled on SIGINT/SIGTERM so startup and shutdown share one
@@ -85,7 +87,7 @@ func run(logger *slog.Logger) error {
 		logger.Info("migrations applied on boot")
 	}
 
-	deps, err := buildDeps(ctx, logger, databaseURL)
+	deps, err := buildDeps(ctx, logger, databaseURL, requireDatabase)
 	if err != nil {
 		return err
 	}
@@ -115,6 +117,7 @@ func run(logger *slog.Logger) error {
 		Clock:              time.Now,
 		TimeZone:           timeZone,
 		AllowedOrigins:     allowedOrigins,
+		DevCORS:            devCORS,
 		SecureCookies:      secureCookies,
 		BlockedTerms:       blockedTerms,
 		DBStats:            deps.dbStats,
@@ -168,8 +171,11 @@ type deps struct {
 // buildDeps wires the durable Postgres stores when DATABASE_URL is set and
 // otherwise falls back to in-memory attempts plus seed puzzles, so local runs
 // and tests work with no database. Admin authoring requires Postgres.
-func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string) (deps, error) {
+func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, requireDatabase bool) (deps, error) {
 	if databaseURL == "" {
+		if requireDatabase {
+			return deps{}, errors.New("DATABASE_URL is required when VIBEGRID_REQUIRE_DATABASE=true")
+		}
 		logger.Warn("DATABASE_URL not set, using in-memory store and seed puzzles (non-durable)")
 		return deps{
 			attempts: vibegrid.NewMemoryAttemptStore(),

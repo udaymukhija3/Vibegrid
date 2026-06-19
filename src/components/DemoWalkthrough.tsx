@@ -11,7 +11,7 @@ import { fetchPuzzleById } from "@/lib/api";
 const walkthroughSteps = [
   {
     title: "Play the seeded room",
-    body: "Use Standard mode to match one vibe at a time. It is the real game loop, not a mock.",
+    body: "Use Medium mode to match one vibe at a time. It is the real game loop, not a mock.",
     icon: Play
   },
   {

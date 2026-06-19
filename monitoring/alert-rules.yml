@@ -28,6 +28,33 @@ groups:
           summary: VibeGrid p95 latency is above 1s
           description: The 95th percentile request latency has stayed above 1 second for 10 minutes.
 
+      - alert: VibeGridRuntimeMemoryHigh
+        expr: vibegrid_process_sys_bytes{job="vibegrid"} > 209715200
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: VibeGrid runtime memory is high
+          description: The Go runtime has held more than 200 MiB from the OS for 10 minutes. Check heap, goroutines, cache size, and deploy memory limit.
+
+      - alert: VibeGridDatabasePoolWaiting
+        expr: increase(vibegrid_db_wait_count_total{job="vibegrid"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: VibeGrid database pool is saturated
+          description: Requests waited for Postgres connections in the last 5 minutes. Check DB latency, pool sizing, and instance count.
+
+      - alert: VibeGridStorageErrors
+        expr: sum(rate(vibegrid_store_operations_total{job="vibegrid",status="error"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: VibeGrid storage errors are elevated
+          description: Storage interface operations are returning errors at more than 0.05 per second for 5 minutes.
+
       - alert: VibeGridNoTraffic
         expr: sum(rate(vibegrid_http_requests_total{job="vibegrid"}[30m])) == 0
         for: 30m

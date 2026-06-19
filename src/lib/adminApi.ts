@@ -27,15 +27,25 @@ const adminPuzzleSchema = z.object({
 }) satisfies z.ZodType<AdminPuzzle>;
 
 const errorBodySchema = z.object({ error: z.string() });
+const adminSessionSchema = z.object({
+  ok: z.literal(true),
+  csrfToken: z.string().optional()
+});
+
+let adminCSRFToken: string | null = null;
 
 async function adminFetch(path: string, init?: RequestInit): Promise<unknown> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  if (adminCSRFToken && requiresCSRFHeader(method)) {
+    headers.set("X-CSRF-Token", adminCSRFToken);
+  }
+
   const response = await apiFetch(path, {
     ...init,
     credentials: "include",
-    headers: {
-      ...(init?.headers ?? {}),
-      "Content-Type": "application/json"
-    }
+    headers
   });
 
   const payload: unknown = await response.json().catch(() => null);
@@ -49,19 +59,34 @@ async function adminFetch(path: string, init?: RequestInit): Promise<unknown> {
 }
 
 export async function loginAdmin(password: string): Promise<void> {
-  await adminFetch("/api/admin/session", {
+  const payload = await adminFetch("/api/admin/session", {
     method: "POST",
     body: JSON.stringify({ password })
   });
+  adminCSRFToken = adminSessionSchema.parse(payload).csrfToken ?? null;
 }
 
 export async function logoutAdmin(): Promise<void> {
-  await adminFetch("/api/admin/session", { method: "DELETE" });
+  try {
+    await adminFetch("/api/admin/session", { method: "DELETE" });
+  } finally {
+    adminCSRFToken = null;
+  }
 }
 
 export async function checkAdminSession(): Promise<boolean> {
   const response = await apiFetch("/api/admin/session", { credentials: "include" });
-  return response.ok;
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    adminCSRFToken = null;
+    return false;
+  }
+  adminCSRFToken = adminSessionSchema.parse(payload).csrfToken ?? null;
+  return true;
+}
+
+function requiresCSRFHeader(method: string) {
+  return method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 }
 
 export async function fetchAdminPuzzles(): Promise<AdminPuzzle[]> {

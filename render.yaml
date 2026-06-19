@@ -23,6 +23,8 @@ services:
         value: "true"
       - key: VIBEGRID_MIGRATE_ON_BOOT
         value: "true"
+      - key: VIBEGRID_REQUIRE_DATABASE
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: VIBEGRID_ADMIN_PASSWORD

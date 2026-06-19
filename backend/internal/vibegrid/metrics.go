@@ -3,6 +3,7 @@ package vibegrid
 import (
 	"fmt"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,21 +20,27 @@ type httpMetricKey struct {
 }
 
 type httpMetricSample struct {
-	count   uint64
-	sum     float64
-	buckets []uint64
+	count         uint64
+	sum           float64
+	requestBytes  uint64
+	responseBytes uint64
+	buckets       []uint64
 }
 
 type httpMetrics struct {
-	mu       sync.Mutex
-	requests map[httpMetricKey]*httpMetricSample
+	mu         sync.Mutex
+	requests   map[httpMetricKey]*httpMetricSample
+	operations map[operationMetricKey]*httpMetricSample
 }
 
 func newHTTPMetrics() *httpMetrics {
-	return &httpMetrics{requests: map[httpMetricKey]*httpMetricSample{}}
+	return &httpMetrics{
+		requests:   map[httpMetricKey]*httpMetricSample{},
+		operations: map[operationMetricKey]*httpMetricSample{},
+	}
 }
 
-func (metrics *httpMetrics) observe(method, route string, status int, duration time.Duration) {
+func (metrics *httpMetrics) observe(method, route string, status int, duration time.Duration, requestBytes, responseBytes int64) {
 	if metrics == nil {
 		return
 	}
@@ -55,6 +62,39 @@ func (metrics *httpMetrics) observe(method, route string, status int, duration t
 	}
 	sample.count++
 	sample.sum += seconds
+	sample.requestBytes += uint64(maxInt64(requestBytes, 0))
+	sample.responseBytes += uint64(maxInt64(responseBytes, 0))
+	for index, bucket := range httpDurationBuckets {
+		if seconds <= bucket {
+			sample.buckets[index]++
+		}
+	}
+}
+
+type operationMetricKey struct {
+	component string
+	operation string
+	status    string
+}
+
+func (metrics *httpMetrics) observeOperation(component, operation string, status string, duration time.Duration) {
+	if metrics == nil {
+		return
+	}
+
+	key := operationMetricKey{component: component, operation: operation, status: status}
+	seconds := duration.Seconds()
+
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+
+	sample := metrics.operations[key]
+	if sample == nil {
+		sample = &httpMetricSample{buckets: make([]uint64, len(httpDurationBuckets))}
+		metrics.operations[key] = sample
+	}
+	sample.count++
+	sample.sum += seconds
 	for index, bucket := range httpDurationBuckets {
 		if seconds <= bucket {
 			sample.buckets[index]++
@@ -65,6 +105,7 @@ func (metrics *httpMetrics) observe(method, route string, status int, duration t
 func (server *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	server.metrics.writePrometheus(w)
 	server.writeRuntimeGauges(w)
+	writeProcessGauges(w)
 }
 
 // writeRuntimeGauges appends the connection-pool and puzzle-cache metrics that
@@ -87,6 +128,17 @@ func (server *Server) writeRuntimeGauges(w http.ResponseWriter) {
 		writeCounter(w, "vibegrid_puzzle_cache_evictions_total", "Puzzle content cache evictions.", float64(cache.Evictions))
 		writeGauge(w, "vibegrid_puzzle_cache_entries", "Puzzles currently held in the content cache.", float64(cache.Entries))
 	}
+}
+
+func writeProcessGauges(w http.ResponseWriter) {
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	writeGauge(w, "vibegrid_process_goroutines", "Current goroutine count.", float64(runtime.NumGoroutine()))
+	writeGauge(w, "vibegrid_process_heap_alloc_bytes", "Bytes allocated and still in use on the heap.", float64(memory.HeapAlloc))
+	writeGauge(w, "vibegrid_process_heap_inuse_bytes", "Heap bytes currently in use by spans.", float64(memory.HeapInuse))
+	writeGauge(w, "vibegrid_process_stack_inuse_bytes", "Stack bytes currently in use.", float64(memory.StackInuse))
+	writeGauge(w, "vibegrid_process_sys_bytes", "Total bytes obtained from the OS by the Go runtime.", float64(memory.Sys))
+	writeCounter(w, "vibegrid_process_gc_cycles_total", "Completed Go GC cycles.", float64(memory.NumGC))
 }
 
 func writeGauge(w http.ResponseWriter, name, help string, value float64) {
@@ -113,11 +165,21 @@ func (metrics *httpMetrics) writePrometheus(w http.ResponseWriter) {
 	fmt.Fprintln(w, "# TYPE vibegrid_http_requests_total counter")
 	fmt.Fprintln(w, "# HELP vibegrid_http_request_duration_seconds HTTP request latency.")
 	fmt.Fprintln(w, "# TYPE vibegrid_http_request_duration_seconds histogram")
+	fmt.Fprintln(w, "# HELP vibegrid_http_request_bytes_total HTTP request body bytes received by the app.")
+	fmt.Fprintln(w, "# TYPE vibegrid_http_request_bytes_total counter")
+	fmt.Fprintln(w, "# HELP vibegrid_http_response_bytes_total HTTP response body bytes written by the app.")
+	fmt.Fprintln(w, "# TYPE vibegrid_http_response_bytes_total counter")
+	fmt.Fprintln(w, "# HELP vibegrid_store_operations_total Storage interface operations by component, operation, and status.")
+	fmt.Fprintln(w, "# TYPE vibegrid_store_operations_total counter")
+	fmt.Fprintln(w, "# HELP vibegrid_store_operation_duration_seconds Storage interface operation latency.")
+	fmt.Fprintln(w, "# TYPE vibegrid_store_operation_duration_seconds histogram")
 
 	for _, key := range metrics.sortedKeys() {
 		sample := metrics.sample(key)
 		labels := metricLabels(key)
 		fmt.Fprintf(w, "vibegrid_http_requests_total{%s} %d\n", labels, sample.count)
+		fmt.Fprintf(w, "vibegrid_http_request_bytes_total{%s} %d\n", labels, sample.requestBytes)
+		fmt.Fprintf(w, "vibegrid_http_response_bytes_total{%s} %d\n", labels, sample.responseBytes)
 
 		var cumulative uint64
 		for index, bucket := range httpDurationBuckets {
@@ -133,6 +195,27 @@ func (metrics *httpMetrics) writePrometheus(w http.ResponseWriter) {
 		fmt.Fprintf(w, "vibegrid_http_request_duration_seconds_bucket{%s,le=\"+Inf\"} %d\n", labels, sample.count)
 		fmt.Fprintf(w, "vibegrid_http_request_duration_seconds_sum{%s} %.6f\n", labels, sample.sum)
 		fmt.Fprintf(w, "vibegrid_http_request_duration_seconds_count{%s} %d\n", labels, sample.count)
+	}
+
+	for _, key := range metrics.sortedOperationKeys() {
+		sample := metrics.operationSample(key)
+		labels := operationMetricLabels(key)
+		fmt.Fprintf(w, "vibegrid_store_operations_total{%s} %d\n", labels, sample.count)
+
+		var cumulative uint64
+		for index, bucket := range httpDurationBuckets {
+			cumulative = sample.buckets[index]
+			fmt.Fprintf(
+				w,
+				"vibegrid_store_operation_duration_seconds_bucket{%s,le=%q} %d\n",
+				labels,
+				strconv.FormatFloat(bucket, 'f', -1, 64),
+				cumulative,
+			)
+		}
+		fmt.Fprintf(w, "vibegrid_store_operation_duration_seconds_bucket{%s,le=\"+Inf\"} %d\n", labels, sample.count)
+		fmt.Fprintf(w, "vibegrid_store_operation_duration_seconds_sum{%s} %.6f\n", labels, sample.sum)
+		fmt.Fprintf(w, "vibegrid_store_operation_duration_seconds_count{%s} %d\n", labels, sample.count)
 	}
 }
 
@@ -162,11 +245,54 @@ func (metrics *httpMetrics) sortedKeys() []httpMetricKey {
 	return keys
 }
 
+func (metrics *httpMetrics) sortedOperationKeys() []operationMetricKey {
+	if metrics == nil {
+		return nil
+	}
+
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+
+	keys := make([]operationMetricKey, 0, len(metrics.operations))
+	for key := range metrics.operations {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(left, right int) bool {
+		a := keys[left]
+		b := keys[right]
+		if a.component != b.component {
+			return a.component < b.component
+		}
+		if a.operation != b.operation {
+			return a.operation < b.operation
+		}
+		return a.status < b.status
+	})
+	return keys
+}
+
 func (metrics *httpMetrics) sample(key httpMetricKey) httpMetricSample {
 	metrics.mu.Lock()
 	defer metrics.mu.Unlock()
 
 	source := metrics.requests[key]
+	if source == nil {
+		return httpMetricSample{buckets: make([]uint64, len(httpDurationBuckets))}
+	}
+	return httpMetricSample{
+		count:         source.count,
+		sum:           source.sum,
+		requestBytes:  source.requestBytes,
+		responseBytes: source.responseBytes,
+		buckets:       append([]uint64(nil), source.buckets...),
+	}
+}
+
+func (metrics *httpMetrics) operationSample(key operationMetricKey) httpMetricSample {
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+
+	source := metrics.operations[key]
 	if source == nil {
 		return httpMetricSample{buckets: make([]uint64, len(httpDurationBuckets))}
 	}
@@ -182,6 +308,15 @@ func metricLabels(key httpMetricKey) string {
 		`method="%s",route="%s",status="%s"`,
 		escapeMetricLabel(key.method),
 		escapeMetricLabel(key.route),
+		escapeMetricLabel(key.status),
+	)
+}
+
+func operationMetricLabels(key operationMetricKey) string {
+	return fmt.Sprintf(
+		`component="%s",operation="%s",status="%s"`,
+		escapeMetricLabel(key.component),
+		escapeMetricLabel(key.operation),
 		escapeMetricLabel(key.status),
 	)
 }
@@ -207,8 +342,15 @@ func withRequestMetrics(next http.Handler, metrics *httpMetrics) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		metrics.observe(r.Method, routeMetricLabel(r), status, time.Since(started))
+		metrics.observe(r.Method, routeMetricLabel(r), status, time.Since(started), requestBodyBytes(r), recorder.bytesWritten)
 	})
+}
+
+func requestBodyBytes(r *http.Request) int64 {
+	if r.ContentLength <= 0 {
+		return 0
+	}
+	return r.ContentLength
 }
 
 func routeMetricLabel(r *http.Request) string {
@@ -230,4 +372,11 @@ func routeMetricLabel(r *http.Request) string {
 		return "/static/*"
 	}
 	return "/"
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }

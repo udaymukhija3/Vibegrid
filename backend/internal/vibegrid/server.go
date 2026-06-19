@@ -3,7 +3,9 @@ package vibegrid
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,7 @@ const (
 	requestTimeout  = 5 * time.Second
 	guessRateLimit  = 120
 	guessRateWindow = time.Minute
+	easyHintGuesses = 2
 
 	// Reports/appeals are public, unauthenticated writes into the moderation
 	// queue; a generous per-IP cap stops one client from flooding it.
@@ -36,6 +39,10 @@ const (
 	adminLoginRateLimit  = 10
 	adminLoginRateWindow = time.Minute
 )
+
+const requestIDHeader = "X-Request-ID"
+
+type requestIDContextKey struct{}
 
 type ServerConfig struct {
 	Puzzles            PuzzleSource
@@ -55,6 +62,7 @@ type ServerConfig struct {
 	AllowedOrigins     []string
 	SecureCookies      bool
 	BlockedTerms       []string
+	DevCORS            bool
 	// Optional runtime metric sources, surfaced on /metrics. Nil in no-database
 	// mode, where there is no pool or content cache to observe.
 	DBStats          func() sql.DBStats
@@ -127,6 +135,13 @@ func NewServer(config ServerConfig) http.Handler {
 	if server.puzzles == nil {
 		server.puzzles = StaticPuzzleSource(nil)
 	}
+	server.puzzles = observePuzzleSource(server.puzzles, server.metrics)
+	server.store = observeAttemptStore(server.store, server.metrics)
+	server.adminPuzzles = observeAdminPuzzleStore(server.adminPuzzles, server.metrics)
+	server.community = observeCommunityPuzzleStore(server.community, server.metrics)
+	server.stats = observeStatsStore(server.stats, server.metrics)
+	server.rateLimits = observeRateLimitStore(server.rateLimits, server.metrics)
+	server.moderation = observeModerationStore(server.moderation, server.metrics)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.handleHealth)
@@ -137,6 +152,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
 	mux.HandleFunc("GET /api/puzzles/{id}/vibes", server.handlePuzzleVibes)
+	mux.HandleFunc("GET /api/puzzles/{id}/easy-hint", server.handleEasyHint)
 	mux.HandleFunc("GET /api/puzzle-templates", server.handlePuzzleTemplates)
 	mux.HandleFunc("GET /api/session", server.handleSessionStatus)
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
@@ -168,10 +184,11 @@ func NewServer(config ServerConfig) http.Handler {
 	}
 
 	handler := withRequestTimeout(mux, requestTimeout)
-	handler = withCORS(handler, config.AllowedOrigins)
+	handler = withCORS(handler, config.AllowedOrigins, config.DevCORS)
 	handler = withSecurityHeaders(handler)
 	handler = withRequestMetrics(handler, server.metrics)
-	return withRequestLogging(handler)
+	handler = withRequestLogging(handler)
+	return withRequestID(handler)
 }
 
 // todayString is the current daily date in the configured launch timezone — the
@@ -326,9 +343,9 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePuzzleVibes returns the puzzle's group names ("vibes") with their colour
-// index, in a stable colour order. It powers the guided Standard mode, which
+// index, in a stable colour order. It powers guided Easy/Medium play, which
 // reveals one vibe at a time for the player to match. It deliberately omits the
-// tile→group mapping and the explanation, so the answer is never exposed: the
+// tile-to-group mapping and the explanation, so the answer is never exposed: the
 // guess engine remains the only authority on whether four tiles form a group.
 func (server *Server) handlePuzzleVibes(w http.ResponseWriter, r *http.Request) {
 	puzzle, err := server.publicPuzzleByID(r.Context(), r.PathValue("id"))
@@ -346,6 +363,55 @@ func (server *Server) handlePuzzleVibes(w http.ResponseWriter, r *http.Request) 
 	// Names are static for a puzzle, so cache like the other public reads.
 	w.Header().Set("Cache-Control", "public, max-age=300, s-maxage=900")
 	writeJSON(w, http.StatusOK, map[string]any{"vibes": vibes})
+}
+
+// handleEasyHint returns one explanation clue for the next unsolved group after
+// the current browser session has made enough guesses. It never returns tile
+// membership, so Easy mode can help without moving answer authority client-side.
+func (server *Server) handleEasyHint(w http.ResponseWriter, r *http.Request) {
+	puzzle, err := server.publicPuzzleByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+		return
+	}
+
+	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	attempt, err := server.store.GetAttempt(r.Context(), puzzle, sessionID, server.clock())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load that attempt.")
+		return
+	}
+
+	response := EasyHintResponse{
+		Available:          false,
+		GuessCount:         attempt.GuessCount,
+		RequiredGuessCount: easyHintGuesses,
+	}
+
+	if attempt.GuessCount >= easyHintGuesses && !attempt.Completed && !attempt.Failed {
+		solvedGroupIDs := map[string]bool{}
+		for _, group := range attempt.SolvedGroups {
+			solvedGroupIDs[group.ID] = true
+		}
+
+		groups := append([]PuzzleGroup(nil), puzzle.Groups...)
+		sort.Slice(groups, func(i, j int) bool { return groups[i].ColorIndex < groups[j].ColorIndex })
+		for _, group := range groups {
+			if solvedGroupIDs[group.ID] {
+				continue
+			}
+			response.Available = true
+			response.Hint = &EasyHint{
+				Name:       group.Name,
+				ColorIndex: group.ColorIndex,
+				Text:       group.Explanation,
+			}
+			break
+		}
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, response)
 }
 
 // handlePuzzleTemplates serves the curated starter puzzles for the create page.
@@ -734,7 +800,8 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, maxBytes int64, targ
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status       int
+	bytesWritten int64
 }
 
 func (recorder *statusRecorder) WriteHeader(status int) {
@@ -748,7 +815,9 @@ func (recorder *statusRecorder) Write(body []byte) (int, error) {
 	if recorder.status == 0 {
 		recorder.WriteHeader(http.StatusOK)
 	}
-	return recorder.ResponseWriter.Write(body)
+	written, err := recorder.ResponseWriter.Write(body)
+	recorder.bytesWritten += int64(written)
+	return written, err
 }
 
 func withRequestLogging(next http.Handler) http.Handler {
@@ -768,18 +837,62 @@ func withRequestLogging(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"status", status,
 			"duration_ms", time.Since(started).Milliseconds(),
+			"request_id", requestIDFromContext(r.Context()),
 			"client_ip", clientIP(r),
 			"user_agent", r.UserAgent(),
 		)
 	})
 }
 
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := sanitizeRequestID(r.Header.Get(requestIDHeader))
+		if requestID == "" {
+			requestID = randomRequestID()
+		}
+		w.Header().Set(requestIDHeader, requestID)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, requestID)))
+	})
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(requestIDContextKey{}).(string)
+	return value
+}
+
+func sanitizeRequestID(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) == 0 || len(value) > 128 {
+		return ""
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		switch char {
+		case '.', '_', '-', ':', '/', '=':
+			continue
+		default:
+			return ""
+		}
+	}
+	return value
+}
+
+func randomRequestID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		panic("crypto/rand failed while generating request id: " + err.Error())
+	}
+	return hex.EncodeToString(bytes)
+}
+
 func withRequestTimeout(next http.Handler, timeout time.Duration) http.Handler {
 	return http.TimeoutHandler(next, timeout, `{"ok":false,"error":"Request timed out."}`+"\n")
 }
 
-func withCORS(next http.Handler, origins []string) http.Handler {
-	if len(origins) == 0 {
+func withCORS(next http.Handler, origins []string, devCORS bool) http.Handler {
+	if len(origins) == 0 && devCORS {
 		origins = []string{
 			"http://localhost:3000",
 			"http://localhost:3001",

@@ -18,11 +18,24 @@ export type PublicPuzzle = {
   mistakesAllowed: number;
 };
 
-// A group's name + colour with no tile mapping — used by guided Standard mode to
+// A group's name + colour with no tile mapping — used by guided Easy/Medium play to
 // reveal one "vibe" at a time without exposing which tiles belong to it.
 export type VibeHint = {
   name: string;
   colorIndex: number;
+};
+
+export type EasyHint = {
+  name: string;
+  colorIndex: number;
+  text: string;
+};
+
+export type EasyHintResponse = {
+  available: boolean;
+  guessCount: number;
+  requiredGuessCount: number;
+  hint?: EasyHint;
 };
 
 export type SolvedGroup = {

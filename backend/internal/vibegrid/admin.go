@@ -152,7 +152,20 @@ func (server *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "Admin authorization required.")
 			return
 		}
+		if requiresAdminCSRF(r.Method) && !server.validAdminBearerToken(r) && !server.validAdminCSRFToken(r) {
+			writeError(w, http.StatusForbidden, "Admin CSRF token required.")
+			return
+		}
 		next(w, r)
+	}
+}
+
+func requiresAdminCSRF(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
 	}
 }
 

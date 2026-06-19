@@ -7,6 +7,18 @@ export const MIN_STATS_PLAYERS = 20;
 export const ATTEMPT_STORAGE_PREFIX = "vibegrid:attempt:";
 export const ATTEMPT_STORAGE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+export type GameMode = "easy" | "medium" | "hard";
+
+export function normalizeGameMode(value: string | null | undefined): GameMode {
+  if (value === "easy" || value === "medium" || value === "hard") {
+    return value;
+  }
+  if (value === "standard") {
+    return "medium";
+  }
+  return "medium";
+}
+
 type AttemptStorage = Pick<Storage, "length" | "key" | "getItem" | "removeItem">;
 
 export function formatElapsedTime(startedAt: string, finishedAt = new Date().toISOString()) {

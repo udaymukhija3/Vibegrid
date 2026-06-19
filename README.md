@@ -50,7 +50,7 @@ and monitoring templates are all present in the repo.
 
 | Area | Current behavior |
 | --- | --- |
-| Player game | Daily 4x4 grid, Standard guided mode, Hard mode, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
+| Player game | Daily 4x4 grid, Easy/Medium/Hard modes, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
 | Game rules | Go validates guesses server-side. The browser receives tile ids/text and vibe hints, but never receives tile-to-group answer mappings. |
 | Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts. |
 | Daily content | Explicitly scheduled editorial puzzles win for their publish date. Empty days are filled by a deterministic evergreen generator that composes a date-specific board from curated bank groups, so the daily keeps changing without a cron job or manual authoring every night. |

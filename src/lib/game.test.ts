@@ -4,7 +4,8 @@ import {
   cleanupStoredAttempts,
   buildShareGrid,
   buildShareText,
-  formatElapsedTime
+  formatElapsedTime,
+  normalizeGameMode
 } from "@/lib/game";
 
 class FakeStorage implements Pick<Storage, "length" | "key" | "getItem" | "removeItem"> {
@@ -36,6 +37,14 @@ describe("game UI helpers", () => {
     expect(
       formatElapsedTime("2026-06-02T10:00:00.000Z", "2026-06-02T10:02:09.000Z")
     ).toBe("2:09");
+  });
+
+  it("normalizes saved game modes and migrates standard to medium", () => {
+    expect(normalizeGameMode("easy")).toBe("easy");
+    expect(normalizeGameMode("medium")).toBe("medium");
+    expect(normalizeGameMode("hard")).toBe("hard");
+    expect(normalizeGameMode("standard")).toBe("medium");
+    expect(normalizeGameMode("nonsense")).toBe("medium");
   });
 
   it("builds spoiler-safe share text", () => {

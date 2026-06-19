@@ -207,6 +207,81 @@ func TestPuzzleVibesEndpoint(t *testing.T) {
 	}
 }
 
+func TestEasyHintEndpointUnlocksAfterTwoGuesses(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
+		Store:   NewMemoryAttemptStore(),
+		Clock:   fixedClock,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/puzzles/vibegrid-2026-06-02/easy-hint", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("easy hints must be session-scoped no-store reads, got cache header %q", got)
+	}
+
+	var locked EasyHintResponse
+	if err := json.NewDecoder(rec.Body).Decode(&locked); err != nil {
+		t.Fatal(err)
+	}
+	if locked.Available || locked.Hint != nil || locked.GuessCount != 0 || locked.RequiredGuessCount != 2 {
+		t.Fatalf("expected locked hint before guesses, got %#v", locked)
+	}
+
+	cookie := setCookieHeader(rec)
+	if cookie == "" {
+		t.Fatal("expected hint read to establish the guest session")
+	}
+
+	first := postGuess(t, handler, cookie, GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "easy-wrong",
+		SelectedTileIDs: []string{"p1-espresso", "p1-linen", "p1-slack", "p1-deck"},
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first guess: expected 200, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := postGuess(t, handler, cookie, GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "easy-correct",
+		SelectedTileIDs: []string{"p1-espresso", "p1-linen", "p1-vespa", "p1-balcony"},
+	})
+	if second.Code != http.StatusOK {
+		t.Fatalf("second guess: expected 200, got %d: %s", second.Code, second.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/puzzles/vibegrid-2026-06-02/easy-hint", nil)
+	req.Header.Set("Cookie", cookie)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "p1-slack") || strings.Contains(body, "Slack") {
+		t.Fatalf("easy hint leaked tile data: %s", body)
+	}
+
+	var unlocked EasyHintResponse
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&unlocked); err != nil {
+		t.Fatal(err)
+	}
+	if !unlocked.Available || unlocked.Hint == nil {
+		t.Fatalf("expected unlocked hint after two guesses, got %#v", unlocked)
+	}
+	if unlocked.Hint.Name != "Corporate hostage situation" {
+		t.Fatalf("expected next unsolved vibe hint, got %#v", unlocked.Hint)
+	}
+	if unlocked.Hint.Text == "" || unlocked.Hint.ColorIndex != 1 {
+		t.Fatalf("expected explanation clue with colour index, got %#v", unlocked.Hint)
+	}
+}
+
 func TestTodayCacheControlExpiresAtMidnight(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles:  StaticPuzzleSource(SeedPuzzles()),
@@ -252,6 +327,73 @@ func TestSecurityHeadersAreApplied(t *testing.T) {
 	}
 }
 
+func TestCORSDefaultsToSameOriginOnly(t *testing.T) {
+	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("empty CORS config should not allow localhost by default, got %q", got)
+	}
+}
+
+func TestCORSAllowsExplicitAndDevOrigins(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		config ServerConfig
+		origin string
+	}{
+		{
+			name:   "explicit production origin",
+			config: ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), AllowedOrigins: []string{"https://vibegrid.example"}},
+			origin: "https://vibegrid.example",
+		},
+		{
+			name:   "opt-in dev localhost",
+			config: ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), DevCORS: true},
+			origin: "http://localhost:3000",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := NewServer(test.config)
+			req := httptest.NewRequest(http.MethodOptions, "/api/puzzles/today", nil)
+			req.Header.Set("Origin", test.origin)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("expected preflight 204, got %d", rec.Code)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != test.origin {
+				t.Fatalf("expected origin %q, got %q", test.origin, got)
+			}
+		})
+	}
+}
+
+func TestRequestIDHeaderIsBoundedAndPropagated(t *testing.T) {
+	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set(requestIDHeader, "client-request-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if got := rec.Header().Get(requestIDHeader); got != "client-request-123" {
+		t.Fatalf("expected request id to propagate, got %q", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set(requestIDHeader, "bad request id with spaces")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if got := rec.Header().Get(requestIDHeader); got == "" || got == "bad request id with spaces" {
+		t.Fatalf("expected invalid request id to be replaced, got %q", got)
+	}
+}
+
 func TestMetricsEndpointCountsRequests(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles: StaticPuzzleSource(SeedPuzzles()),
@@ -267,6 +409,14 @@ func TestMetricsEndpointCountsRequests(t *testing.T) {
 		}
 	}
 
+	bodyReq := httptest.NewRequest(http.MethodPost, "/api/community/puzzles", strings.NewReader("bad"))
+	bodyReq.Header.Set("Content-Type", "application/json")
+	bodyRec := httptest.NewRecorder()
+	handler.ServeHTTP(bodyRec, bodyReq)
+	if bodyRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST /api/community/puzzles: expected 503 without database, got %d", bodyRec.Code)
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -276,6 +426,9 @@ func TestMetricsEndpointCountsRequests(t *testing.T) {
 		"vibegrid_up 1",
 		`vibegrid_http_requests_total{method="GET",route="/healthz",status="200"} 1`,
 		`vibegrid_http_requests_total{method="GET",route="/api/puzzles/today",status="200"} 1`,
+		`vibegrid_http_request_bytes_total{method="POST",route="/api/community/puzzles",status="503"} 3`,
+		`vibegrid_http_response_bytes_total{method="GET",route="/healthz",status="200"}`,
+		`vibegrid_store_operations_total{component="puzzles",operation="today",status="ok"} 1`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected metrics to contain %q, got:\n%s", expected, body)
@@ -772,6 +925,15 @@ func postRawGuess(t *testing.T, handler http.Handler, body string) *httptest.Res
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
 	return response
+}
+
+func setCookieHeader(rec *httptest.ResponseRecorder) string {
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			return cookie.String()
+		}
+	}
+	return ""
 }
 
 func guessTestHandler(limiter *rateLimiter) http.Handler {

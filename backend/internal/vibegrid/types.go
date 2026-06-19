@@ -56,11 +56,27 @@ type PublicPuzzle struct {
 }
 
 // VibeHint is a single group's name + colour, with no tile mapping. It powers
-// the guided Standard mode (reveal one vibe at a time to match) without leaking
-// which tiles belong to which group — the guess engine stays the sole authority.
+// guided Easy/Medium play without leaking which tiles belong to which group; the
+// guess engine stays the sole authority.
 type VibeHint struct {
 	Name       string `json:"name"`
 	ColorIndex int    `json:"colorIndex"`
+}
+
+// EasyHint is the extra clue unlocked by Easy mode after the player has made a
+// couple of guesses. It intentionally omits tile membership, so the server still
+// owns answer validation.
+type EasyHint struct {
+	Name       string `json:"name"`
+	ColorIndex int    `json:"colorIndex"`
+	Text       string `json:"text"`
+}
+
+type EasyHintResponse struct {
+	Available          bool      `json:"available"`
+	GuessCount         int       `json:"guessCount"`
+	RequiredGuessCount int       `json:"requiredGuessCount"`
+	Hint               *EasyHint `json:"hint,omitempty"`
 }
 
 type SolvedGroup struct {

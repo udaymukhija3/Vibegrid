@@ -60,6 +60,65 @@
           "legendFormat": "{{route}} {{status}}"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Response bandwidth",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(vibegrid_http_response_bytes_total{job=\"vibegrid\"}[5m])) by (route)",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Runtime memory",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        {
+          "expr": "vibegrid_process_heap_alloc_bytes{job=\"vibegrid\"}",
+          "legendFormat": "heap alloc"
+        },
+        {
+          "expr": "vibegrid_process_sys_bytes{job=\"vibegrid\"}",
+          "legendFormat": "runtime sys"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "DB pool waits",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "targets": [
+        {
+          "expr": "rate(vibegrid_db_wait_count_total{job=\"vibegrid\"}[5m])",
+          "legendFormat": "waits/s"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Storage operation latency",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(vibegrid_store_operation_duration_seconds_bucket{job=\"vibegrid\"}[5m])) by (le, component, operation))",
+          "legendFormat": "{{component}} {{operation}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Storage errors",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "sum(rate(vibegrid_store_operations_total{job=\"vibegrid\",status=\"error\"}[5m])) by (component, operation)",
+          "legendFormat": "{{component}} {{operation}}"
+        }
+      ]
     }
   ]
 }

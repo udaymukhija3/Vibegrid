@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/http";
-import type { DraftPuzzleInput, PublicPuzzle, PuzzleTemplate, VibeHint } from "@/types/puzzle";
+import type { DraftPuzzleInput, EasyHintResponse, PublicPuzzle, PuzzleTemplate, VibeHint } from "@/types/puzzle";
 
 // Runtime schemas for the public API surface. Validating responses at the
 // boundary means a contract drift between the Go backend and the UI fails loudly
@@ -76,12 +76,29 @@ const vibeHintSchema = z.object({
 });
 
 // fetchVibes returns the puzzle's group names + colours (no tile mapping) for
-// guided Standard mode. Order is colour-stable; the UI reveals one at a time.
+// guided Easy/Medium play. Order is colour-stable; the UI reveals one at a time.
 export async function fetchVibes(id: string): Promise<VibeHint[]> {
   const payload = z
     .object({ vibes: z.array(vibeHintSchema) })
     .parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}/vibes`));
   return payload.vibes;
+}
+
+const easyHintSchema = z.object({
+  name: z.string(),
+  colorIndex: z.number(),
+  text: z.string()
+});
+
+const easyHintResponseSchema = z.object({
+  available: z.boolean(),
+  guessCount: z.number(),
+  requiredGuessCount: z.number(),
+  hint: easyHintSchema.optional()
+}) satisfies z.ZodType<EasyHintResponse>;
+
+export async function fetchEasyHint(id: string): Promise<EasyHintResponse> {
+  return easyHintResponseSchema.parse(await getJSON(`/api/puzzles/${encodeURIComponent(id)}/easy-hint`));
 }
 
 const puzzleTemplateSchema = z.object({

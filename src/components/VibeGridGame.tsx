@@ -13,9 +13,12 @@ import {
   cleanupStoredAttempts,
   formatElapsedTime,
   formatSeconds,
-  MIN_STATS_PLAYERS
+  MIN_STATS_PLAYERS,
+  normalizeGameMode,
+  type GameMode
 } from "@/lib/game";
 import {
+  fetchEasyHint,
   fetchPuzzleStats,
   fetchSessionStatus,
   fetchStreak,
@@ -27,7 +30,15 @@ import {
 } from "@/lib/api";
 import { apiFetch } from "@/lib/http";
 import { HowToPlay } from "@/components/HowToPlay";
-import type { AttemptSnapshot, GuessResponse, PublicPuzzle, SolvedGroup, Tile, VibeHint } from "@/types/puzzle";
+import type {
+  AttemptSnapshot,
+  EasyHintResponse,
+  GuessResponse,
+  PublicPuzzle,
+  SolvedGroup,
+  Tile,
+  VibeHint
+} from "@/types/puzzle";
 
 type StoredAttempt = {
   puzzleId: string;
@@ -99,10 +110,21 @@ const groupColors = [
 // Background-only palette (matching groupColors) for the share-grid squares.
 const squareColors = ["bg-mint", "bg-yolk", "bg-tomato", "bg-plum"];
 
-// Standard = guided (reveal one vibe at a time to match); Hard = all vibes
-// hidden (the original deduce-it-yourself game). The choice is a per-browser
-// preference, not a per-puzzle one.
-type GameMode = "standard" | "hard";
+const hintBorderColors = ["border-mint", "border-yolk", "border-tomato", "border-plum"];
+
+const modeOptions: Array<{ value: GameMode; label: string }> = [
+  { value: "easy", label: "Easy" },
+  { value: "medium", label: "Medium" },
+  { value: "hard", label: "Hard" }
+];
+
+const modeDescriptions: Record<GameMode, string> = {
+  easy: "Guided plus selected tiles and a hint after two guesses.",
+  medium: "Guided: we name one vibe at a time.",
+  hard: "All four vibes hidden."
+};
+
+const EASY_HINT_GUESSES = 2;
 const MODE_STORAGE_KEY = "vibegrid_mode";
 
 const reportReasons = [
@@ -157,8 +179,10 @@ export function VibeGridGame({
   const [reportContact, setReportContact] = useState("");
   const [isReporting, setIsReporting] = useState(false);
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "error">("idle");
-  const [mode, setMode] = useState<GameMode>("standard");
+  const [mode, setMode] = useState<GameMode>("medium");
   const [vibes, setVibes] = useState<VibeHint[] | null>(null);
+  const [easyHint, setEasyHint] = useState<EasyHintResponse | null>(null);
+  const [easyHintStatus, setEasyHintStatus] = useState<"idle" | "loading" | "error">("idle");
   const [timerNow, setTimerNow] = useState<string | null>(null);
   const [resolvedSession, setResolvedSession] = useState<SessionStatus | null>(sessionStatus ?? null);
 
@@ -348,22 +372,19 @@ export function VibeGridGame({
   }, [attempt, hasLoadedAttempt, storageKey]);
 
   // Mode is a per-browser preference. Read it after mount (not in initial state)
-  // so the server-rendered markup and first client paint agree; default standard.
+  // so the server-rendered markup and first client paint agree; default medium.
   useEffect(() => {
-    const saved = safeStorage()?.getItem(MODE_STORAGE_KEY);
-    if (saved === "hard" || saved === "standard") {
-      setMode(saved);
-    }
+    setMode(normalizeGameMode(safeStorage()?.getItem(MODE_STORAGE_KEY)));
   }, []);
 
   useEffect(() => {
     safeStorage()?.setItem(MODE_STORAGE_KEY, mode);
   }, [mode]);
 
-  // Standard mode reveals one vibe (group name) at a time. Fetch just the names —
-  // never the tile→group mapping — lazily, only when guided mode is actually used.
+  // Easy/Medium reveal one vibe (group name) at a time. Fetch just the names —
+  // never the tile→group mapping — lazily, only when guided play is used.
   useEffect(() => {
-    if (mode !== "standard" || vibes !== null) {
+    if (mode === "hard" || vibes !== null) {
       return;
     }
     let cancelled = false;
@@ -374,7 +395,7 @@ export function VibeGridGame({
         }
       })
       .catch(() => {
-        // A hint fetch failure shouldn't break play; Standard just shows no banner.
+        // A vibe-name fetch failure shouldn't break guided play; it just shows no banner.
       });
     return () => {
       cancelled = true;
@@ -401,6 +422,35 @@ export function VibeGridGame({
   const elapsedFinishedAt = attempt.completedAt ?? timerNow ?? attempt.startedAt;
 
   useEffect(() => {
+    if (mode !== "easy" || isOver || attempt.guessCount < EASY_HINT_GUESSES) {
+      setEasyHint(null);
+      setEasyHintStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    setEasyHintStatus("loading");
+    fetchEasyHint(puzzle.id)
+      .then((loaded) => {
+        if (!cancelled) {
+          setEasyHint(loaded);
+          setEasyHintStatus("idle");
+        }
+      })
+      .catch(() => {
+        // Easy can still play as guided mode if the extra hint read fails.
+        if (!cancelled) {
+          setEasyHint(null);
+          setEasyHintStatus("error");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt.guessCount, attempt.solvedGroups, isOver, mode, puzzle.id]);
+
+  useEffect(() => {
     setTimerNow(new Date().toISOString());
     if (isOver) {
       return;
@@ -412,7 +462,7 @@ export function VibeGridGame({
     return () => window.clearInterval(interval);
   }, [isOver]);
 
-  // In Standard mode the target is the first vibe whose group is still unsolved;
+  // In Easy/Medium mode the target is the first vibe whose group is still unsolved;
   // solving any group advances it (each group owns a unique colorIndex). Null in
   // Hard mode, before the vibes load, or once the board is over.
   const solvedColorIndexes = useMemo(
@@ -420,7 +470,7 @@ export function VibeGridGame({
     [attempt.solvedGroups]
   );
   const currentVibe =
-    mode === "standard" && vibes && !isOver
+    mode !== "hard" && vibes && !isOver
       ? vibes.find((vibe) => !solvedColorIndexes.has(vibe.colorIndex)) ?? null
       : null;
 
@@ -473,6 +523,11 @@ export function VibeGridGame({
     .map((tileId) => tilesById.get(tileId))
     .filter((tile): tile is Tile => tile !== undefined)
     .filter((tile) => !displayedTileIds.has(tile.id));
+  const selectedTiles = attempt.selectedTileIds
+    .map((tileId) => tilesById.get(tileId))
+    .filter((tile): tile is Tile => tile !== undefined);
+  const guessesUntilEasyHint = Math.max(0, EASY_HINT_GUESSES - attempt.guessCount);
+  const unlockedEasyHint = mode === "easy" && easyHint?.available ? easyHint.hint ?? null : null;
 
   function toggleTile(tileId: string) {
     if (isOver || displayedTileIds.has(tileId)) {
@@ -824,27 +879,75 @@ export function VibeGridGame({
           <div>
             {!isOver && (
               <div className="mb-4">
-                <div className="flex gap-1 rounded border-2 border-ink p-1">
-                  {(["standard", "hard"] as const).map((option) => (
+                <div className="grid grid-cols-3 gap-1 rounded border-2 border-ink p-1">
+                  {modeOptions.map((option) => (
                     <button
-                      key={option}
+                      key={option.value}
                       type="button"
-                      onClick={() => setMode(option)}
-                      aria-pressed={mode === option}
+                      onClick={() => setMode(option.value)}
+                      aria-pressed={mode === option.value}
                       className={clsx(
-                        "h-9 flex-1 rounded text-sm font-black capitalize",
-                        mode === option ? "bg-ink text-white" : "bg-white text-ink"
+                        "h-9 rounded text-sm font-black",
+                        mode === option.value ? "bg-ink text-white" : "bg-white text-ink"
                       )}
                     >
-                      {option}
+                      {option.label}
                     </button>
                   ))}
                 </div>
                 <p className="mt-1.5 text-xs font-semibold text-neutral-600">
-                  {mode === "standard"
-                    ? "Guided: we name one vibe at a time — match its 4 tiles."
-                    : "Hard: all four vibes hidden. Deduce them yourself."}
+                  {modeDescriptions[mode]}
                 </p>
+              </div>
+            )}
+
+            {mode === "easy" && !isOver && (
+              <div className="mb-4 border-t border-neutral-200 pt-3">
+                <p className="text-xs font-black text-neutral-500">Selected tiles</p>
+                <div className="mt-2 grid min-h-24 grid-cols-2 gap-1.5">
+                  {Array.from({ length: 4 }).map((_, index) => {
+                    const tile = selectedTiles[index];
+                    return (
+                      <div
+                        key={tile?.id ?? `empty-${index}`}
+                        className={clsx(
+                          "flex min-h-10 items-center justify-center rounded border px-2 text-center text-xs font-black leading-tight",
+                          tile
+                            ? "border-ink bg-white text-ink"
+                            : "border-neutral-200 bg-neutral-50 text-neutral-400"
+                        )}
+                      >
+                        {tile?.text ?? "Pick tile"}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 border-t border-neutral-200 pt-3">
+                  <p className="text-xs font-black text-neutral-500">Easy hint</p>
+                  {guessesUntilEasyHint > 0 ? (
+                    <p className="mt-1 text-sm font-semibold text-neutral-600">
+                      Unlocks after {guessesUntilEasyHint} more{" "}
+                      {guessesUntilEasyHint === 1 ? "guess" : "guesses"}.
+                    </p>
+                  ) : unlockedEasyHint ? (
+                    <div
+                      className={clsx(
+                        "mt-2 border-l-4 pl-3",
+                        hintBorderColors[unlockedEasyHint.colorIndex % hintBorderColors.length]
+                      )}
+                    >
+                      <p className="text-sm font-black">{unlockedEasyHint.name}</p>
+                      <p className="mt-1 text-sm font-semibold leading-snug text-neutral-700">
+                        {unlockedEasyHint.text}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm font-semibold text-neutral-600">
+                      {easyHintStatus === "error" ? "Hint is unavailable right now." : "Hint is checking."}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 

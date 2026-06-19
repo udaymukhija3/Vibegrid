@@ -171,6 +171,9 @@ export async function runSmoke({
   const metrics = await expectText("/metrics");
   assert(metrics.text.includes("vibegrid_up 1"), "metrics did not expose vibegrid_up");
   assert(metrics.text.includes("vibegrid_http_requests_total"), "metrics did not expose request counters");
+  assert(metrics.text.includes("vibegrid_http_response_bytes_total"), "metrics did not expose response byte counters");
+  assert(metrics.text.includes("vibegrid_process_heap_alloc_bytes"), "metrics did not expose process memory gauges");
+  assert(metrics.text.includes("vibegrid_store_operations_total"), "metrics did not expose storage operation counters");
   log("ok metrics");
 
   return { baseUrl: base.toString(), puzzleId: puzzle.id, puzzleNumber: puzzle.puzzleNumber };

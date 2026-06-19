@@ -34,6 +34,12 @@ func TestMetricsExposesPoolAndCacheGauges(t *testing.T) {
 		"vibegrid_puzzle_cache_misses_total 9",
 		"vibegrid_puzzle_cache_evictions_total 2",
 		"vibegrid_puzzle_cache_entries 5",
+		"vibegrid_process_goroutines",
+		"vibegrid_process_heap_alloc_bytes",
+		"vibegrid_process_heap_inuse_bytes",
+		"vibegrid_process_stack_inuse_bytes",
+		"vibegrid_process_sys_bytes",
+		"vibegrid_process_gc_cycles_total",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics missing %q\n%s", want, body)

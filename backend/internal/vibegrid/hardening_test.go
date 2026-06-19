@@ -2,6 +2,7 @@ package vibegrid
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,4 +117,76 @@ func TestAdminLoginThrottlesRepeatedAttempts(t *testing.T) {
 	if rec.Header().Get("Retry-After") == "" {
 		t.Fatal("expected a Retry-After header on a throttled login")
 	}
+}
+
+func TestAdminCookieMutationsRequireCSRF(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles:            StaticPuzzleSource(SeedPuzzles()),
+		AdminPuzzles:       newFakePuzzleBackend(),
+		AdminToken:         "script-token",
+		AdminPassword:      "correct-horse-battery-staple",
+		AdminSessionSecret: "test-admin-session-signing-secret",
+		Clock:              fixedClock,
+	})
+
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/admin/session", strings.NewReader(`{"password":"correct-horse-battery-staple"}`)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login: expected 200, got %d: %s", login.Code, login.Body.String())
+	}
+
+	var session adminSessionResponse
+	if err := json.NewDecoder(login.Body).Decode(&session); err != nil {
+		t.Fatal(err)
+	}
+	if session.CSRFToken == "" {
+		t.Fatal("expected login to return a CSRF token")
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected login to set an admin cookie")
+	}
+
+	get := httptest.NewRequest(http.MethodGet, "/api/admin/puzzles", nil)
+	get.AddCookie(cookies[0])
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, get)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET should not require CSRF, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	noCSRF := adminCookiePostRequest(cookies[0], "")
+	noCSRFRec := httptest.NewRecorder()
+	handler.ServeHTTP(noCSRFRec, noCSRF)
+	if noCSRFRec.Code != http.StatusForbidden {
+		t.Fatalf("POST without CSRF: expected 403, got %d: %s", noCSRFRec.Code, noCSRFRec.Body.String())
+	}
+
+	withCSRF := adminCookiePostRequest(cookies[0], session.CSRFToken)
+	withCSRFRec := httptest.NewRecorder()
+	handler.ServeHTTP(withCSRFRec, withCSRF)
+	if withCSRFRec.Code != http.StatusCreated {
+		t.Fatalf("POST with CSRF: expected 201, got %d: %s", withCSRFRec.Code, withCSRFRec.Body.String())
+	}
+
+	bearer := adminCookiePostRequest(nil, "")
+	bearer.Header.Set("Authorization", "Bearer script-token")
+	bearerRec := httptest.NewRecorder()
+	handler.ServeHTTP(bearerRec, bearer)
+	if bearerRec.Code != http.StatusCreated {
+		t.Fatalf("bearer POST should bypass CSRF, got %d: %s", bearerRec.Code, bearerRec.Body.String())
+	}
+}
+
+func adminCookiePostRequest(cookie *http.Cookie, csrfToken string) *http.Request {
+	payload, _ := json.Marshal(validPuzzleInput())
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/puzzles", strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	if csrfToken != "" {
+		req.Header.Set(adminCSRFHeader, csrfToken)
+	}
+	return req
 }
