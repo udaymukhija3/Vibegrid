@@ -28,10 +28,13 @@ type httpMetricSample struct {
 }
 
 type httpMetrics struct {
-	mu         sync.Mutex
-	requests   map[httpMetricKey]*httpMetricSample
-	operations map[operationMetricKey]*httpMetricSample
+	mu                   sync.Mutex
+	requests             map[httpMetricKey]*httpMetricSample
+	operations           map[operationMetricKey]*httpMetricSample
+	droppedRequestSeries uint64
 }
+
+const maxHTTPMetricSeries = 256
 
 func newHTTPMetrics() *httpMetrics {
 	return &httpMetrics{
@@ -57,6 +60,10 @@ func (metrics *httpMetrics) observe(method, route string, status int, duration t
 
 	sample := metrics.requests[key]
 	if sample == nil {
+		if len(metrics.requests) >= maxHTTPMetricSeries {
+			metrics.droppedRequestSeries++
+			return
+		}
 		sample = &httpMetricSample{buckets: make([]uint64, len(httpDurationBuckets))}
 		metrics.requests[key] = sample
 	}
@@ -169,6 +176,9 @@ func (metrics *httpMetrics) writePrometheus(w http.ResponseWriter) {
 	fmt.Fprintln(w, "# TYPE vibegrid_http_request_bytes_total counter")
 	fmt.Fprintln(w, "# HELP vibegrid_http_response_bytes_total HTTP response body bytes written by the app.")
 	fmt.Fprintln(w, "# TYPE vibegrid_http_response_bytes_total counter")
+	fmt.Fprintln(w, "# HELP vibegrid_http_metric_series_dropped_total HTTP metric observations dropped because the series cap was reached.")
+	fmt.Fprintln(w, "# TYPE vibegrid_http_metric_series_dropped_total counter")
+	fmt.Fprintf(w, "vibegrid_http_metric_series_dropped_total %d\n", metrics.droppedSeries())
 	fmt.Fprintln(w, "# HELP vibegrid_store_operations_total Storage interface operations by component, operation, and status.")
 	fmt.Fprintln(w, "# TYPE vibegrid_store_operations_total counter")
 	fmt.Fprintln(w, "# HELP vibegrid_store_operation_duration_seconds Storage interface operation latency.")
@@ -217,6 +227,12 @@ func (metrics *httpMetrics) writePrometheus(w http.ResponseWriter) {
 		fmt.Fprintf(w, "vibegrid_store_operation_duration_seconds_sum{%s} %.6f\n", labels, sample.sum)
 		fmt.Fprintf(w, "vibegrid_store_operation_duration_seconds_count{%s} %d\n", labels, sample.count)
 	}
+}
+
+func (metrics *httpMetrics) droppedSeries() uint64 {
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	return metrics.droppedRequestSeries
 }
 
 func (metrics *httpMetrics) sortedKeys() []httpMetricKey {
@@ -354,24 +370,78 @@ func requestBodyBytes(r *http.Request) int64 {
 }
 
 func routeMetricLabel(r *http.Request) string {
-	if r.Pattern != "" {
-		return strings.TrimPrefix(r.Pattern, r.Method+" ")
-	}
-
 	route := r.URL.Path
+	if known := knownRouteMetricLabel(route); known != "" {
+		return known
+	}
 	if route == "" {
 		return "/"
 	}
 	if strings.HasPrefix(route, "/_next/static/") {
 		return "/_next/static/*"
 	}
-	if isAPIRoute(route) || route == "/metrics" {
-		return route
+	if isAPIRoute(route) {
+		if route == "/metrics" {
+			return "/metrics"
+		}
+		return "/api/*"
 	}
 	if strings.Contains(strings.Trim(route, "/"), ".") {
 		return "/static/*"
 	}
 	return "/"
+}
+
+// The outer middleware intentionally does not depend on Request.Pattern: the
+// standard mux may update a request copy while the metrics wrapper still sees
+// the original. This explicit allowlist keeps labels stable even for malformed
+// paths and unknown HTTP methods.
+func knownRouteMetricLabel(route string) string {
+	switch route {
+	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/puzzles", "/api/puzzle-templates", "/api/session", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/reports", "/api/appeals", "/api/admin/session", "/api/admin/queue-health", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
+		return route
+	}
+	if strings.HasPrefix(route, "/api/attempts/") {
+		return "/api/attempts/{id}"
+	}
+	if strings.HasPrefix(route, "/api/og/puzzles/") {
+		return "/api/og/puzzles/{id}"
+	}
+	if strings.HasPrefix(route, "/api/puzzles/") {
+		switch {
+		case strings.HasSuffix(route, "/stats"):
+			return "/api/puzzles/{id}/stats"
+		case strings.HasSuffix(route, "/vibes"):
+			return "/api/puzzles/{id}/vibes"
+		case strings.HasSuffix(route, "/easy-hint"):
+			return "/api/puzzles/{id}/easy-hint"
+		default:
+			return "/api/puzzles/{id}"
+		}
+	}
+	if strings.HasPrefix(route, "/api/admin/puzzles/") {
+		switch {
+		case strings.HasSuffix(route, "/publish"):
+			return "/api/admin/puzzles/{id}/publish"
+		case strings.HasSuffix(route, "/approve"):
+			return "/api/admin/puzzles/{id}/approve"
+		case strings.HasSuffix(route, "/archive"):
+			return "/api/admin/puzzles/{id}/archive"
+		case strings.HasSuffix(route, "/reinstate"):
+			return "/api/admin/puzzles/{id}/reinstate"
+		case strings.HasSuffix(route, "/preview"):
+			return "/api/admin/puzzles/{id}/preview"
+		case strings.HasSuffix(route, "/analytics"):
+			return "/api/admin/puzzles/{id}/analytics"
+		}
+	}
+	if strings.HasPrefix(route, "/api/admin/moderation/reports/") {
+		return "/api/admin/moderation/reports/{id}/resolve"
+	}
+	if strings.HasPrefix(route, "/api/admin/moderation/appeals/") {
+		return "/api/admin/moderation/appeals/{id}/resolve"
+	}
+	return ""
 }
 
 func maxInt64(left, right int64) int64 {

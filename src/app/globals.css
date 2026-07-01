@@ -4,9 +4,10 @@
 
 :root {
   color-scheme: light;
-  --ink: #171717;
-  --paper: #f8fafc;
-  --line: #d9e1e8;
+  --ink: #223027;
+  --paper: #f3f7f1;
+  --line: #d3ddd3;
+  --card: #fffdfa;
 }
 
 * {
@@ -17,10 +18,11 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    linear-gradient(90deg, rgba(23, 23, 23, 0.04) 1px, transparent 1px),
-    linear-gradient(rgba(23, 23, 23, 0.04) 1px, transparent 1px),
+    linear-gradient(120deg, rgba(98, 87, 183, 0.07), transparent 34rem),
+    linear-gradient(90deg, rgba(34, 48, 39, 0.055) 1px, transparent 1px),
+    linear-gradient(rgba(34, 48, 39, 0.055) 1px, transparent 1px),
     var(--paper);
-  background-size: 40px 40px;
+  background-size: auto, 56px 56px, 56px 56px;
   color: var(--ink);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -34,12 +36,45 @@ textarea {
 
 button:focus-visible,
 a:focus-visible {
-  outline: 3px solid #2ec4b6;
+  outline: 3px solid #77d3b0;
   outline-offset: 3px;
 }
 
 ::selection {
-  background: #f9c74f;
-  color: #171717;
+  background: #f3ca68;
+  color: #223027;
 }
 
+@layer components {
+  .vg-panel {
+    @apply rounded-lg border border-line bg-card/95 shadow-soft;
+  }
+
+  .vg-panel-muted {
+    @apply rounded-lg border border-line bg-white/70;
+  }
+
+  .vg-icon-button {
+    @apply inline-flex h-11 w-11 items-center justify-center rounded-lg border border-line bg-card/95 text-ink shadow-soft transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift disabled:translate-y-0 disabled:opacity-40;
+  }
+
+  .vg-button-primary {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-ink bg-mint px-4 font-semibold text-ink shadow-soft transition hover:-translate-y-0.5 hover:shadow-lift disabled:translate-y-0 disabled:bg-neutral-200 disabled:text-neutral-500 disabled:shadow-none disabled:opacity-70;
+  }
+
+  .vg-button-secondary {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-line bg-card/95 px-3 text-sm font-semibold text-neutral-700 shadow-soft transition hover:-translate-y-0.5 hover:border-ink hover:text-ink disabled:translate-y-0 disabled:opacity-50;
+  }
+
+  .vg-input {
+    @apply rounded-lg border border-line bg-white px-3 text-ink outline-none transition focus:border-ink focus:ring-2 focus:ring-mint/40;
+  }
+
+  .vg-kicker {
+    @apply text-sm font-semibold text-plum;
+  }
+
+  .vg-page-title {
+    @apply text-4xl font-extrabold leading-tight sm:text-5xl;
+  }
+}

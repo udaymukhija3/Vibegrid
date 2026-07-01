@@ -26,13 +26,14 @@ host**, not to a static/edge platform.
 >
 > You can still use Cloudflare, but only as **DNS + CDN/proxy in front of the
 > container origin**. Two important caveats if you do:
-> 1. Prefer **DNS-only (grey cloud)** to start. The app derives the client IP for
->    rate limiting from `Fly-Client-IP` / `X-Real-IP` (`clientIP` in
->    `backend/internal/vibegrid/rate_limits.go`). If you proxy through Cloudflare
->    (orange cloud), the real client IP arrives in `CF-Connecting-IP`, which the
->    app does **not** read yet — so per-IP limits would bucket all traffic under
->    Cloudflare's IPs. Either stay grey-cloud, or add `CF-Connecting-IP` to
->    `clientIP` before enabling the proxy.
+> 1. The app ignores all forwarding headers unless the connected peer is in the
+>    explicit `VIBEGRID_TRUSTED_PROXY_CIDRS` allowlist. This prevents a visitor
+>    from bypassing rate limits with `X-Real-IP`. Before enabling any proxy, get
+>    its documented source CIDRs, configure only those CIDRs, then verify from
+>    logs that requests are separated by real client IP. Do not use `0.0.0.0/0`
+>    or `::/0`; that would reintroduce header spoofing. If the provider cannot
+>    give stable source CIDRs, leave the setting empty and enforce per-client
+>    limits at the edge instead.
 > 2. The app already sets HSTS and forces HTTPS at the host; keep Cloudflare SSL
 >    mode on **Full (strict)**, not Flexible, to avoid redirect loops.
 
@@ -80,14 +81,16 @@ command (step 3), and starter puzzles are seeded idempotently on every boot.
 ## 2. Generate secrets
 
 ```bash
-# Admin browser login (pick a strong password) and the cookie signing secret:
+# Admin browser login (pick a strong password) and the CSRF/session secret:
 VIBEGRID_ADMIN_PASSWORD="$(openssl rand -base64 24)"
 VIBEGRID_ADMIN_SESSION_SECRET="$(openssl rand -hex 32)"
 # Optional automation/API token (the web UI uses the password + cookie instead):
 VIBEGRID_ADMIN_TOKEN="$(openssl rand -hex 32)"
+VIBEGRID_METRICS_TOKEN="$(openssl rand -hex 32)"
 echo "ADMIN_PASSWORD=$VIBEGRID_ADMIN_PASSWORD"   # save these in your password manager
 echo "SESSION_SECRET=$VIBEGRID_ADMIN_SESSION_SECRET"
 echo "ADMIN_TOKEN=$VIBEGRID_ADMIN_TOKEN"
+echo "METRICS_TOKEN=$VIBEGRID_METRICS_TOKEN"
 ```
 
 If `VIBEGRID_ADMIN_PASSWORD` is set but `VIBEGRID_ADMIN_SESSION_SECRET` is not,
@@ -113,6 +116,8 @@ fly secrets set \
   VIBEGRID_ADMIN_PASSWORD="$VIBEGRID_ADMIN_PASSWORD" \
   VIBEGRID_ADMIN_SESSION_SECRET="$VIBEGRID_ADMIN_SESSION_SECRET" \
   VIBEGRID_ADMIN_TOKEN="$VIBEGRID_ADMIN_TOKEN" \
+  VIBEGRID_METRICS_TOKEN="$VIBEGRID_METRICS_TOKEN" \
+  VIBEGRID_PUBLIC_BASE_URL="https://vibegrid.example.com" \
   VIBEGRID_BLOCKED_TERMS="slur-one,slur-two"
 
 # 3. Deploy:
@@ -154,10 +159,17 @@ Create those DNS records at your DNS provider (Cloudflare is fine **as DNS**).
 If you use Cloudflare, re-read the grey-cloud / `CF-Connecting-IP` /
 SSL-Full-strict caveats in the box at the top.
 
-Then set the public URL for correct absolute links in the statically-exported
-metadata (optional — the Go server already injects correct per-request OG tags,
-but this keeps Next's metadata consistent). It is a **build-time** value, so it
-must be baked during the image build, e.g. add to the Dockerfile web stage:
+Set the public URL as a **runtime secret** before serving production traffic;
+the server refuses to boot in production without it. It is the only source for
+canonical, robots, sitemap, and injected social-preview URLs, so it cannot be
+spoofed by a `Host` or forwarding header:
+
+```bash
+fly secrets set VIBEGRID_PUBLIC_BASE_URL="https://vibegrid.example.com"
+```
+
+`NEXT_PUBLIC_APP_URL` is optional frontend build metadata. If you want it to
+match too, bake it during the image build, e.g. add to the Dockerfile web stage:
 
 ```dockerfile
 ARG NEXT_PUBLIC_APP_URL
@@ -177,9 +189,12 @@ and `fly deploy --build-arg NEXT_PUBLIC_APP_URL=https://vibegrid.example.com`.
    - `GET /healthz` every 60s, alert after 2 failures (process liveness)
    - `GET /readyz` every 60s, alert after 2 failures (DB reachable)
    - `GET /` and `GET /api/puzzles/today` every 5m, alert on non-2xx
-3. **Metrics** — scrape `GET /metrics` (Prometheus text). Import the templates in
-   `monitoring/` (`prometheus.yml`, `alert-rules.yml`, `grafana-dashboard.json`)
-   after replacing the placeholder domain. Beyond HTTP request/latency series,
+3. **Metrics** — scrape `GET /metrics` with
+   `Authorization: Bearer <VIBEGRID_METRICS_TOKEN>` (Prometheus text). Import the
+   templates in `monitoring/` (`prometheus.yml`, `alert-rules.yml`,
+   `grafana-dashboard.json`) after replacing the placeholder domain and mounting
+   the same token at `/etc/prometheus/secrets/vibegrid_metrics_token` in the
+   Prometheus container. Beyond HTTP request/latency series,
    `/metrics` also exposes (see `docs/observability.md`):
    - connection pool: `vibegrid_db_open_connections`, `..._in_use_connections`,
      `..._idle_connections`, `..._wait_count_total`, `..._wait_seconds_total`
@@ -202,13 +217,16 @@ Run through this after the first deploy:
 - `https://<domain>/` loads today's puzzle.
 - Play a guess, refresh, confirm the attempt persists (the `vibegrid_session`
   cookie should be present and `Secure`).
-- `https://<domain>/create` creates a community puzzle; `/p/<id>` opens it.
-- Report that puzzle from the sidebar, then in `/admin` (log in with the admin
-  password) confirm it appears in the moderation queue; archive it, reopen
-  `/p/<id>`, submit an appeal, and reinstate it from the queue.
+- `https://<domain>/create` submits a community puzzle and shows **Pending
+  review**; its `/p/<id>` API route must return 404 before approval.
+- In `/admin`, approve that submission and confirm its `/p/<id>` link is now
+  playable. Report it from the sidebar, then confirm it appears in the
+  moderation queue; archive it, reopen `/p/<id>`, submit an appeal, and
+  reinstate it from the queue.
 - `curl -sI https://<domain>/readyz` → 200 (DB reachable).
-- `curl -s https://<domain>/metrics | grep vibegrid_` shows the HTTP, pool, and
-  cache series.
+- `curl -s -H "Authorization: Bearer $VIBEGRID_METRICS_TOKEN" https://<domain>/metrics | grep vibegrid_`
+  shows the HTTP, pool, and cache series. A scrape without that header must be
+  rejected with 401.
 - `curl -s https://<domain>/robots.txt` advertises the sitemap; `/sitemap.xml`
   lists `/` and the live puzzle `/p/<id>` URLs (and **not** future-dated ones).
 - `curl -sI https://<domain>/api/og/puzzles/<id>.svg` returns an image.
@@ -238,18 +256,20 @@ npm ci && npm run build
 mkdir -p backend/internal/frontend/out && cp -R out/. backend/internal/frontend/out
 ( cd backend && CGO_ENABLED=0 go build -o ../dist/vibegrid ./cmd/vibegrid )
 
-# With a local Postgres (durable path):
+# With a local Postgres (durable production-shaped path):
 DATABASE_URL="postgres://localhost/vibegrid?sslmode=disable" \
 VIBEGRID_ADMIN_PASSWORD=dev VIBEGRID_ADMIN_SESSION_SECRET=devsecret \
-VIBEGRID_ADDR=:8081 ./dist/vibegrid
+VIBEGRID_ENV=development VIBEGRID_PUBLIC_BASE_URL=http://localhost:8081 \
+VIBEGRID_METRICS_TOKEN=local-metrics VIBEGRID_ADDR=:8081 ./dist/vibegrid
 # migrations: ./dist/vibegrid migrate  (run once; or rely on it via DATABASE_URL)
 
 # Without a database (in-memory, non-durable, seed puzzles only):
-VIBEGRID_ADDR=:8081 ./dist/vibegrid
+VIBEGRID_ENV=development VIBEGRID_ADDR=:8081 ./dist/vibegrid
 ```
 
-Then open `http://localhost:8081/`, `/p/vibegrid-2026-06-02`, `/metrics`,
-`/robots.txt`, `/sitemap.xml`.
+Then open `http://localhost:8081/`, `/p/vibegrid-2026-06-02`, `/robots.txt`,
+`/sitemap.xml`; for metrics use
+`curl -H 'Authorization: Bearer local-metrics' http://localhost:8081/metrics`.
 
 Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 vibegrid`.
 
@@ -261,8 +281,11 @@ Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 
 |---|---|---|---|
 | `DATABASE_URL` | Yes (prod) | secret | Postgres DSN. Unset ⇒ in-memory, non-durable. Mind the pooler gotcha (step 1). |
 | `VIBEGRID_ADMIN_PASSWORD` | Yes (prod) | secret | Admin browser login. |
-| `VIBEGRID_ADMIN_SESSION_SECRET` | Yes (prod) | secret | HMAC key for the admin session cookie. Required alongside the password. |
+| `VIBEGRID_ADMIN_SESSION_SECRET` | Yes (when browser admin login enabled) | secret | HMAC key binding CSRF tokens to opaque, revocable admin sessions. Required alongside the password. |
 | `VIBEGRID_ADMIN_TOKEN` | Optional | secret | Legacy bearer token for automation/API. |
+| `VIBEGRID_METRICS_TOKEN` | Yes (prod) | secret | Bearer token required to expose `/metrics`; leave empty locally to disable the endpoint. |
+| `VIBEGRID_PUBLIC_BASE_URL` | Yes (prod) | secret/env | HTTPS origin (no credentials, path, query, or fragment) used for canonical metadata, robots, and sitemap. Never inferred from request headers. |
+| `VIBEGRID_TRUSTED_PROXY_CIDRS` | Only behind a verified proxy | secret/env | Comma-separated proxy source CIDRs allowed to supply client-IP headers. Empty keys limits on the direct peer. |
 | `VIBEGRID_SECURE_COOKIES` | Yes (prod) | `fly.toml` | `true` ⇒ `Secure` cookies. Requires HTTPS. |
 | `VIBEGRID_TIMEZONE` | Yes (prod) | `fly.toml` | Defines daily rollover. Set explicitly (code default is `Asia/Kolkata`). |
 | `VIBEGRID_ADDR` | No | `fly.toml`/image | Listen address. Unset ⇒ binds `:$PORT` if the platform injects `PORT`, else `:8081`. |
@@ -293,10 +316,12 @@ Steps:
    gotcha in step 1 above; at one instance × `SetMaxOpenConns(10)` you are well
    under the free connection cap. Ensure it ends with `?sslmode=require`.
 2. **Render** — New ➜ **Blueprint**, point it at this repo. Render reads
-   `render.yaml` and creates the service. In the dashboard set the three
-   `sync: false` secrets: `DATABASE_URL` (from Neon),
-   `VIBEGRID_ADMIN_PASSWORD`, `VIBEGRID_ADMIN_SESSION_SECRET` (generate per
-   step 2 above). Deploy.
+   `render.yaml` and creates the service. In the dashboard set its `sync: false`
+   values: `DATABASE_URL` (from Neon), `VIBEGRID_ADMIN_PASSWORD`,
+   `VIBEGRID_ADMIN_SESSION_SECRET`, a generated `VIBEGRID_METRICS_TOKEN`, and
+   `VIBEGRID_PUBLIC_BASE_URL` set to the final `https://…onrender.com` (or custom)
+   origin. Set `VIBEGRID_TRUSTED_PROXY_CIDRS` only after verifying Render's
+   documented proxy source ranges. Deploy.
 3. **Keep it warm (optional but recommended).** Render free **spins down after
    ~15 min idle** (first hit then wakes in ~30–60 s). A free uptime monitor
    (UptimeRobot / cron-job.org) hitting `GET /healthz` every ~10 min keeps it
@@ -318,8 +343,9 @@ Any host that runs a container works. You need to replicate three things from
    release** (release/pre-deploy hook), or set `VIBEGRID_MIGRATE_ON_BOOT=true`
    on single-instance deploys (see the free-tier section). Either way
    `DATABASE_URL` must be set.
-2. Set the env/secrets from the table above (`VIBEGRID_SECURE_COOKIES=true`, a
-   fixed `VIBEGRID_TIMEZONE`).
+2. Set the env/secrets from the table above, including `VIBEGRID_SECURE_COOKIES=true`,
+   a fixed `VIBEGRID_TIMEZONE`, `VIBEGRID_METRICS_TOKEN`, and the exact HTTPS
+   `VIBEGRID_PUBLIC_BASE_URL`.
 3. Point the platform health check at **`/readyz`** and route HTTPS to the app's
    port — it listens on `$PORT` if the platform injects one, else `8081`.
 

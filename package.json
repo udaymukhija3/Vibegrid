@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "next dev",
-    "dev:backend": "GOCACHE=$PWD/.cache/go-build go run ./backend/cmd/vibegrid",
+    "dev:backend": "VIBEGRID_ENV=development GOCACHE=$PWD/.cache/go-build go run ./backend/cmd/vibegrid",
     "migrate:backend": "GOCACHE=$PWD/.cache/go-build go run ./backend/cmd/vibegrid migrate",
     "build": "NEXT_TELEMETRY_DISABLED=1 VIBEGRID_STATIC_EXPORT=true next build",
     "start": "next start",

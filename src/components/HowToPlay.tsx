@@ -48,7 +48,7 @@ export function HowToPlay() {
         aria-label="How to play"
         title="How to play"
         onClick={() => setOpen(true)}
-        className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
+        className="vg-icon-button"
       >
         <HelpCircle aria-hidden size={18} />
       </button>
@@ -62,30 +62,30 @@ export function HowToPlay() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded border-2 border-ink bg-white p-5 shadow-[0_8px_0_#171717]"
+            className="vg-panel w-full max-w-md p-5"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black">How to play</h2>
+              <h2 className="text-2xl font-extrabold">How to play</h2>
               <button
                 type="button"
                 aria-label="Close"
                 onClick={() => setOpen(false)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded border border-neutral-300"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-card"
               >
                 <X aria-hidden size={18} />
               </button>
             </div>
 
-            <p className="mt-2 text-sm font-semibold text-neutral-700">
+            <p className="mt-2 text-sm font-medium text-neutral-700">
               Sort 16 tiles into 4 hidden groups. Each group shares a{" "}
               <span className="text-plum">vibe</span> — a theme, a mood, a very specific kind of person.
             </p>
 
-            <ul className="mt-3 grid gap-2 text-sm font-semibold text-neutral-700">
+            <ul className="mt-3 grid gap-2 text-sm font-medium text-neutral-700">
               {rules.map((rule) => (
                 <li key={rule} className="flex gap-2">
-                  <span aria-hidden className="font-black text-plum">
+                  <span aria-hidden className="font-semibold text-plum">
                     →
                   </span>
                   <span>{rule}</span>
@@ -93,22 +93,22 @@ export function HowToPlay() {
               ))}
             </ul>
 
-            <div className="mt-4 rounded border-2 border-ink bg-neutral-50 p-3">
-              <p className="text-xs font-black text-plum">Example</p>
+            <div className="mt-4 rounded-lg border border-line bg-white/70 p-3">
+              <p className="text-xs font-semibold text-plum">Example</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {exampleTiles.map((tile) => (
-                  <span key={tile} className="rounded border border-ink bg-white px-2 py-1 text-xs font-black">
+                  <span key={tile} className="rounded-lg border border-line bg-card px-2 py-1 text-xs font-semibold">
                     {tile}
                   </span>
                 ))}
               </div>
-              <p className="mt-2 text-sm font-bold">
+              <p className="mt-2 text-sm font-semibold">
                 <span aria-hidden className="text-plum">
                   →
                 </span>{" "}
                 Sunday reset
               </p>
-              <p className="mt-1 text-sm text-neutral-600">
+              <p className="mt-1 text-sm leading-6 text-neutral-600">
                 Tiles are built to mislead: a face mask reads as skincare, but here the vibe is a
                 lazy Sunday. Expect overlaps — that is the whole game.
               </p>
@@ -117,7 +117,7 @@ export function HowToPlay() {
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="mt-5 inline-flex h-11 w-full items-center justify-center rounded border-2 border-ink bg-mint font-black shadow-[0_4px_0_#171717]"
+              className="vg-button-primary mt-5 w-full"
             >
               Got it
             </button>

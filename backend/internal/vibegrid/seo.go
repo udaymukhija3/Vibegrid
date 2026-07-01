@@ -18,7 +18,7 @@ func (server *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	fmt.Fprintf(w,
 		"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nSitemap: %s/sitemap.xml\n",
-		requestBaseURL(r),
+		server.publicBaseURL,
 	)
 }
 
@@ -38,7 +38,10 @@ type sitemapURLSet struct {
 // puzzles are link-only by design and deliberately stay out of search indexes,
 // and future-dated puzzles are excluded because PublishedPuzzles filters them.
 func (server *Server) handleSitemap(w http.ResponseWriter, r *http.Request) {
-	base := requestBaseURL(r)
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
+	base := server.publicBaseURL
 	set := sitemapURLSet{Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9"}
 	for _, path := range []string{"/", "/archive", "/create", "/privacy", "/terms", "/policy"} {
 		set.URLs = append(set.URLs, sitemapURL{Loc: base + path})

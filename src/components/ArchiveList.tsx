@@ -69,15 +69,15 @@ export function ArchiveList() {
   }
 
   if (status === "loading") {
-    return <p className="mt-6 font-black text-neutral-600">Loading archive.</p>;
+    return <p className="mt-6 font-semibold text-neutral-600">Loading archive.</p>;
   }
 
   if (status === "error") {
-    return <p className="mt-6 font-black text-tomato">{message}</p>;
+    return <p className="mt-6 font-semibold text-tomato">{message}</p>;
   }
 
   if (puzzles.length === 0) {
-    return <p className="mt-6 font-black text-neutral-600">No puzzles in the archive yet.</p>;
+    return <p className="mt-6 font-semibold text-neutral-600">No puzzles in the archive yet.</p>;
   }
 
   return (
@@ -87,17 +87,17 @@ export function ArchiveList() {
           <Link
             key={puzzle.id}
             href={`/p/${puzzle.id}`}
-            className="grid grid-cols-[1fr_auto] items-center gap-4 rounded border-2 border-ink bg-white p-4 shadow-[0_6px_0_#171717] transition hover:-translate-y-0.5 hover:bg-yolk/20"
+            className="vg-panel grid grid-cols-[1fr_auto] items-center gap-4 p-4 transition hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/10 hover:shadow-lift"
           >
             <div>
-              <p className="text-lg font-black">VibeGrid #{puzzle.puzzleNumber}</p>
-              <p className="text-sm text-neutral-600">{puzzle.publishDate}</p>
+              <p className="text-lg font-extrabold">VibeGrid #{puzzle.puzzleNumber}</p>
+              <p className="text-sm font-medium text-neutral-600">{puzzle.publishDate}</p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="rounded bg-yolk px-3 py-1 text-xs font-black">
+              <span className="rounded-lg bg-yolk/50 px-3 py-1 text-xs font-semibold">
                 {formatDifficulty(puzzle.difficulty)}
               </span>
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded border-2 border-ink bg-white">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-card">
                 <Play aria-hidden size={16} />
               </span>
             </div>
@@ -110,7 +110,7 @@ export function ArchiveList() {
           type="button"
           onClick={loadMore}
           disabled={loadingMore}
-          className="mt-4 inline-flex h-11 w-full items-center justify-center rounded border-2 border-ink bg-white px-4 font-black shadow-[0_4px_0_#171717] disabled:opacity-50"
+          className="vg-button-secondary mt-4 w-full"
         >
           {loadingMore ? "Loading" : "Load more"}
         </button>

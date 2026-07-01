@@ -17,7 +17,7 @@
 
 VibeGrid is a daily word-grouping game with real product plumbing behind it:
 guest attempts, server-authoritative guessing, spoiler-safe sharing, community
-puzzle links, admin publishing, moderation, analytics, and production-shaped
+puzzle submissions, admin publishing, moderation, analytics, and production-shaped
 observability. It ships as one Go binary that serves an exported Next.js front
 end and the API from the same origin.
 
@@ -36,11 +36,11 @@ and monitoring templates are all present in the repo.
   URL can be opened in a private window or second browser to show another guest
   attempt without sign-in or setup.
 - **Postgres unlocks the full product:** durable attempts, stats, streaks,
-  community puzzle creation, admin publishing, reports, appeals, moderation, and
+  community puzzle review, admin publishing, reports, appeals, moderation, and
   audit logs require `DATABASE_URL`.
 - **Deployment scaffolding is ready:** the repo includes a multi-stage
   Node+Go `Dockerfile`, `fly.toml`, `render.yaml`, embedded SQL migrations,
-  `/healthz`, `/readyz`, `/metrics`, structured logs, alert rules, and a starter
+  `/healthz`, `/readyz`, bearer-protected `/metrics`, structured logs, alert rules, and a starter
   Grafana dashboard.
 - **Permanent public hosting is not recorded here yet:** treat this as a
   deploy-ready portfolio project until a real production URL, managed Postgres,
@@ -52,14 +52,14 @@ and monitoring templates are all present in the repo.
 | --- | --- |
 | Player game | Daily 4x4 grid, Easy/Medium/Hard modes, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
 | Game rules | Go validates guesses server-side. The browser receives tile ids/text and vibe hints, but never receives tile-to-group answer mappings. |
-| Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts. |
+| Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts for up to 30 days. |
 | Daily content | Explicitly scheduled editorial puzzles win for their publish date. Empty days are filled by a deterministic evergreen generator that composes a date-specific board from curated bank groups, so the daily keeps changing without a cron job or manual authoring every night. |
 | Archive/share links | Published editorial puzzles appear in `/archive`; any playable puzzle can be opened at `/p/<id>`. |
-| Community puzzles | `/create` lets users build a 4x4 puzzle from scratch or from starter packs and receive a shareable `/p/<id>` link. Requires Postgres. |
-| Admin desk | `/admin` supports password-backed admin login, draft creation, publish-by-date, archive/reinstate, and per-puzzle analytics. Requires Postgres and admin env vars. |
+| Community puzzles | `/create` accepts a 4x4 puzzle from scratch or starter packs, then holds it for admin review. Only approved submissions receive a playable `/p/<id>` link. Requires Postgres. |
+| Admin desk | `/admin` supports password-backed admin login, queue-health coverage, draft creation, exact board preview, publish-by-date, archive/reinstate, and per-puzzle analytics. Requires Postgres and admin env vars. |
 | Moderation | Players can report puzzles without logging in; admins can review reports, archive/reinstate content, handle appeals, and inspect an audit log. Requires Postgres. |
 | Analytics | Public completion stats are computed from attempts/guesses and shown only after the player finishes and enough players exist; admins also get wrong-guess heatmaps. |
-| Operations | Health/readiness probes, Prometheus metrics, structured request logs, route-aware security headers, rate limits, body caps, Docker/Fly/Render config, and deploy smoke scripts are checked in. |
+| Operations | Health/readiness probes, bearer-protected Prometheus metrics, structured request logs, route-aware security headers, rate limits, body caps, retention cleanup, Docker/Fly/Render config, and deploy smoke scripts are checked in. |
 
 ## Architecture
 
@@ -73,6 +73,9 @@ one origin, which keeps cookies, CORS, and deployment simpler.
 
 Important implementation points:
 
+- [AGENTS.md](AGENTS.md) is the short handoff for future Codex/new-chat work:
+  current state, verification commands, hardening decisions, and manual deploy
+  tasks.
 - `backend/internal/vibegrid` owns game rules, sessions, attempts, puzzle stores,
   admin routes, moderation, stats, metrics, and SEO helpers.
 - `backend/db/migrations` contains embedded SQL migrations. `vibegrid migrate`
@@ -132,7 +135,8 @@ See [.env.example](.env.example) for environment variables such as
 `DATABASE_URL`, `VIBEGRID_ADMIN_PASSWORD`,
 `VIBEGRID_ADMIN_SESSION_SECRET`, `VIBEGRID_ADMIN_TOKEN`,
 `VIBEGRID_ALLOWED_ORIGINS`, `VIBEGRID_SECURE_COOKIES`,
-`VIBEGRID_TIMEZONE`, and `VIBEGRID_MIGRATE_ON_BOOT`.
+`VIBEGRID_TIMEZONE`, `VIBEGRID_MIGRATE_ON_BOOT`, `VIBEGRID_PUBLIC_BASE_URL`,
+`VIBEGRID_METRICS_TOKEN`, and `VIBEGRID_TRUSTED_PROXY_CIDRS`.
 
 ## Routes To Try
 
@@ -141,13 +145,13 @@ See [.env.example](.env.example) for environment variables such as
 - `/demo/<room>` - plays that seeded room; open the same link in a private
   window or second browser to simulate another guest.
 - `/archive` - previous editorial daily puzzles.
-- `/create` - public puzzle builder; returns a shareable `/p/<id>` link.
+- `/create` - public puzzle builder; submits a grid for admin approval.
 - `/p/<id>` - play a puzzle by link.
-- `/admin` - Editor Desk for drafts, publishing, archive/reinstate, analytics,
-  reports, appeals, and moderation audit logs.
+- `/admin` - Editor Desk for queue health, drafts, board previews, publishing,
+  archive/reinstate, analytics, reports, appeals, and moderation audit logs.
 - `/policy`, `/terms`, `/privacy` - community rules and launch policy copy.
 - `/healthz`, `/readyz`, `/metrics`, `/robots.txt`, `/sitemap.xml` - operational
-  and SEO endpoints served by the Go binary.
+  and SEO endpoints served by the Go binary. `/metrics` requires a bearer token.
 
 ## Deployment Status
 
@@ -204,8 +208,9 @@ GitHub Actions is configured to run:
 - `npm ci`, lint, typecheck, Vitest, and the static Next.js build.
 
 The deploy smoke script checks the runtime routes that matter for a public demo:
-play, archive, create/share where supported, policy pages, health/readiness,
-metrics, robots/sitemap, and OG metadata.
+play, archive, pending community submission where supported, policy pages,
+health/readiness, protected metrics when given `--metrics-token`, robots/sitemap,
+and OG metadata.
 
 ## Known Gaps
 
@@ -232,7 +237,7 @@ It is intentionally specific and avoids claiming a public production launch.
 **Short portfolio title:** VibeGrid - daily semantic grouping puzzle.
 
 **One-sentence summary:** Built a Go/Postgres/Next.js daily puzzle app with
-server-authoritative game rules, guest attempt persistence, shareable community
+server-authoritative game rules, guest attempt persistence, reviewed community
 puzzles, admin publishing, moderation, analytics, CI, Docker deployment
 scaffolding, and Prometheus-style observability.
 
@@ -244,8 +249,9 @@ observability, product engineering, moderation tooling.
 - Server-side validation prevents the browser from receiving the answer key.
 - Postgres attempt storage uses transactional/idempotent guess handling so
   refreshes, retries, and double-clicks do not corrupt game state.
-- The project includes a full product surface, not only gameplay: create/share,
-  admin publishing, moderation, reports/appeals, analytics, policies, and ops
+- The project includes a full product surface, not only gameplay: reviewed
+  community submissions, admin publishing, moderation, reports/appeals,
+  analytics, policies, and ops
   endpoints.
 - The deploy path is single-container and same-origin: the Go binary serves the
   exported Next.js frontend and API.

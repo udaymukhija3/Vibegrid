@@ -1,6 +1,6 @@
 # VibeGrid — Launch & Production Sprint Plan
 
-Status anchor: the app is **feature-complete locally** (play / create+share / admin
+Status anchor: the app is **feature-complete locally** (play / create→review→share / admin
 author / stats / moderation) and **pushed to GitHub** (PRs #1, #2 merged, CI wired),
 but **not yet deployed to a permanent host**. This document turns the remaining
 work in [`production-readiness.md`](production-readiness.md) and
@@ -64,7 +64,7 @@ listed for completeness.)
 | D4 | **Optional accounts trigger**: when to add cross-device identity | Sprint 8 | Only after retention or cross-device streak demand is proven |
 | D5 | **Community numbering**: shared `puzzle_number` vs. separate label | Sprint 2 (cheap) | Separate "Community" label in share text |
 | D6 | Fairness check approach: manual red-herring list vs. embeddings-assisted | Sprint 7 | Manual first, embeddings later (sanctioned ML story) |
-| D7 | Anonymous-attempt **data-retention** window | Sprint 3 | 13 months, then aggregate-and-purge |
+| D7 | Anonymous-attempt **data-retention** window | Sprint 3 | 30 days, then automatically purge |
 | ✓ | Stats min-N gate (=20) | — | Done (`MIN_STATS_PLAYERS`) |
 | ✓ | Real-time multiplayer / adaptive-difficulty bandit | — | Out of scope; async links cover v1 |
 
@@ -122,11 +122,12 @@ the single biggest piece of "waiting to be shipped."
 **Acceptance criteria**
 - `https://<domain>/` serves the daily; a guess + refresh preserves the attempt.
 - `scripts/smoke.mjs` passes against the production URL (`npm run smoke:deploy`).
-- `/metrics` scrapes; `/readyz` returns 200 with DB attached.
+- `/metrics` scrapes with its Bearer token; `/readyz` returns 200 with DB attached.
 - Admin can log in at `/admin` over HTTPS with the production password.
 
 **Testing / verification:** run the smoke script against prod; manually drive one
-full play + one create-and-share; check `/metrics` and logs.
+full play + one pending community submission, admin approval, then share; check
+authenticated `/metrics` and logs.
 
 **Rollback:** re-promote the previous deploy (none yet — so: keep the container
 image tag; Render/Fly one-click rollback once a second deploy exists).
@@ -228,7 +229,7 @@ backups are real, dependencies are scanned, retention is defined, abuse limits h
 
 **Why now:** once real users (and UGC) exist, a lost DB or a known CVE is an
 existential, not cosmetic, problem. Most of the hard surface (rate limiting,
-moderation, parameterized queries, security headers, signed admin session) is
+moderation, parameterized queries, security headers, revocable admin session) is
 already built — this sprint *confirms and operationalizes* it.
 
 **Decisions:** D7 (retention window).
@@ -238,9 +239,9 @@ already built — this sprint *confirms and operationalizes* it.
   the runbook and do one **test restore**.
 - **Dependency scanning in CI:** `govulncheck ./...` for Go; `npm audit`
   (+ Dependabot or Renovate) for the frontend. Fail CI on high severity.
-- **Data-retention policy (D7):** scheduled job (or documented manual step) to
-  aggregate-then-purge anonymous attempts older than the chosen window; publish
-  the policy text alongside `/privacy`.
+- **Data-retention policy (D7):** implemented as a bounded cleanup worker that
+  purges anonymous attempts older than 30 days, paired with a matching guest
+  cookie lifetime and published `/privacy` text.
 - **Confirm & document** parameterized queries everywhere (they are) and the
   admin-auth threat model; add a load/abuse note for the Postgres rate limiter.
 - Wire one **external error/log drain** (provider creds) so 5xx alerts in
@@ -249,7 +250,7 @@ already built — this sprint *confirms and operationalizes* it.
 **Acceptance criteria**
 - A test restore brings back a known row.
 - CI fails on a seeded high-severity vuln; passes clean otherwise.
-- Attempts past the retention window are purged/aggregated by an automated step.
+- Attempts past the 30-day retention window are purged by an automated step.
 
 **Testing:** CI job demonstration; restore drill documented with timing.
 
@@ -270,7 +271,8 @@ concurrency.
 on manual checks. Hardening the test pyramid now pays back every later sprint.
 
 **Scope**
-- **Playwright** browser e2e for the three flows (play→win/lose, create→share,
+- **Playwright** browser e2e for the three flows (play→win/lose,
+  create→review→approve→share,
   admin login→publish); run headless in CI. (`scripts/e2e.mjs`/`smoke.mjs` stay as
   the fast route-level layer.)
 - **Component tests** (React Testing Library) for `VibeGridGame` (selection,
@@ -327,33 +329,41 @@ calibration query covered by a stats test.
 
 ## Sprint 6 — Content sustainability (the #1 long-term product risk)
 
-**Slice goal:** authoring a good puzzle every day is sustainable — you can preview
-a draft as a player and schedule a queue, so the daily never goes dark by accident.
+**Slice goal:** authoring a good puzzle every day is sustainable — admins can
+preview the exact board before publish, see queue-health coverage, and use later
+calendar refinements to keep the daily from going dark by accident.
 
-**Why now:** a daily game lives or dies on cadence. Today admins **publish blind**
-(no preview) and there's **no queue/calendar** — Sprint 2's empty state makes a
-gap *visible*, this sprint makes it *avoidable*.
+**Why now:** a daily game lives or dies on cadence. Admins no longer publish
+blind — `/admin` has an authenticated exact-board preview with answer key — and
+the admin desk now surfaces scheduled editorial days, evergreen fallback days,
+draft depth, and pending community review. A richer scheduling calendar can still
+make the workflow smoother.
 
 **Scope**
-- **Draft preview mode:** "play this draft as a player" before publishing
-  (admin-only route rendering `VibeGridGame` against an unpublished draft;
-  excluded from public today/archive — reuse the `origin`/`status` gating).
-- **Scheduling / queue calendar** in the Editor Desk: see which dates have a
-  published puzzle, draft depth, and gaps ahead; schedule a draft to a future
-  `publish_date`. Pairs directly with Sprint 2's strict-daily contract.
+- **Draft preview mode:** shipped as an admin-only exact public-board preview
+  with answer key. It does not create public attempts or weaken
+  `origin`/`status` gating.
+- **Queue-health view:** shipped in the Editor Desk. It shows which upcoming
+  dates have editorial puzzles, which rely on evergreen fallback, current draft
+  depth, and pending community review.
+- **Richer scheduling calendar:** remaining refinement for date drag/drop and
+  a denser future queue view. Publishing to a future `publish_date` already
+  exists.
 - (Stretch, optional) **AI-assisted draft** — generate candidate groups/tiles for
   *human review* (never auto-publish). The sanctioned, product-safe use of AI here;
   not the cut difficulty bandit.
 
 **Acceptance criteria**
-- An admin can open a draft, play it fully, then publish — without it ever being
-  publicly reachable pre-publish.
-- The calendar shows gaps for the next N days and lets you schedule into them.
+- An admin can open a draft preview, inspect the public tile order and answer
+  key, then publish — without it ever being publicly reachable pre-publish.
+- The queue-health view shows the next launch window and flags any day with no
+  editorial puzzle and no evergreen fallback.
 
-**Testing:** handler tests that drafts are preview-reachable for admins and 404 for
-the public; scheduling sets `publish_date` and shows in the calendar.
+**Testing:** handler tests that drafts are preview-reachable for admins and 404
+for the public; queue-health tests cover server-timezone dates, editorial
+coverage, and evergreen fallback.
 
-**DoD:** no more blind publishes; a visible queue with gap warnings.
+**DoD:** no more blind publishes; visible queue-health coverage with gap warnings.
 
 ---
 

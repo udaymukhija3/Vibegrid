@@ -54,7 +54,7 @@ func newTestStore(t *testing.T) *PostgresAttemptStore {
 
 	// Truncating puzzles cascades to groups, tiles, attempts, and guesses, giving
 	// each test a clean slate regardless of what other tests left behind.
-	if _, err := database.Exec(`truncate rate_limit_hits, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	// Attempts reference puzzles by foreign key, so the seed puzzle must exist

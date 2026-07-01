@@ -10,7 +10,7 @@ export default function CommunityPolicyPage() {
     <PolicyPage
       eyebrow="Community rules"
       title="Keep shared grids fair and safe"
-      intro="Community puzzles are made by players and shared by direct link. These rules explain what can be reported, removed, appealed, or reinstated."
+      intro="Community puzzles are submitted by players, reviewed by an administrator, and then shared by direct link. These rules explain what can be reported, removed, appealed, or reinstated."
       sections={[
         {
           title: "What is not allowed",
@@ -32,7 +32,7 @@ export default function CommunityPolicyPage() {
         {
           title: "Reports and review",
           body: [
-            "Players can report a grid from the puzzle screen without logging in. Reports include a reason code, optional details, the puzzle id, and an optional contact field.",
+            "Every submitted grid is reviewed before it can be played. Players can report an approved grid from the puzzle screen without logging in. Reports include a reason code, optional details, the puzzle id, and an optional contact field.",
             "Moderators can dismiss a report, archive the grid, leave a resolution note, and review the audit log for each moderation action."
           ]
         },

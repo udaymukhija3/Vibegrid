@@ -39,3 +39,22 @@ func TestBuildDepsKeepsNoDatabaseModeForLocalRuns(t *testing.T) {
 		t.Fatal("no-database mode should not expose database collectors")
 	}
 }
+
+func TestProductionConfigHelpersRejectUnsafeValues(t *testing.T) {
+	environment, err := runtimeEnvironment("")
+	if err != nil || environment != "production" {
+		t.Fatalf("unset environment must default to production, got %q, %v", environment, err)
+	}
+	if _, err := validatedPublicBaseURL("http://vibegrid.example", true); err == nil {
+		t.Fatal("production must reject a non-HTTPS public URL")
+	}
+	if _, err := validatedPublicBaseURL("https://vibegrid.example/not-an-origin", true); err == nil {
+		t.Fatal("production must reject a public URL with a path")
+	}
+	if err := validateTrustedProxyCIDRs([]string{"not-a-cidr"}); err == nil {
+		t.Fatal("invalid trusted proxy CIDR must fail startup")
+	}
+	if err := validateTrustedProxyCIDRs([]string{"10.0.0.0/8", "2001:db8::/32"}); err != nil {
+		t.Fatalf("valid trusted proxy CIDRs rejected: %v", err)
+	}
+}

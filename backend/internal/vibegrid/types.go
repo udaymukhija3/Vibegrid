@@ -10,11 +10,13 @@ const (
 	DifficultyHard   Difficulty = "HARD"
 
 	PuzzleStatusDraft     PuzzleStatus = "DRAFT"
+	PuzzleStatusPending   PuzzleStatus = "PENDING"
 	PuzzleStatusPublished PuzzleStatus = "PUBLISHED"
 	PuzzleStatusArchived  PuzzleStatus = "ARCHIVED"
 
 	// OriginEditorial puzzles are the curated daily/archive set. OriginCommunity
-	// puzzles are user-created and playable only by direct link.
+	// puzzles are user-created, held for review, and playable only by direct link
+	// after approval.
 	OriginEditorial PuzzleOrigin = "EDITORIAL"
 	OriginCommunity PuzzleOrigin = "COMMUNITY"
 
@@ -123,6 +125,5 @@ type GuessResponse struct {
 	Attempt        *AttemptSnapshot `json:"attempt,omitempty"`
 	OneAway        bool             `json:"oneAway,omitempty"`
 	RevealedGroups []SolvedGroup    `json:"revealedGroups,omitempty"`
-	SessionID      string           `json:"sessionId,omitempty"`
 	Error          string           `json:"error,omitempty"`
 }

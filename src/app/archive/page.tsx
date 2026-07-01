@@ -8,15 +8,15 @@ export default function ArchivePage() {
       <div className="mx-auto max-w-3xl">
         <Link
           href="/"
-          className="inline-flex h-10 items-center gap-2 rounded border border-ink bg-white px-3 text-sm font-semibold shadow-[0_4px_0_#171717]"
+          className="vg-button-secondary"
         >
           <ArrowLeft aria-hidden size={16} />
           Today
         </Link>
 
-        <header className="mt-8 border-b-4 border-ink pb-5">
-          <p className="text-sm font-bold text-tomato">Archive</p>
-          <h1 className="mt-2 text-4xl font-black sm:text-5xl">Previous grids</h1>
+        <header className="mt-8 border-b border-line pb-5">
+          <p className="text-sm font-semibold text-tomato">Archive</p>
+          <h1 className="vg-page-title mt-2">Previous grids</h1>
         </header>
 
         <ArchiveList />

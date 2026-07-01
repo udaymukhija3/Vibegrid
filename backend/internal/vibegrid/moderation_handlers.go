@@ -11,6 +11,7 @@ const (
 	maxReportDetailsLength = 1000
 	maxAppealMessageLength = 1000
 	maxContactLength       = 200
+	maxModerationBodyBytes = 8 << 10 // 8 KiB
 )
 
 var validReportReasons = map[string]bool{
@@ -53,9 +54,9 @@ type auditLogResponse struct {
 // report/appeal endpoints so a single client cannot flood the moderation queue.
 // It writes the response and returns false when the caller should stop.
 func (server *Server) allowModerationWrite(w http.ResponseWriter, r *http.Request, keyPrefix, limitMessage string) bool {
-	decision, err := server.checkRateLimit(r.Context(), keyPrefix+clientIP(r), reportRateLimit, reportRateWindow, server.reportLimiter)
+	decision, err := server.checkRateLimit(r.Context(), keyPrefix+server.clientIP(r), reportRateLimit, reportRateWindow, server.reportLimiter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not check request limits.")
+		writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
 		return false
 	}
 	if !decision.allowed {
@@ -75,7 +76,7 @@ func (server *Server) handleCreateReport(w http.ResponseWriter, r *http.Request)
 	}
 
 	var input ReportInput
-	if !decodeJSONBody(w, r, maxAdminBodyBytes, &input, "That report payload is not valid JSON.") {
+	if !decodeJSONBody(w, r, maxModerationBodyBytes, &input, "That report payload is not valid JSON.") {
 		return
 	}
 	input.PuzzleID = strings.TrimSpace(input.PuzzleID)
@@ -110,7 +111,7 @@ func (server *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request)
 	}
 
 	var input AppealInput
-	if !decodeJSONBody(w, r, maxAdminBodyBytes, &input, "That appeal payload is not valid JSON.") {
+	if !decodeJSONBody(w, r, maxModerationBodyBytes, &input, "That appeal payload is not valid JSON.") {
 		return
 	}
 	input.PuzzleID = strings.TrimSpace(input.PuzzleID)
@@ -168,7 +169,7 @@ func (server *Server) handleAdminResolveReport(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	report, err := server.moderation.ResolveReport(r.Context(), reportID, status, note, adminActor(r))
+	report, err := server.moderation.ResolveReport(r.Context(), reportID, status, note, server.adminActor(r))
 	if err != nil {
 		if errors.Is(err, ErrReportNotFound) {
 			writeError(w, http.StatusNotFound, "Report not found.")
@@ -186,7 +187,7 @@ func (server *Server) handleAdminResolveReport(w http.ResponseWriter, r *http.Re
 		_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
 			ReportID: report.ID,
 			PuzzleID: report.PuzzleID,
-			Actor:    adminActor(r),
+			Actor:    server.adminActor(r),
 			Action:   "PUZZLE_ARCHIVED_FROM_REPORT",
 			Reason:   report.Reason,
 			Note:     note,
@@ -226,7 +227,7 @@ func (server *Server) handleAdminResolveAppeal(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	appeal, err := server.moderation.ResolveAppeal(r.Context(), appealID, note, adminActor(r))
+	appeal, err := server.moderation.ResolveAppeal(r.Context(), appealID, note, server.adminActor(r))
 	if err != nil {
 		if errors.Is(err, ErrAppealNotFound) {
 			writeError(w, http.StatusNotFound, "Appeal not found.")
@@ -244,7 +245,7 @@ func (server *Server) handleAdminResolveAppeal(w http.ResponseWriter, r *http.Re
 		_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
 			AppealID: appeal.ID,
 			PuzzleID: appeal.PuzzleID,
-			Actor:    adminActor(r),
+			Actor:    server.adminActor(r),
 			Action:   "PUZZLE_REINSTATED_FROM_APPEAL",
 			Note:     note,
 		})
@@ -269,6 +270,9 @@ func validateReport(input ReportInput) error {
 	if input.PuzzleID == "" {
 		return errors.New("Puzzle id is required.")
 	}
+	if !validPuzzleID(input.PuzzleID) {
+		return errors.New("Puzzle id is not valid.")
+	}
 	if !validReportReasons[input.Reason] {
 		return errors.New("Pick a valid report reason.")
 	}
@@ -284,6 +288,9 @@ func validateReport(input ReportInput) error {
 func validateAppeal(input AppealInput) error {
 	if input.PuzzleID == "" {
 		return errors.New("Puzzle id is required.")
+	}
+	if !validPuzzleID(input.PuzzleID) {
+		return errors.New("Puzzle id is not valid.")
 	}
 	if input.Message == "" {
 		return errors.New("Tell us why this grid should be reviewed.")

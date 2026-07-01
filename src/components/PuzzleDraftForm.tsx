@@ -21,7 +21,7 @@ export const emptyDraft = (): DraftPuzzleInput => ({
 
 // PuzzleDraftForm renders the four-group / sixteen-tile authoring grid and owns
 // its own input state. It is reused by the admin Editor Desk and the public
-// "make your own" page; the parent supplies what happens on submit.
+// "make your own" page; the parent supplies what happens after submission.
 export function PuzzleDraftForm({
   onSubmit,
   submitLabel,
@@ -75,15 +75,15 @@ export function PuzzleDraftForm({
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-black">Build a grid</h2>
-        <label className="flex items-center gap-2 text-sm font-black">
+        <h2 className="text-lg font-extrabold">Build a grid</h2>
+        <label className="flex items-center gap-2 text-sm font-semibold">
           Difficulty
           <select
             value={draft.difficulty}
             onChange={(event) =>
               setDraft((current) => ({ ...current, difficulty: event.target.value as Difficulty }))
             }
-            className="h-9 rounded border-2 border-ink px-2 font-semibold"
+            className="vg-input h-9 font-medium"
           >
             <option value="EASY">Easy</option>
             <option value="MEDIUM">Medium</option>
@@ -94,8 +94,8 @@ export function PuzzleDraftForm({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         {draft.groups.map((group, groupIndex) => (
-          <fieldset key={groupIndex} className="rounded border-2 border-ink p-3">
-            <legend className="px-1 text-xs font-black text-neutral-500">
+          <fieldset key={groupIndex} className="rounded-lg border border-line bg-white/60 p-3">
+            <legend className="px-1 text-xs font-semibold text-neutral-500">
               Group {groupIndex + 1}
             </legend>
             <input
@@ -103,14 +103,14 @@ export function PuzzleDraftForm({
               onChange={(event) => updateGroup(groupIndex, "name", event.target.value)}
               maxLength={MAX_GROUP_NAME_LENGTH}
               placeholder="Category name (e.g. Corporate séance)"
-              className="h-10 w-full rounded border border-neutral-300 px-2 font-bold"
+              className="vg-input h-10 w-full font-semibold"
             />
             <input
               value={group.explanation}
               onChange={(event) => updateGroup(groupIndex, "explanation", event.target.value)}
               maxLength={MAX_GROUP_EXPLANATION_LENGTH}
               placeholder="One-line explanation shown on reveal"
-              className="mt-2 h-10 w-full rounded border border-neutral-300 px-2 text-sm"
+              className="vg-input mt-2 h-10 w-full text-sm"
             />
             <div className="mt-2 grid grid-cols-2 gap-2">
               {group.tiles.map((tile, tileIndex) => (
@@ -120,7 +120,7 @@ export function PuzzleDraftForm({
                   onChange={(event) => updateTile(groupIndex, tileIndex, event.target.value)}
                   maxLength={MAX_TILE_TEXT_LENGTH}
                   placeholder={`Tile ${tileIndex + 1}`}
-                  className="h-10 w-full rounded border border-neutral-300 px-2 text-sm font-semibold"
+                  className="vg-input h-10 w-full text-sm font-medium"
                 />
               ))}
             </div>
@@ -128,13 +128,13 @@ export function PuzzleDraftForm({
         ))}
       </div>
 
-      {error && <p className="mt-3 text-sm font-bold text-tomato">{error}</p>}
+      {error && <p className="mt-3 text-sm font-semibold text-tomato">{error}</p>}
 
       <button
         type="button"
         disabled={busy}
         onClick={submit}
-        className="mt-4 inline-flex h-11 items-center justify-center rounded border-2 border-ink bg-yolk px-5 font-black shadow-[0_4px_0_#171717] disabled:opacity-50"
+        className="vg-button-primary mt-4 bg-yolk"
       >
         {busy ? "Saving…" : submitLabel}
       </button>

@@ -3,9 +3,7 @@ package vibegrid
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -16,13 +14,16 @@ type CommunityPuzzleStore interface {
 	CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (Puzzle, error)
 }
 
-// createdPuzzleResponse is the minimal payload a creator needs to share their
-// puzzle: an id for the play link and the assigned number.
+// createdPuzzleResponse confirms receipt of a community submission. Community
+// content is deliberately not public until an admin approves it.
 type createdPuzzleResponse struct {
-	OK           bool   `json:"ok"`
-	ID           string `json:"id"`
-	PuzzleNumber int    `json:"puzzleNumber"`
+	OK           bool         `json:"ok"`
+	ID           string       `json:"id"`
+	PuzzleNumber int          `json:"puzzleNumber"`
+	Status       PuzzleStatus `json:"status"`
 }
+
+const maxCommunityBodyBytes = 16 << 10 // 16 KiB
 
 // rateLimiter is a small in-memory fixed-window limiter keyed by client. It is
 // enough to blunt casual abuse of the public create endpoint; a multi-instance
@@ -50,13 +51,12 @@ func (server *Server) checkRateLimit(ctx context.Context, key string, limit int,
 		return server.rateLimits.Check(ctx, key, limit, window, server.clock())
 	}
 	if fallback != nil {
-		return fallback.check(key), nil
+		return fallback.check(key, server.clock()), nil
 	}
 	return rateLimitDecision{allowed: true}, nil
 }
 
-func (limiter *rateLimiter) check(key string) rateLimitDecision {
-	now := time.Now()
+func (limiter *rateLimiter) check(key string, now time.Time) rateLimitDecision {
 	cutoff := now.Add(-limiter.window)
 
 	limiter.mu.Lock()
@@ -103,19 +103,6 @@ func (limiter *rateLimiter) pruneLocked(cutoff, now time.Time) {
 	limiter.lastPrune = now
 }
 
-func clientIP(r *http.Request) string {
-	for _, header := range []string{"Fly-Client-IP", "X-Real-IP"} {
-		value := strings.TrimSpace(r.Header.Get(header))
-		if ip := net.ParseIP(value); ip != nil {
-			return ip.String()
-		}
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
-}
-
 func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Request) {
 	if server.community == nil {
 		writeError(w, http.StatusServiceUnavailable, "Community puzzles require a database.")
@@ -123,9 +110,9 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if server.createLimiter != nil || server.rateLimits != nil {
-		decision, err := server.checkRateLimit(r.Context(), "create:"+clientIP(r), 20, time.Hour, server.createLimiter)
+		decision, err := server.checkRateLimit(r.Context(), "create:"+server.clientIP(r), 20, time.Hour, server.createLimiter)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not check request limits.")
+			writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
 			return
 		}
 		if !decision.allowed {
@@ -135,7 +122,7 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 	}
 
 	var input AdminPuzzleInput
-	if !decodeJSONBody(w, r, maxAdminBodyBytes, &input, "That puzzle payload is not valid JSON.") {
+	if !decodeJSONBody(w, r, maxCommunityBodyBytes, &input, "That puzzle payload is not valid JSON.") {
 		return
 	}
 
@@ -158,10 +145,11 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createdPuzzleResponse{
+	writeJSON(w, http.StatusAccepted, createdPuzzleResponse{
 		OK:           true,
 		ID:           puzzle.ID,
 		PuzzleNumber: puzzle.PuzzleNumber,
+		Status:       puzzle.Status,
 	})
 }
 
@@ -169,6 +157,9 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 // shuffled, group membership hidden). This is the play-by-link entry point for
 // community puzzles, and works for editorial puzzles too.
 func (server *Server) handleGetPuzzle(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	puzzleID := r.PathValue("id")
 	if puzzleID == "" {
 		writeError(w, http.StatusBadRequest, "Puzzle id is required.")

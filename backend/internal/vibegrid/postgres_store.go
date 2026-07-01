@@ -169,6 +169,15 @@ func (store *PostgresAttemptStore) GetAttempt(ctx context.Context, puzzle Puzzle
 func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
+	if err := validateGuessRequest(request); err != nil {
+		return GuessSubmission{}, err
+	}
+	// Membership validation must happen before ensureAttempt. Otherwise a caller
+	// can manufacture unbounded empty rows by sending a fresh session cookie with
+	// an invalid tile id.
+	if _, err := EvaluateGuess(puzzle, request.SelectedTileIDs, map[string]bool{}); err != nil {
+		return GuessSubmission{}, err
+	}
 
 	if err := store.ensureAttempt(ctx, puzzle.ID, sessionID, now); err != nil {
 		return GuessSubmission{}, err
@@ -246,6 +255,32 @@ func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzl
 	}
 
 	return buildSubmission(puzzle, state, storedGuess), nil
+}
+
+// PruneExpired removes old anonymous game history in bounded batches. The caller
+// schedules this outside the request path so a cleanup backlog never delays a
+// player's guess.
+func (store *PostgresAttemptStore) PruneExpired(ctx context.Context, before time.Time, limit int) (int64, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+	if limit <= 0 || limit > 10_000 {
+		limit = 1_000
+	}
+	result, err := store.db.ExecContext(ctx,
+		`delete from attempts
+		 where id in (
+		   select id from attempts where started_at < $1 order by started_at asc limit $2
+		 )`,
+		before.UTC(), limit,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("prune expired attempts: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned attempts: %w", err)
+	}
+	return deleted, nil
 }
 
 // ensureAttempt inserts the attempt row if it does not exist. The unique key on

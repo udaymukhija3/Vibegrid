@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/http";
 import type {
+  AdminPuzzlePreview,
+  AdminQueueHealth,
   AdminPuzzle,
   DraftPuzzleInput,
   ModerationAction,
@@ -8,11 +10,35 @@ import type {
   ModerationReport
 } from "@/types/puzzle";
 
+const tileSchema = z.object({
+  id: z.string(),
+  text: z.string()
+});
+
+const publicPuzzleSchema = z.object({
+  id: z.string(),
+  puzzleNumber: z.number(),
+  publishDate: z.string().optional(),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
+  tiles: z.array(tileSchema),
+  groupCount: z.number(),
+  mistakesAllowed: z.number()
+});
+
+const solvedGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  explanation: z.string(),
+  colorIndex: z.number(),
+  tileIds: z.array(z.string()),
+  tiles: z.array(tileSchema)
+});
+
 const adminPuzzleSchema = z.object({
   id: z.string(),
   puzzleNumber: z.number(),
   publishDate: z.string(),
-  status: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]),
+  status: z.enum(["DRAFT", "PENDING", "PUBLISHED", "ARCHIVED"]),
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
   origin: z.enum(["EDITORIAL", "COMMUNITY"]),
   groups: z.array(
@@ -21,10 +47,31 @@ const adminPuzzleSchema = z.object({
       name: z.string(),
       explanation: z.string(),
       colorIndex: z.number(),
-      tiles: z.array(z.object({ id: z.string(), text: z.string() }))
+      tiles: z.array(tileSchema)
     })
   )
 }) satisfies z.ZodType<AdminPuzzle>;
+
+const adminPuzzlePreviewSchema = z.object({
+  puzzle: publicPuzzleSchema,
+  groups: z.array(solvedGroupSchema)
+}) satisfies z.ZodType<AdminPuzzlePreview>;
+
+const queueHealthSchema = z.object({
+  today: z.string(),
+  days: z.array(
+    z.object({
+      date: z.string(),
+      coverage: z.enum(["EDITORIAL", "EVERGREEN", "UNSCHEDULED"]),
+      puzzleId: z.string().optional(),
+      puzzleNumber: z.number().optional()
+    })
+  ),
+  drafts: z.number(),
+  pendingCommunity: z.number(),
+  scheduledEditorial: z.number(),
+  evergreenFallbacks: z.number()
+}) satisfies z.ZodType<AdminQueueHealth>;
 
 const errorBodySchema = z.object({ error: z.string() });
 const adminSessionSchema = z.object({
@@ -93,6 +140,11 @@ export async function fetchAdminPuzzles(): Promise<AdminPuzzle[]> {
   return z.array(adminPuzzleSchema).parse(await adminFetch("/api/admin/puzzles"));
 }
 
+export async function fetchQueueHealth(days = 14): Promise<AdminQueueHealth> {
+  const params = new URLSearchParams({ days: String(days) });
+  return queueHealthSchema.parse(await adminFetch(`/api/admin/queue-health?${params.toString()}`));
+}
+
 export async function createDraftPuzzle(input: DraftPuzzleInput): Promise<AdminPuzzle> {
   return adminPuzzleSchema.parse(
     await adminFetch("/api/admin/puzzles", {
@@ -109,6 +161,12 @@ export async function publishPuzzle(puzzleId: string, publishDate: string): Prom
   });
 }
 
+export async function approveCommunityPuzzle(puzzleId: string): Promise<void> {
+  await adminFetch(`/api/admin/puzzles/${puzzleId}/approve`, {
+    method: "POST"
+  });
+}
+
 export async function archivePuzzle(puzzleId: string): Promise<void> {
   await adminFetch(`/api/admin/puzzles/${puzzleId}/archive`, {
     method: "POST"
@@ -119,6 +177,10 @@ export async function reinstatePuzzle(puzzleId: string): Promise<void> {
   await adminFetch(`/api/admin/puzzles/${puzzleId}/reinstate`, {
     method: "POST"
   });
+}
+
+export async function fetchPuzzlePreview(puzzleId: string): Promise<AdminPuzzlePreview> {
+  return adminPuzzlePreviewSchema.parse(await adminFetch(`/api/admin/puzzles/${puzzleId}/preview`));
 }
 
 const analyticsSchema = z.object({
@@ -143,7 +205,7 @@ const moderationReportSchema = z.object({
   id: z.string(),
   puzzleId: z.string(),
   puzzleNumber: z.number(),
-  puzzleStatus: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]),
+  puzzleStatus: z.enum(["DRAFT", "PENDING", "PUBLISHED", "ARCHIVED"]),
   puzzleOrigin: z.enum(["EDITORIAL", "COMMUNITY"]),
   reason: z.string(),
   details: z.string(),
@@ -158,7 +220,7 @@ const moderationAppealSchema = z.object({
   id: z.string(),
   puzzleId: z.string(),
   puzzleNumber: z.number(),
-  puzzleStatus: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]),
+  puzzleStatus: z.enum(["DRAFT", "PENDING", "PUBLISHED", "ARCHIVED"]),
   puzzleOrigin: z.enum(["EDITORIAL", "COMMUNITY"]),
   contact: z.string(),
   message: z.string(),

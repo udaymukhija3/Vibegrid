@@ -46,43 +46,43 @@ export function PlaySharedPuzzle({ puzzleId: explicitPuzzleId }: { puzzleId?: st
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-3xl items-center justify-center">
-      <div className="w-full rounded border-2 border-ink bg-white p-5 text-center shadow-[0_6px_0_#171717]">
-        <h1 className="text-3xl font-black">VibeGrid</h1>
-        <p className="mt-3 font-semibold text-neutral-600">
+      <div className="vg-panel w-full p-6 text-center">
+        <h1 className="text-3xl font-extrabold">VibeGrid</h1>
+        <p className="mt-3 font-medium text-neutral-600">
           {state.status === "loading" ? "Loading this grid." : state.message}
         </p>
         {state.status === "error" && (
           <>
             <Link
               href="/"
-              className="mt-4 inline-flex h-11 items-center justify-center rounded border-2 border-ink bg-mint px-4 font-black shadow-[0_4px_0_#171717]"
+              className="vg-button-primary mt-4"
             >
               Play today&apos;s puzzle
             </Link>
             <form className="mx-auto mt-5 grid max-w-xl gap-3 border-t border-neutral-200 pt-5 text-left" onSubmit={submitAppeal}>
               <div>
-                <h2 className="text-base font-black">Ask for a review</h2>
-                <p className="mt-1 text-sm font-semibold text-neutral-600">
+                <h2 className="text-base font-extrabold">Ask for a review</h2>
+                <p className="mt-1 text-sm font-medium text-neutral-600">
                   If this was your grid, send a short note and a way to reach you.
                 </p>
               </div>
               {appealSent ? (
-                <p className="rounded border border-mint bg-mint/20 px-3 py-2 text-sm font-black text-ink">
+                <p className="rounded-lg border border-mint/70 bg-mint/20 px-3 py-2 text-sm font-semibold text-ink">
                   Appeal sent. A moderator can reinstate the grid from the admin queue.
                 </p>
               ) : (
                 <>
-                  <label className="grid gap-1 text-xs font-black text-neutral-600">
+                  <label className="grid gap-1 text-xs font-semibold text-neutral-600">
                     Contact
                     <input
                       value={appealContact}
                       onChange={(event) => setAppealContact(event.target.value)}
                       maxLength={200}
                       placeholder="Email or handle"
-                      className="h-10 rounded border border-neutral-300 px-2 text-sm font-semibold text-ink"
+                      className="vg-input h-10 text-sm font-medium"
                     />
                   </label>
-                  <label className="grid gap-1 text-xs font-black text-neutral-600">
+                  <label className="grid gap-1 text-xs font-semibold text-neutral-600">
                     Message
                     <textarea
                       value={appealMessage}
@@ -91,13 +91,13 @@ export function PlaySharedPuzzle({ puzzleId: explicitPuzzleId }: { puzzleId?: st
                       rows={4}
                       required
                       placeholder="Why should this grid be restored?"
-                      className="resize-none rounded border border-neutral-300 px-2 py-2 text-sm font-semibold text-ink"
+                      className="vg-input resize-none py-2 text-sm font-medium"
                     />
                   </label>
                   <button
                     type="submit"
                     disabled={appealBusy || !appealMessage.trim()}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded border-2 border-ink bg-yolk px-4 font-black shadow-[0_4px_0_#171717] disabled:opacity-50"
+                    className="vg-button-primary bg-yolk"
                   >
                     <Send aria-hidden size={16} />
                     {appealBusy ? "Sending" : "Send appeal"}

@@ -152,7 +152,8 @@ export async function fetchStreak(): Promise<StreakSummary> {
 const createdPuzzleSchema = z.object({
   ok: z.literal(true),
   id: z.string(),
-  puzzleNumber: z.number()
+  puzzleNumber: z.number(),
+  status: z.literal("PENDING")
 });
 
 const errorBodySchema = z.object({ error: z.string() });
@@ -161,7 +162,7 @@ const errorBodySchema = z.object({ error: z.string() });
 // validation message (e.g. duplicate tiles) so the create page can show why.
 export async function createCommunityPuzzle(
   input: DraftPuzzleInput
-): Promise<{ id: string; puzzleNumber: number }> {
+): Promise<{ id: string; puzzleNumber: number; status: "PENDING" }> {
   const response = await apiFetch("/api/community/puzzles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -176,7 +177,7 @@ export async function createCommunityPuzzle(
   }
 
   const created = createdPuzzleSchema.parse(payload);
-  return { id: created.id, puzzleNumber: created.puzzleNumber };
+  return { id: created.id, puzzleNumber: created.puzzleNumber, status: created.status };
 }
 
 const createdModerationSchema = z.object({

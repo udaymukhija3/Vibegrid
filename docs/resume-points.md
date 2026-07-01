@@ -9,8 +9,8 @@ available while permanent Fly.io deployment is being wired
 ## Strong resume bullets
 
 - Built VibeGrid, a daily semantic grouping puzzle with anonymous persistent
-  attempts, spoiler-safe sharing, user-created puzzle links, admin publishing,
-  moderation, and puzzle analytics.
+  attempts, spoiler-safe sharing, reviewed user-created puzzle links, admin
+  board preview/publishing, moderation, and puzzle analytics.
 - Reworked the app into a single Go web/API binary that serves an exported
   Next.js front end, validates guesses server-side, protects the answer key from
   the browser, and supports same-origin deployment.
@@ -18,20 +18,20 @@ available while permanent Fly.io deployment is being wired
   idempotent client guess IDs, preventing duplicate clicks or racing submits
   from corrupting mistakes, completion state, or stats.
 - Added launch-grade user-generated-content controls: rate-limited puzzle
-  creation, blocklisted terms, player reports, admin archive/reinstate actions,
-  appeals, and moderation audit logging.
+  submissions held for approval, blocklisted terms, player reports, admin
+  archive/reinstate actions, appeals, and moderation audit logging.
 - Built operational scaffolding for a production demo, including embedded SQL
-  migrations, `/healthz`, `/readyz`, `/metrics`, structured request logging,
+  migrations, `/healthz`, `/readyz`, bearer-protected `/metrics`, structured request logging,
   alert-rule templates, a Grafana starter dashboard, and Fly.io deployment
   configuration.
 - Covered backend behavior with Go unit/integration tests, Postgres-backed race
   tests, frontend type/tests/build checks, and deploy smoke tests for play,
-  archive, create/share, policy, OG image, and metrics routes.
+  archive, pending community submissions, policy, OG image, and metrics routes.
 
 ## Shorter variants
 
 - Built a Go/Postgres/Next.js daily puzzle app with server-authoritative game
-  rules, persistent anonymous attempts, shareable UGC puzzles, admin publishing,
+  rules, persistent anonymous attempts, reviewed UGC puzzles, admin publishing,
   moderation, and deploy-ready observability.
 - Implemented idempotent, transaction-safe guess handling in Postgres so
   refreshes, double-clicks, and concurrent submissions preserve correct game

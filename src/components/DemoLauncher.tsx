@@ -13,10 +13,10 @@ export function DemoLauncher() {
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-3xl items-center justify-center">
-      <div className="w-full rounded border-2 border-ink bg-white p-5 text-center shadow-[0_6px_0_#171717]">
+      <div className="vg-panel w-full p-6 text-center">
         <Sparkles aria-hidden className="mx-auto" size={28} />
-        <h1 className="mt-3 text-3xl font-black">Starting demo</h1>
-        <p className="mt-3 font-semibold text-neutral-600">
+        <h1 className="mt-3 text-3xl font-extrabold">Starting demo</h1>
+        <p className="mt-3 font-medium text-neutral-600">
           Setting up a fresh seeded room.
         </p>
       </div>

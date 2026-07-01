@@ -161,7 +161,7 @@ func newStatsTest(t *testing.T) (*PostgresAttemptStore, *PostgresStatsStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate rate_limit_hits, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	if err := NewPostgresPuzzleStore(database).Seed(context.Background(), SeedPuzzles()); err != nil {

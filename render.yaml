@@ -17,6 +17,8 @@ services:
     healthCheckPath: /readyz
     autoDeploy: true
     envVars:
+      - key: VIBEGRID_ENV
+        value: production
       - key: VIBEGRID_TIMEZONE
         value: UTC
       - key: VIBEGRID_SECURE_COOKIES
@@ -30,4 +32,10 @@ services:
       - key: VIBEGRID_ADMIN_PASSWORD
         sync: false
       - key: VIBEGRID_ADMIN_SESSION_SECRET
+        sync: false
+      - key: VIBEGRID_METRICS_TOKEN
+        sync: false
+      - key: VIBEGRID_PUBLIC_BASE_URL
+        sync: false
+      - key: VIBEGRID_TRUSTED_PROXY_CIDRS
         sync: false

@@ -9,6 +9,9 @@ scrape_configs:
   - job_name: vibegrid
     scheme: https
     metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/vibegrid_metrics_token
     static_configs:
       - targets:
           - vibegrid.example.com

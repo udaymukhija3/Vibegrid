@@ -23,7 +23,7 @@ export default function PrivacyPage() {
           title: "Community puzzles",
           body: [
             "When you create a community grid, VibeGrid stores the puzzle words, group names, explanations, difficulty, status, and share id.",
-            "Community grids are playable by direct link. They do not enter the daily puzzle or public archive unless the product changes in the future."
+            "Community grids are held for review before a direct link becomes playable. They do not enter the daily puzzle or public archive unless the product changes in the future."
           ]
         },
         {
@@ -44,7 +44,7 @@ export default function PrivacyPage() {
         {
           title: "Retention",
           body: [
-            "Puzzle, attempt, report, appeal, audit, and rate-limit data is kept while needed to operate the product, investigate abuse, or preserve service integrity.",
+            "Guest attempt data and its session cookie expire after up to 30 days. Puzzle, report, appeal, audit, and rate-limit data is kept while needed to operate the product, investigate abuse, or preserve service integrity.",
             "Contact information entered in a report or appeal is optional and should only be included if you want a moderator to be able to respond."
           ]
         }

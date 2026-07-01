@@ -101,10 +101,10 @@ function normalizeStoredAttempt(puzzleId: string, parsed: Partial<StoredAttempt>
 }
 
 const groupColors = [
-  "bg-mint text-ink",
-  "bg-yolk text-ink",
-  "bg-tomato text-ink",
-  "bg-plum text-white"
+  "border-mint/70 bg-mint/35 text-ink",
+  "border-yolk/80 bg-yolk/35 text-ink",
+  "border-tomato/75 bg-tomato/25 text-ink",
+  "border-plum/55 bg-plum/15 text-ink"
 ];
 
 // Background-only palette (matching groupColors) for the share-grid squares.
@@ -738,20 +738,20 @@ export function VibeGridGame({
 
   return (
     <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-6xl grid-rows-[auto_1fr] gap-5">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b-4 border-ink pb-4">
+      <header className="vg-panel flex flex-wrap items-center justify-between gap-4 p-3 sm:p-4">
         <div className="flex items-center gap-3">
           <Image src="/vibegrid-mark.svg" width={48} height={48} alt="" className="rounded" priority />
           <div>
-            <h1 className="text-3xl font-black leading-none sm:text-4xl">VibeGrid</h1>
+            <h1 className="text-3xl font-extrabold leading-none sm:text-4xl">VibeGrid</h1>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold text-neutral-600">
+              <p className="text-sm font-medium text-neutral-600">
                 {isDemoPuzzle ? "Demo room" : `#${puzzle.puzzleNumber}`}
                 {!isDemoPuzzle && puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
               </p>
               {streak && streak.currentStreak > 0 && (
                 <span
                   title={`Longest streak: ${streak.longestStreak} · Solved: ${streak.totalCompleted}`}
-                  className="inline-flex items-center gap-1 rounded border-2 border-ink bg-yolk px-2 py-0.5 text-xs font-black"
+                  className="inline-flex items-center gap-1 rounded-lg border border-yolk/80 bg-yolk/35 px-2 py-0.5 text-xs font-semibold"
                 >
                   🔥 {streak.currentStreak} day{streak.currentStreak === 1 ? "" : "s"}
                 </span>
@@ -766,7 +766,7 @@ export function VibeGridGame({
             href="/demo"
             aria-label="Demo walkthrough"
             title="Demo walkthrough"
-            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
+            className="vg-icon-button"
           >
             <Compass aria-hidden size={18} />
           </Link>
@@ -774,7 +774,7 @@ export function VibeGridGame({
             href="/create"
             aria-label="Make your own"
             title="Make your own"
-            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
+            className="vg-icon-button"
           >
             <Sparkles aria-hidden size={18} />
           </Link>
@@ -782,14 +782,14 @@ export function VibeGridGame({
             href="/archive"
             aria-label="Archive"
             title="Archive"
-            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717]"
+            className="vg-icon-button"
           >
             <Archive aria-hidden size={18} />
           </Link>
           <button
             aria-label="Shuffle tiles"
             title="Shuffle tiles"
-            className="inline-flex h-11 w-11 items-center justify-center rounded border-2 border-ink bg-white shadow-[0_4px_0_#171717] disabled:opacity-40"
+            className="vg-icon-button"
             disabled={isOver || remainingTiles.length < 2}
             type="button"
             onClick={shuffleRemaining}
@@ -804,15 +804,15 @@ export function VibeGridGame({
           {currentVibe && (
             <div
               className={clsx(
-                "mb-4 rounded border-2 border-ink p-4 shadow-[0_5px_0_#171717]",
+                "mb-4 rounded-lg border p-4 shadow-soft",
                 groupColors[currentVibe.colorIndex % groupColors.length]
               )}
             >
-              <p className="text-xs font-black uppercase tracking-wide opacity-80">
+              <p className="text-xs font-semibold opacity-80">
                 Match this vibe · {attempt.solvedGroups.length + 1} of {puzzle.groupCount}
               </p>
-              <p className="mt-1 text-2xl font-black leading-tight">{currentVibe.name}</p>
-              <p className="mt-1 text-sm font-bold opacity-80">Pick the 4 tiles that fit it.</p>
+              <p className="mt-1 text-2xl font-extrabold leading-tight">{currentVibe.name}</p>
+              <p className="mt-1 text-sm font-medium opacity-80">Pick the 4 tiles that fit it.</p>
             </div>
           )}
           <div className="grid gap-3">
@@ -823,16 +823,16 @@ export function VibeGridGame({
                 <section
                   key={group.id}
                   className={clsx(
-                    "rounded border-2 border-ink p-4 shadow-[0_5px_0_#171717]",
+                    "rounded-lg border p-4 shadow-soft",
                     groupColors[group.colorIndex % groupColors.length]
                   )}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-xl font-black">{group.name}</h2>
-                      <p className="mt-1 text-sm font-semibold opacity-80">{group.explanation}</p>
+                      <h2 className="text-xl font-extrabold">{group.name}</h2>
+                      <p className="mt-1 text-sm font-medium opacity-80">{group.explanation}</p>
                     </div>
-                    <p className="text-sm font-black">
+                    <p className="text-sm font-semibold">
                       {isSolved ? "Locked" : "Revealed"}
                     </p>
                   </div>
@@ -840,7 +840,7 @@ export function VibeGridGame({
                     {group.tiles.map((tile) => (
                       <div
                         key={tile.id}
-                        className="flex min-h-14 items-center justify-center rounded border border-ink bg-white/80 px-1 text-center text-[0.7rem] font-black leading-tight sm:px-2 sm:text-sm"
+                        className="flex min-h-14 items-center justify-center rounded-lg border border-white/70 bg-card/80 px-1 text-center text-[0.7rem] font-semibold leading-tight sm:px-2 sm:text-sm"
                       >
                         {tile.text}
                       </div>
@@ -859,10 +859,10 @@ export function VibeGridGame({
                 <button
                   key={tile.id}
                   className={clsx(
-                    "flex aspect-square min-h-16 items-center justify-center rounded border-2 border-ink px-1 text-center text-[0.7rem] font-black shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
+                    "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.7rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
                     isSelected
-                      ? "translate-y-1 bg-ink text-white shadow-[0_4px_0_rgba(23,23,23,0.18)]"
-                      : "bg-white hover:-translate-y-0.5 hover:bg-yolk"
+                      ? "translate-y-0.5 border-ink bg-ink text-white shadow-none ring-2 ring-mint/70"
+                      : "bg-card hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/25 hover:shadow-lift"
                   )}
                   type="button"
                   aria-pressed={isSelected}
@@ -875,11 +875,11 @@ export function VibeGridGame({
           </div>
         </div>
 
-        <aside className="flex flex-col justify-between gap-4 rounded border-2 border-ink bg-white p-4 shadow-[0_6px_0_#171717]">
+        <aside className="vg-panel flex flex-col justify-between gap-4 p-4">
           <div>
             {!isOver && (
               <div className="mb-4">
-                <div className="grid grid-cols-3 gap-1 rounded border-2 border-ink p-1">
+                <div className="grid grid-cols-3 gap-1 rounded-lg border border-line bg-white/60 p-1">
                   {modeOptions.map((option) => (
                     <button
                       key={option.value}
@@ -887,7 +887,7 @@ export function VibeGridGame({
                       onClick={() => setMode(option.value)}
                       aria-pressed={mode === option.value}
                       className={clsx(
-                        "h-9 rounded text-sm font-black",
+                        "h-9 rounded-md text-sm font-semibold transition",
                         mode === option.value ? "bg-ink text-white" : "bg-white text-ink"
                       )}
                     >
@@ -895,7 +895,7 @@ export function VibeGridGame({
                     </button>
                   ))}
                 </div>
-                <p className="mt-1.5 text-xs font-semibold text-neutral-600">
+                <p className="mt-1.5 text-xs font-medium text-neutral-600">
                   {modeDescriptions[mode]}
                 </p>
               </div>
@@ -903,7 +903,7 @@ export function VibeGridGame({
 
             {mode === "easy" && !isOver && (
               <div className="mb-4 border-t border-neutral-200 pt-3">
-                <p className="text-xs font-black text-neutral-500">Selected tiles</p>
+                <p className="text-xs font-semibold text-neutral-500">Selected tiles</p>
                 <div className="mt-2 grid min-h-24 grid-cols-2 gap-1.5">
                   {Array.from({ length: 4 }).map((_, index) => {
                     const tile = selectedTiles[index];
@@ -911,9 +911,9 @@ export function VibeGridGame({
                       <div
                         key={tile?.id ?? `empty-${index}`}
                         className={clsx(
-                          "flex min-h-10 items-center justify-center rounded border px-2 text-center text-xs font-black leading-tight",
+                          "flex min-h-10 items-center justify-center rounded-lg border px-2 text-center text-xs font-semibold leading-tight",
                           tile
-                            ? "border-ink bg-white text-ink"
+                            ? "border-ink bg-card text-ink"
                             : "border-neutral-200 bg-neutral-50 text-neutral-400"
                         )}
                       >
@@ -924,9 +924,9 @@ export function VibeGridGame({
                 </div>
 
                 <div className="mt-3 border-t border-neutral-200 pt-3">
-                  <p className="text-xs font-black text-neutral-500">Easy hint</p>
+                  <p className="text-xs font-semibold text-neutral-500">Easy hint</p>
                   {guessesUntilEasyHint > 0 ? (
-                    <p className="mt-1 text-sm font-semibold text-neutral-600">
+                    <p className="mt-1 text-sm font-medium text-neutral-600">
                       Unlocks after {guessesUntilEasyHint} more{" "}
                       {guessesUntilEasyHint === 1 ? "guess" : "guesses"}.
                     </p>
@@ -937,13 +937,13 @@ export function VibeGridGame({
                         hintBorderColors[unlockedEasyHint.colorIndex % hintBorderColors.length]
                       )}
                     >
-                      <p className="text-sm font-black">{unlockedEasyHint.name}</p>
-                      <p className="mt-1 text-sm font-semibold leading-snug text-neutral-700">
+                      <p className="text-sm font-semibold">{unlockedEasyHint.name}</p>
+                      <p className="mt-1 text-sm font-medium leading-snug text-neutral-700">
                         {unlockedEasyHint.text}
                       </p>
                     </div>
                   ) : (
-                    <p className="mt-1 text-sm font-semibold text-neutral-600">
+                    <p className="mt-1 text-sm font-medium text-neutral-600">
                       {easyHintStatus === "error" ? "Hint is unavailable right now." : "Hint is checking."}
                     </p>
                   )}
@@ -952,13 +952,13 @@ export function VibeGridGame({
             )}
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded border border-neutral-200 p-3">
-                <p className="text-xs font-black text-neutral-500">Selected</p>
-                <p className="mt-1 text-2xl font-black">{attempt.selectedTileIds.length}/4</p>
+              <div className="vg-panel-muted p-3">
+                <p className="text-xs font-semibold text-neutral-500">Selected</p>
+                <p className="mt-1 text-2xl font-extrabold">{attempt.selectedTileIds.length}/4</p>
               </div>
-              <div className="rounded border border-neutral-200 p-3">
-                <p className="text-xs font-black text-neutral-500">Mistakes</p>
-                <p className="mt-1 text-2xl font-black">
+              <div className="vg-panel-muted p-3">
+                <p className="text-xs font-semibold text-neutral-500">Mistakes</p>
+                <p className="mt-1 text-2xl font-extrabold">
                   {attempt.mistakes}/{puzzle.mistakesAllowed}
                 </p>
               </div>
@@ -969,43 +969,43 @@ export function VibeGridGame({
                 <div
                   key={index}
                   className={clsx(
-                    "h-3 rounded border border-ink",
+                    "h-3 rounded-full border border-line",
                     index < attempt.mistakes ? "bg-tomato" : "bg-neutral-100"
                   )}
                 />
               ))}
             </div>
 
-            <p className="mt-5 min-h-12 text-lg font-black leading-snug">{message}</p>
+            <p className="mt-5 min-h-12 text-lg font-extrabold leading-snug">{message}</p>
 
             {syncState === "error" && (
-              <div className="mt-3 flex items-center justify-between gap-2 rounded border-2 border-tomato bg-tomato/10 px-3 py-2 text-sm font-bold">
+              <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-tomato/60 bg-tomato/10 px-3 py-2 text-sm font-semibold">
                 <span>Couldn&apos;t sync — showing saved progress.</span>
                 <button
                   type="button"
                   onClick={() => void syncAttempt()}
-                  className="inline-flex h-8 shrink-0 items-center justify-center rounded border-2 border-ink bg-white px-2 text-xs font-black shadow-[0_3px_0_#171717]"
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-line bg-card px-2 text-xs font-semibold"
                 >
                   Resync
                 </button>
               </div>
             )}
 
-            <div className="mt-4 border-t border-neutral-200 pt-4 text-sm font-semibold text-neutral-600">
+            <div className="mt-4 border-t border-neutral-200 pt-4 text-sm font-medium text-neutral-600">
               <p>Elapsed {formatElapsedTime(attempt.startedAt, elapsedFinishedAt)}</p>
               <p className="mt-1">Guesses {attempt.guessCount}</p>
               <p className="mt-1">
                 {resolvedSession?.guest.label ?? "Guest session"}. Saved in this browser.
               </p>
               {resolvedSession?.admin.authenticated && (
-                <p className="mt-1 text-plum">Editor session active.</p>
+                <p className="mt-1 font-semibold text-plum">Editor session active.</p>
               )}
             </div>
 
             {isOver && stats && stats.players >= MIN_STATS_PLAYERS && (
-              <div className="mt-4 rounded border-2 border-ink bg-plum/10 p-3">
-                <p className="text-xs font-black text-plum">How others did</p>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-semibold">
+              <div className="mt-4 rounded-lg border border-plum/30 bg-plum/10 p-3">
+                <p className="text-xs font-semibold text-plum">How others did</p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-medium">
                   <p>{Math.round(stats.solveRate * 100)}% solved</p>
                   <p>{stats.players} {stats.players === 1 ? "player" : "players"}</p>
                   <p>~{stats.medianMistakes.toFixed(0)} mistakes</p>
@@ -1018,7 +1018,7 @@ export function VibeGridGame({
 
             {isOver && attempt.guessHistory.length > 0 && (
               <div className="mt-4">
-                <p className="text-xs font-black text-neutral-500">Your grid</p>
+                <p className="text-xs font-semibold text-neutral-500">Your grid</p>
                 <div className="mt-2 grid gap-1">
                   {attempt.guessHistory.map((row, rowIndex) => (
                     <div key={rowIndex} className="flex gap-1">
@@ -1026,7 +1026,7 @@ export function VibeGridGame({
                         <span
                           key={`${rowIndex}-${tileIndex}`}
                           className={clsx(
-                            "h-5 w-5 rounded-sm border border-ink",
+                            "h-5 w-5 rounded-sm border border-line",
                             squareColors[(colorByTile[tileId] ?? 0) % squareColors.length]
                           )}
                         />
@@ -1041,7 +1041,7 @@ export function VibeGridGame({
           <div className="grid gap-2">
             {!isOver ? (
               <button
-                className="inline-flex h-12 items-center justify-center gap-2 rounded border-2 border-ink bg-mint px-4 font-black shadow-[0_5px_0_#171717] disabled:translate-y-1 disabled:bg-neutral-200 disabled:text-neutral-500 disabled:shadow-[0_2px_0_#171717]"
+                className="vg-button-primary h-12"
                 type="button"
                 disabled={attempt.selectedTileIds.length !== 4 || isSubmitting}
                 onClick={submitGuess}
@@ -1051,7 +1051,7 @@ export function VibeGridGame({
               </button>
             ) : (
               <button
-                className="inline-flex h-12 items-center justify-center gap-2 rounded border-2 border-ink bg-yolk px-4 font-black shadow-[0_5px_0_#171717]"
+                className="vg-button-primary h-12 bg-yolk"
                 type="button"
                 onClick={shareResult}
               >
@@ -1062,7 +1062,7 @@ export function VibeGridGame({
 
             <Link
               href="/create"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
+              className="vg-button-secondary h-11"
             >
               <Sparkles aria-hidden size={16} />
               Make your own
@@ -1070,7 +1070,7 @@ export function VibeGridGame({
             <button
               type="button"
               onClick={() => setReportOpen((open) => !open)}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-4 text-sm font-black text-neutral-700"
+              className="vg-button-secondary h-10"
             >
               <Flag aria-hidden size={16} />
               Report a problem
@@ -1080,12 +1080,12 @@ export function VibeGridGame({
                 <p className="text-xs font-semibold leading-snug text-neutral-600">
                   No login needed. We review the grid id, your reason, and any note you add.
                 </p>
-                <label className="grid gap-1 text-xs font-black text-neutral-600">
+                <label className="grid gap-1 text-xs font-semibold text-neutral-600">
                   Reason
                   <select
                     value={reportReason}
                     onChange={(event) => setReportReason(event.target.value as ReportReason)}
-                    className="h-10 rounded border border-neutral-300 bg-white px-2 text-sm font-semibold text-ink"
+                    className="vg-input h-10 text-sm font-medium"
                   >
                     {reportReasons.map((reason) => (
                       <option key={reason.value} value={reason.value}>
@@ -1094,7 +1094,7 @@ export function VibeGridGame({
                     ))}
                   </select>
                 </label>
-                <label className="grid gap-1 text-xs font-black text-neutral-600">
+                <label className="grid gap-1 text-xs font-semibold text-neutral-600">
                   What happened?
                   <textarea
                     value={reportDetails}
@@ -1102,24 +1102,24 @@ export function VibeGridGame({
                     maxLength={1000}
                     rows={3}
                     placeholder="Tell us what feels unsafe, copied, broken, or unfair."
-                    className="resize-none rounded border border-neutral-300 px-2 py-2 text-sm font-semibold text-ink"
+                    className="vg-input resize-none py-2 text-sm font-medium"
                   />
                 </label>
-                <label className="grid gap-1 text-xs font-black text-neutral-600">
+                <label className="grid gap-1 text-xs font-semibold text-neutral-600">
                   Email for reply (optional)
                   <input
                     value={reportContact}
                     onChange={(event) => setReportContact(event.target.value)}
                     maxLength={200}
                     placeholder="Only if you want a reply"
-                    className="h-10 rounded border border-neutral-300 px-2 text-sm font-semibold text-ink"
+                    className="vg-input h-10 text-sm font-medium"
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setReportOpen(false)}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded border border-neutral-300 bg-white px-3 text-sm font-black text-neutral-700"
+                    className="vg-button-secondary h-10"
                   >
                     <X aria-hidden size={15} />
                     Cancel
@@ -1127,7 +1127,7 @@ export function VibeGridGame({
                   <button
                     type="submit"
                     disabled={isReporting}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded border-2 border-ink bg-yolk px-3 text-sm font-black shadow-[0_3px_0_#171717] disabled:opacity-50"
+                    className="vg-button-primary h-10 bg-yolk px-3 text-sm"
                   >
                     <Send aria-hidden size={15} />
                     {isReporting ? "Sending" : "Send"}

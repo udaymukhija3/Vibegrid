@@ -2,6 +2,7 @@ package vibegrid
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 )
@@ -30,7 +31,16 @@ func (backend *fakePuzzleBackend) PuzzleByID(_ context.Context, puzzleID string)
 	return puzzle, nil
 }
 
-func (backend *fakePuzzleBackend) Puzzles(context.Context) ([]Puzzle, error) { return nil, nil }
+func (backend *fakePuzzleBackend) Puzzles(context.Context) ([]Puzzle, error) {
+	puzzles := make([]Puzzle, 0, len(backend.puzzles))
+	for _, puzzle := range backend.puzzles {
+		puzzles = append(puzzles, puzzle)
+	}
+	sort.Slice(puzzles, func(left, right int) bool {
+		return puzzles[left].ID < puzzles[right].ID
+	})
+	return puzzles, nil
+}
 func (backend *fakePuzzleBackend) PublishedPuzzles(context.Context, string, int, int) ([]Puzzle, error) {
 	return nil, nil
 }
@@ -48,6 +58,13 @@ func (backend *fakePuzzleBackend) Publish(_ context.Context, puzzleID, publishDa
 	puzzle := backend.puzzles[puzzleID]
 	puzzle.Status = PuzzleStatusPublished
 	puzzle.PublishDate = publishDate
+	backend.puzzles[puzzleID] = puzzle
+	return nil
+}
+
+func (backend *fakePuzzleBackend) ApproveCommunity(_ context.Context, puzzleID string) error {
+	puzzle := backend.puzzles[puzzleID]
+	puzzle.Status = PuzzleStatusPublished
 	backend.puzzles[puzzleID] = puzzle
 	return nil
 }
@@ -109,7 +126,7 @@ func TestCachedPuzzleStoreInvalidatesOnArchive(t *testing.T) {
 	}
 }
 
-func TestCachedPuzzleStoreDoesNotCacheMisses(t *testing.T) {
+func TestCachedPuzzleStoreCachesMissesBriefly(t *testing.T) {
 	backend := newFakePuzzleBackend()
 	store := NewCachedPuzzleStore(backend, time.Minute)
 	ctx := context.Background()
@@ -119,9 +136,7 @@ func TestCachedPuzzleStoreDoesNotCacheMisses(t *testing.T) {
 			t.Fatal("expected ErrPuzzleNotFound for a missing puzzle")
 		}
 	}
-	// A negative result must not be cached, or a community puzzle shared by link
-	// right after creation could appear missing until the entry expired.
-	if backend.byIDCalls != 3 {
-		t.Fatalf("misses must not be cached; expected 3 loads, got %d", backend.byIDCalls)
+	if backend.byIDCalls != 1 {
+		t.Fatalf("negative lookups must be cached briefly; expected 1 load, got %d", backend.byIDCalls)
 	}
 }

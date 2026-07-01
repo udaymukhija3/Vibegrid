@@ -13,13 +13,17 @@ primary_region = "iad"
   release_command = "/vibegrid migrate"
 
 [env]
+  VIBEGRID_ENV = "production"
   VIBEGRID_ADDR = ":8081"
   VIBEGRID_TIMEZONE = "UTC"
   VIBEGRID_SECURE_COOKIES = "true"
   VIBEGRID_REQUIRE_DATABASE = "true"
-  # DATABASE_URL, VIBEGRID_ADMIN_PASSWORD, VIBEGRID_ADMIN_SESSION_SECRET, and
-  # optional VIBEGRID_ADMIN_TOKEN are set with `fly secrets set` - never commit
-  # them. VIBEGRID_ALLOWED_ORIGINS is only needed for non-same-origin API clients.
+  # DATABASE_URL, VIBEGRID_ADMIN_PASSWORD, VIBEGRID_ADMIN_SESSION_SECRET,
+  # VIBEGRID_METRICS_TOKEN, VIBEGRID_PUBLIC_BASE_URL, and optional
+  # VIBEGRID_ADMIN_TOKEN are set with `fly secrets set` - never commit them.
+  # Set VIBEGRID_TRUSTED_PROXY_CIDRS to the verified Fly proxy network(s) before
+  # enabling public traffic. VIBEGRID_ALLOWED_ORIGINS is only needed for
+  # non-same-origin API clients.
 
 [http_service]
   internal_port = 8081

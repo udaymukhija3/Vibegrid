@@ -97,6 +97,12 @@ func (store *observedAdminPuzzleStore) Publish(ctx context.Context, puzzleID, pu
 	return store.next.Publish(ctx, puzzleID, publishDate)
 }
 
+func (store *observedAdminPuzzleStore) ApproveCommunity(ctx context.Context, puzzleID string) (err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "admin_puzzles", "approve_community", started, err) }()
+	return store.next.ApproveCommunity(ctx, puzzleID)
+}
+
 func (store *observedAdminPuzzleStore) Archive(ctx context.Context, puzzleID string) (err error) {
 	started := time.Now()
 	defer func() { observeStoreOperation(store.metrics, "admin_puzzles", "archive", started, err) }()

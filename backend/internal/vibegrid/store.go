@@ -10,6 +10,8 @@ import (
 
 var ErrAttemptFinished = errors.New("attempt is already finished")
 
+var ErrAttemptCapacity = errors.New("anonymous attempt capacity is temporarily full")
+
 // Store owns mutable per-session game state: attempts and the guesses made
 // against them. Puzzle content is static and served from the seed package, so
 // the store only deals with attempt lifecycle and idempotent guess handling.
@@ -168,9 +170,16 @@ func buildSubmission(puzzle Puzzle, state attemptState, storedGuess StoredGuess)
 // idempotent within a single process but not durable or shared across
 // instances; PostgresAttemptStore is the production path.
 type MemoryAttemptStore struct {
-	mu       sync.Mutex
-	attempts map[string]*memoryAttempt
+	mu          sync.Mutex
+	attempts    map[string]*memoryAttempt
+	maxAttempts int
+	retention   time.Duration
 }
+
+const (
+	defaultMemoryAttemptLimit = 10_000
+	defaultAttemptRetention   = 30 * 24 * time.Hour
+)
 
 type memoryAttempt struct {
 	state   attemptState
@@ -179,13 +188,16 @@ type memoryAttempt struct {
 
 func NewMemoryAttemptStore() *MemoryAttemptStore {
 	return &MemoryAttemptStore{
-		attempts: map[string]*memoryAttempt{},
+		attempts:    map[string]*memoryAttempt{},
+		maxAttempts: defaultMemoryAttemptLimit,
+		retention:   defaultAttemptRetention,
 	}
 }
 
 func (store *MemoryAttemptStore) GetAttempt(_ context.Context, puzzle Puzzle, sessionID string, now time.Time) (AttemptSnapshot, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.pruneExpiredLocked(now)
 
 	if attempt, ok := store.attempts[attemptKey(puzzle.ID, sessionID)]; ok {
 		return buildSnapshot(puzzle, attempt.state), nil
@@ -194,10 +206,24 @@ func (store *MemoryAttemptStore) GetAttempt(_ context.Context, puzzle Puzzle, se
 }
 
 func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, sessionID string, request GuessRequest, now time.Time) (GuessSubmission, error) {
+	if err := validateGuessRequest(request); err != nil {
+		return GuessSubmission{}, err
+	}
+	// Reject syntactically valid but unknown tile ids before allocating state for a
+	// new anonymous session. The actual match is recalculated below with the
+	// attempt's solved groups.
+	if _, err := EvaluateGuess(puzzle, request.SelectedTileIDs, map[string]bool{}); err != nil {
+		return GuessSubmission{}, err
+	}
+
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	store.pruneExpiredLocked(now)
 
-	attempt := store.getOrCreateLocked(puzzle.ID, sessionID, now)
+	attempt, err := store.getOrCreateLocked(puzzle.ID, sessionID, now)
+	if err != nil {
+		return GuessSubmission{}, err
+	}
 
 	if storedGuess, ok := attempt.guesses[request.ClientGuessID]; ok {
 		return buildSubmission(puzzle, attempt.state, storedGuess), nil
@@ -217,10 +243,13 @@ func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, s
 	return buildSubmission(puzzle, attempt.state, storedGuess), nil
 }
 
-func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID string, now time.Time) *memoryAttempt {
+func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID string, now time.Time) (*memoryAttempt, error) {
 	key := attemptKey(puzzleID, sessionID)
 	if attempt, ok := store.attempts[key]; ok {
-		return attempt
+		return attempt, nil
+	}
+	if store.maxAttempts > 0 && len(store.attempts) >= store.maxAttempts {
+		return nil, ErrAttemptCapacity
 	}
 
 	attempt := &memoryAttempt{
@@ -228,7 +257,19 @@ func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID st
 		guesses: map[string]StoredGuess{},
 	}
 	store.attempts[key] = attempt
-	return attempt
+	return attempt, nil
+}
+
+func (store *MemoryAttemptStore) pruneExpiredLocked(now time.Time) {
+	if store.retention <= 0 {
+		return
+	}
+	cutoff := now.UTC().Add(-store.retention)
+	for key, attempt := range store.attempts {
+		if attempt.state.StartedAt.Before(cutoff) {
+			delete(store.attempts, key)
+		}
+	}
 }
 
 func attemptKey(puzzleID string, sessionID string) string {

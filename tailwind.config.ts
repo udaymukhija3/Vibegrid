@@ -5,15 +5,19 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#171717",
-        paper: "#f8fafc",
-        mint: "#2ec4b6",
-        tomato: "#ff6b6b",
-        yolk: "#f9c74f",
-        plum: "#6d5dfc"
+        ink: "#223027",
+        paper: "#f3f7f1",
+        card: "#fffdfa",
+        line: "#d3ddd3",
+        mint: "#77d3b0",
+        tomato: "#f06f64",
+        yolk: "#f3ca68",
+        plum: "#6257b7"
       },
       boxShadow: {
-        tile: "0 12px 0 rgba(23, 23, 23, 0.08)"
+        soft: "0 18px 45px rgba(34, 48, 39, 0.08)",
+        lift: "0 22px 55px rgba(34, 48, 39, 0.12)",
+        tile: "0 10px 24px rgba(34, 48, 39, 0.08)"
       }
     }
   },
@@ -21,4 +25,3 @@ const config: Config = {
 };
 
 export default config;
-

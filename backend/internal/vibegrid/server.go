@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,8 @@ const (
 	requestTimeout  = 5 * time.Second
 	guessRateLimit  = 120
 	guessRateWindow = time.Minute
+	readRateLimit   = 240
+	readRateWindow  = time.Minute
 	easyHintGuesses = 2
 
 	// Reports/appeals are public, unauthenticated writes into the moderation
@@ -48,6 +51,7 @@ type ServerConfig struct {
 	Puzzles            PuzzleSource
 	Store              Store
 	AdminPuzzles       AdminPuzzleStore
+	AdminSessions      AdminSessionStore
 	Community          CommunityPuzzleStore
 	Stats              StatsStore
 	RateLimits         RateLimitStore
@@ -57,6 +61,9 @@ type ServerConfig struct {
 	AdminToken         string
 	AdminPassword      string
 	AdminSessionSecret string
+	MetricsToken       string
+	PublicBaseURL      string
+	TrustedProxyCIDRs  []string
 	Clock              func() time.Time
 	TimeZone           string
 	AllowedOrigins     []string
@@ -73,6 +80,7 @@ type Server struct {
 	puzzles            PuzzleSource
 	store              Store
 	adminPuzzles       AdminPuzzleStore
+	adminSessions      AdminSessionStore
 	community          CommunityPuzzleStore
 	stats              StatsStore
 	rateLimits         RateLimitStore
@@ -80,6 +88,7 @@ type Server struct {
 	readyCheck         func(context.Context) error
 	createLimiter      *rateLimiter
 	guessLimiter       *rateLimiter
+	readLimiter        *rateLimiter
 	reportLimiter      *rateLimiter
 	loginLimiter       *rateLimiter
 	blocklist          *wordBlocklist
@@ -87,6 +96,9 @@ type Server struct {
 	adminToken         string
 	adminPassword      string
 	adminSessionSecret string
+	metricsToken       string
+	publicBaseURL      string
+	clientIdentity     clientIdentity
 	clock              func() time.Time
 	timeZone           string
 	secureCookies      bool
@@ -116,6 +128,7 @@ func NewServer(config ServerConfig) http.Handler {
 		readyCheck:         config.ReadyCheck,
 		createLimiter:      newRateLimiter(20, time.Hour),
 		guessLimiter:       newRateLimiter(guessRateLimit, guessRateWindow),
+		readLimiter:        newRateLimiter(readRateLimit, readRateWindow),
 		reportLimiter:      newRateLimiter(reportRateLimit, reportRateWindow),
 		loginLimiter:       newRateLimiter(adminLoginRateLimit, adminLoginRateWindow),
 		blocklist:          newWordBlocklist(config.BlockedTerms),
@@ -123,6 +136,10 @@ func NewServer(config ServerConfig) http.Handler {
 		adminToken:         config.AdminToken,
 		adminPassword:      config.AdminPassword,
 		adminSessionSecret: config.AdminSessionSecret,
+		adminSessions:      config.AdminSessions,
+		metricsToken:       strings.TrimSpace(config.MetricsToken),
+		publicBaseURL:      normalizePublicBaseURL(config.PublicBaseURL),
+		clientIdentity:     newClientIdentity(config.TrustedProxyCIDRs),
 		clock:              clock,
 		timeZone:           timeZone,
 		secureCookies:      config.SecureCookies,
@@ -135,6 +152,9 @@ func NewServer(config ServerConfig) http.Handler {
 	if server.puzzles == nil {
 		server.puzzles = StaticPuzzleSource(nil)
 	}
+	if server.adminSessions == nil {
+		server.adminSessions = NewMemoryAdminSessionStore()
+	}
 	server.puzzles = observePuzzleSource(server.puzzles, server.metrics)
 	server.store = observeAttemptStore(server.store, server.metrics)
 	server.adminPuzzles = observeAdminPuzzleStore(server.adminPuzzles, server.metrics)
@@ -146,7 +166,9 @@ func NewServer(config ServerConfig) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.handleHealth)
 	mux.HandleFunc("GET /readyz", server.handleReady)
-	mux.HandleFunc("GET /metrics", server.handleMetrics)
+	if server.metricsToken != "" {
+		mux.HandleFunc("GET /metrics", server.requireMetrics(server.handleMetrics))
+	}
 	mux.HandleFunc("GET /api/puzzles/today", server.handleTodayPuzzle)
 	mux.HandleFunc("GET /api/puzzles", server.handlePuzzles)
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
@@ -168,11 +190,14 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/admin/session", server.handleAdminSessionStatus)
 	mux.HandleFunc("POST /api/admin/session", server.handleAdminSession)
 	mux.HandleFunc("DELETE /api/admin/session", server.handleAdminLogout)
+	mux.HandleFunc("GET /api/admin/queue-health", server.requireAdmin(server.handleAdminQueueHealth))
 	mux.HandleFunc("GET /api/admin/puzzles", server.requireAdmin(server.handleAdminListPuzzles))
 	mux.HandleFunc("POST /api/admin/puzzles", server.requireAdmin(server.handleAdminCreatePuzzle))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/publish", server.requireAdmin(server.handleAdminPublishPuzzle))
+	mux.HandleFunc("POST /api/admin/puzzles/{id}/approve", server.requireAdmin(server.handleAdminApproveCommunityPuzzle))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/archive", server.requireAdmin(server.handleAdminArchivePuzzle))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/reinstate", server.requireAdmin(server.handleAdminReinstatePuzzle))
+	mux.HandleFunc("GET /api/admin/puzzles/{id}/preview", server.requireAdmin(server.handleAdminPreviewPuzzle))
 	mux.HandleFunc("GET /api/admin/puzzles/{id}/analytics", server.requireAdmin(server.handleAdminAnalytics))
 	mux.HandleFunc("GET /api/admin/moderation/reports", server.requireAdmin(server.handleAdminReports))
 	mux.HandleFunc("POST /api/admin/moderation/reports/{id}/resolve", server.requireAdmin(server.handleAdminResolveReport))
@@ -185,6 +210,7 @@ func NewServer(config ServerConfig) http.Handler {
 
 	handler := withRequestTimeout(mux, requestTimeout)
 	handler = withCORS(handler, config.AllowedOrigins, config.DevCORS)
+	handler = withCacheSafety(handler)
 	handler = withSecurityHeaders(handler)
 	handler = withRequestMetrics(handler, server.metrics)
 	handler = withRequestLogging(handler)
@@ -221,6 +247,9 @@ func (server *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (server *Server) handleTodayPuzzle(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	puzzle, err := server.puzzles.TodaysPuzzle(r.Context(), server.todayString())
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
@@ -235,6 +264,9 @@ func (server *Server) handleTodayPuzzle(w http.ResponseWriter, r *http.Request) 
 }
 
 func (server *Server) handlePuzzles(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	// Bound the archive read: it grows by one puzzle a day forever, so without a
 	// limit this would eventually load every puzzle's full content in one query.
 	limit, offset := archivePagination(r)
@@ -254,6 +286,9 @@ func (server *Server) handlePuzzles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (server *Server) handleAttempt(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	puzzleID := strings.TrimPrefix(r.URL.Path, "/api/attempts/")
 	if puzzleID == "" {
 		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
@@ -277,12 +312,13 @@ func (server *Server) handleAttempt(w http.ResponseWriter, r *http.Request) {
 
 func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 	if server.guessLimiter != nil || server.rateLimits != nil {
-		decision, err := server.checkRateLimit(r.Context(), "guess:"+clientIP(r), guessRateLimit, guessRateWindow, server.guessLimiter)
+		decision, err := server.checkRateLimit(r.Context(), "guess:"+server.clientIP(r), guessRateLimit, guessRateWindow, server.guessLimiter)
 		if err != nil {
-			// Fail open: a rate-limit backend hiccup must not block gameplay. The
-			// guess path is still protected by per-attempt row locking and
-			// idempotent client guess ids, so allowing through is safe.
-			slog.Warn("guess rate-limit check failed; allowing", "error", err)
+			// An unavailable shared limiter must not become an unlimited anonymous
+			// write path. Returning 503 is safer than accepting a burst blindly.
+			slog.Error("guess rate-limit check failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
+			return
 		} else if !decision.allowed {
 			writeRateLimit(w, "You're guessing too quickly. Slow down for a minute.", decision.retryAfter)
 			return
@@ -294,8 +330,8 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if request.PuzzleID == "" || request.ClientGuessID == "" {
-		writeError(w, http.StatusBadRequest, "Puzzle id and client guess id are required.")
+	if err := validateGuessRequest(request); err != nil {
+		writeError(w, http.StatusBadRequest, humanError(err))
 		return
 	}
 
@@ -314,6 +350,9 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusConflict
 		case isGuessValidationError(err):
 			status = http.StatusUnprocessableEntity
+		case errors.Is(err, ErrAttemptCapacity):
+			writeRateLimit(w, "Anonymous game capacity is temporarily full. Try again shortly.", time.Minute)
+			return
 		default:
 			// Unexpected (storage/transaction) failures are 500s, not client errors.
 			slog.Error("guess submission failed", "error", err, "puzzle_id", request.PuzzleID)
@@ -330,7 +369,6 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		IsCorrect: submission.IsCorrect,
 		Group:     submission.Group,
 		Attempt:   &submission.Attempt,
-		SessionID: sessionID,
 	}
 	if !submission.IsCorrect {
 		response.OneAway = IsOneAway(puzzle, request.SelectedTileIDs)
@@ -348,6 +386,9 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 // tile-to-group mapping and the explanation, so the answer is never exposed: the
 // guess engine remains the only authority on whether four tiles form a group.
 func (server *Server) handlePuzzleVibes(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	puzzle, err := server.publicPuzzleByID(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
@@ -369,6 +410,9 @@ func (server *Server) handlePuzzleVibes(w http.ResponseWriter, r *http.Request) 
 // the current browser session has made enough guesses. It never returns tile
 // membership, so Easy mode can help without moving answer authority client-side.
 func (server *Server) handleEasyHint(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	puzzle, err := server.publicPuzzleByID(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
@@ -423,6 +467,9 @@ func (server *Server) handlePuzzleTemplates(w http.ResponseWriter, r *http.Reque
 }
 
 func (server *Server) handlePuzzleOGImage(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	puzzleID := strings.TrimSuffix(r.PathValue("id"), ".svg")
 	puzzle, err := server.publicPuzzleByID(r.Context(), puzzleID)
 	if err != nil {
@@ -436,6 +483,9 @@ func (server *Server) handlePuzzleOGImage(w http.ResponseWriter, r *http.Request
 }
 
 func (server *Server) publicPuzzleByID(ctx context.Context, puzzleID string) (Puzzle, error) {
+	if !validPuzzleID(puzzleID) {
+		return Puzzle{}, ErrPuzzleNotFound
+	}
 	puzzle, err := server.puzzles.PuzzleByID(ctx, puzzleID)
 	if err != nil {
 		return Puzzle{}, err
@@ -514,7 +564,9 @@ func clampedQueryInt(r *http.Request, key string, fallback, minValue, maxValue i
 func isGuessValidationError(err error) bool {
 	return errors.Is(err, ErrInvalidGroupSize) ||
 		errors.Is(err, ErrUnknownTile) ||
-		errors.Is(err, ErrAlreadySolved)
+		errors.Is(err, ErrAlreadySolved) ||
+		errors.Is(err, ErrInvalidPuzzleID) ||
+		errors.Is(err, ErrInvalidClientGuessID)
 }
 
 func humanError(err error) string {
@@ -525,6 +577,10 @@ func humanError(err error) string {
 		return "This guess contains a tile that is not in the puzzle."
 	case errors.Is(err, ErrAlreadySolved):
 		return "That vibe is already locked."
+	case errors.Is(err, ErrInvalidPuzzleID):
+		return "That puzzle id is not valid."
+	case errors.Is(err, ErrInvalidClientGuessID):
+		return "That guess id is not valid."
 	case errors.Is(err, ErrAttemptFinished):
 		return "This attempt is already finished."
 	default:
@@ -574,7 +630,7 @@ func (response *bufferedResponse) Write(body []byte) (int, error) {
 
 func (server *Server) withFrontendMetadata(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		metadata, ok := frontendMetadataFor(r)
+		metadata, ok := server.frontendMetadataFor(r)
 		if r.Method != http.MethodGet || !ok {
 			next.ServeHTTP(w, r)
 			return
@@ -613,8 +669,8 @@ type frontendMetadata struct {
 	imageType   string
 }
 
-func frontendMetadataFor(r *http.Request) (frontendMetadata, bool) {
-	baseURL := requestBaseURL(r)
+func (server *Server) frontendMetadataFor(r *http.Request) (frontendMetadata, bool) {
+	baseURL := server.publicBaseURL
 	if puzzleID := sharedPuzzleID(r.URL.Path); puzzleID != "" {
 		escapedID := url.PathEscape(puzzleID)
 		return frontendMetadata{
@@ -682,21 +738,12 @@ func injectFrontendMetadata(body []byte, metadata frontendMetadata) []byte {
 	return bytes.Replace(body, []byte("<head>"), []byte("<head>"+tags), 1)
 }
 
-func requestBaseURL(r *http.Request) string {
-	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
-	if scheme == "" {
-		if r.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
+func normalizePublicBaseURL(raw string) string {
+	value := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if value == "" {
+		return "http://localhost:3000"
 	}
-
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = r.Host
-	}
-	return scheme + "://" + host
+	return value
 }
 
 func copyHeaders(dst, src http.Header) {
@@ -781,21 +828,48 @@ func retryAfterSeconds(duration time.Duration) int {
 }
 
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, maxBytes int64, target any, message string) bool {
+	if !hasJSONContentType(r) {
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json.")
+		return false
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(target); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "Payload is too large.")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, message)
 		return false
 	}
 
 	var trailing struct{}
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, http.StatusRequestEntityTooLarge, "Payload is too large.")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, message)
 		return false
 	}
 	return true
+}
+
+func hasJSONContentType(r *http.Request) bool {
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if contentType == "" {
+		return false
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+func isRequestBodyTooLarge(err error) bool {
+	var maxBytesErr *http.MaxBytesError
+	return errors.As(err, &maxBytesErr)
 }
 
 type statusRecorder struct {
@@ -838,10 +912,39 @@ func withRequestLogging(next http.Handler) http.Handler {
 			"status", status,
 			"duration_ms", time.Since(started).Milliseconds(),
 			"request_id", requestIDFromContext(r.Context()),
-			"client_ip", clientIP(r),
+			"client_ip", r.RemoteAddr,
 			"user_agent", r.UserAgent(),
 		)
 	})
+}
+
+func (server *Server) clientIP(r *http.Request) string {
+	return server.clientIdentity.clientIP(r)
+}
+
+func (server *Server) allowPuzzleRead(w http.ResponseWriter, r *http.Request) bool {
+	decision, err := server.checkRateLimit(r.Context(), "read-puzzle:"+server.clientIP(r), readRateLimit, readRateWindow, server.readLimiter)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
+		return false
+	}
+	if !decision.allowed {
+		writeRateLimit(w, "You're requesting puzzle data too quickly. Try again shortly.", decision.retryAfter)
+		return false
+	}
+	return true
+}
+
+func (server *Server) requireMetrics(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(server.metricsToken)) != 1 {
+			writeError(w, http.StatusUnauthorized, "Metrics authorization required.")
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		next(w, r)
+	}
 }
 
 func withRequestID(next http.Handler) http.Handler {
@@ -910,8 +1013,8 @@ func withCORS(next http.Handler, origins []string, devCORS bool) http.Handler {
 		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 			w.Header().Set("Vary", "Origin")
 		}
 
@@ -922,6 +1025,22 @@ func withCORS(next http.Handler, origins []string, devCORS bool) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func withCacheSafety(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isPrivateRoute(r.URL.Path) {
+			w.Header().Set("Cache-Control", "private, no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isPrivateRoute(route string) bool {
+	return route == "/api/session" || route == "/api/streak" ||
+		strings.HasPrefix(route, "/api/attempts/") ||
+		strings.HasPrefix(route, "/api/admin/") ||
+		strings.HasSuffix(route, "/easy-hint")
 }
 
 func withSecurityHeaders(next http.Handler) http.Handler {

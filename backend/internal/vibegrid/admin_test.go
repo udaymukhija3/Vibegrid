@@ -31,7 +31,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate rate_limit_hits, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -40,6 +40,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 		Puzzles:            puzzleStore,
 		Store:              NewPostgresAttemptStore(database),
 		AdminPuzzles:       puzzleStore,
+		AdminSessions:      NewPostgresAdminSessionStore(database),
 		Community:          puzzleStore,
 		RateLimits:         NewPostgresRateLimitStore(database),
 		Moderation:         NewPostgresModerationStore(database),
@@ -242,12 +243,16 @@ func TestModerationReportArchiveAppealReinstateFlow(t *testing.T) {
 	handler, _ := newAdminTestServer(t)
 
 	created := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
-	if created.Code != http.StatusCreated {
+	if created.Code != http.StatusAccepted {
 		t.Fatalf("create community puzzle failed: %d %s", created.Code, created.Body.String())
 	}
 	var createdBody createdPuzzleResponse
 	if err := json.NewDecoder(created.Body).Decode(&createdBody); err != nil {
 		t.Fatal(err)
+	}
+	approved := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+createdBody.ID+"/approve", testAdminToken, nil)
+	if approved.Code != http.StatusOK {
+		t.Fatalf("approve community puzzle failed: %d %s", approved.Code, approved.Body.String())
 	}
 
 	reported := adminRequest(t, handler, http.MethodPost, "/api/reports", "", ReportInput{

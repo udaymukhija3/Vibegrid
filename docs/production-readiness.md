@@ -1,6 +1,6 @@
 # VibeGrid — Production Readiness & Product Review
 
-Status as of June 5, 2026: feature-complete locally (play / create+share / admin
+Status as of June 25, 2026: feature-complete locally (play / create→review→share / admin
 author / stats / moderation), single-container deploy scaffolding present, CI
 configured, **not deployed to a permanent host yet**.
 This document tracks what is already launch-ready and what still needs attention
@@ -28,9 +28,11 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
       as a release command; app startup connects and seeds without migrating.
 - [ ] Production env: `VIBEGRID_SECURE_COOKIES=true`, strong
       `VIBEGRID_ADMIN_PASSWORD` + `VIBEGRID_ADMIN_SESSION_SECRET`, optional
-      rotated `VIBEGRID_ADMIN_TOKEN` for automation, fixed `VIBEGRID_TIMEZONE`
-      (see "daily rollover" below), and `VIBEGRID_ALLOWED_ORIGINS` only for
-      non-same-origin clients.
+      rotated `VIBEGRID_ADMIN_TOKEN` for automation, a random
+      `VIBEGRID_METRICS_TOKEN`, fixed `VIBEGRID_TIMEZONE` (see "daily rollover"
+      below), exact HTTPS `VIBEGRID_PUBLIC_BASE_URL`, and
+      `VIBEGRID_ALLOWED_ORIGINS` only for non-same-origin clients. Configure
+      `VIBEGRID_TRUSTED_PROXY_CIDRS` only from verified proxy source ranges.
 - [ ] **Verify the cookie path in production.** The Go binary serves web and API
       same-origin; confirm `vibegrid_session` persists after a guess + refresh.
 - [ ] Custom domain + HTTPS (automatic on Fly/most platforms).
@@ -47,14 +49,16 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 - [x] **Input length caps.** Body size and per-field lengths are capped for
       category names, explanations, and tiles.
 - [x] **UGC moderation.** Community creation is unauthenticated free text, but
-      the launch path now includes blocklisted terms, DB-backed reports, reason
-      codes, an admin moderation queue, archive/reinstate actions, appeals, and
-      an audit log.
-- [ ] **Dependency scanning**: `govulncheck` for Go and `npm audit` /
-      Dependabot/Renovate in CI.
-- [x] **Admin auth threat model.** The web UI uses a password-backed signed
-      HttpOnly session cookie. A static bearer token remains as an automation
-      fallback, and moderation actions are audit logged.
+      every submission starts pending; the launch path includes blocklisted terms,
+      DB-backed reports, reason codes, an admin approval/moderation queue,
+      archive/reinstate actions, appeals, and an audit log.
+- [x] **Dependency scanning**: CI runs `govulncheck` for Go and fails a
+      production-dependency `npm audit` on high severity. Enable Dependabot or
+      Renovate in the GitHub repository as a manual provider setting.
+- [x] **Admin auth threat model.** The web UI uses a password-backed opaque,
+      HttpOnly, revocable session cookie; only its hash is stored in Postgres.
+      A static bearer token remains as an automation fallback, and moderation
+      actions are audit logged.
 - [ ] Confirm parameterized queries everywhere (they are) and document it.
 
 ### P1 — Reliability & data
@@ -62,8 +66,9 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 - [ ] **Backups / PITR** on managed Postgres; the runbook is documented, but the
       provider setting must be enabled in the production account.
 - [x] **Observability**: request-logging middleware (method, path, status,
-      latency, client IP, user agent), `/metrics`, alert-rule templates, and a
-      starter Grafana dashboard are checked in. External log drain/error
+      latency, connected peer, user agent), bearer-protected `/metrics`,
+      bounded route labels, alert-rule templates, and a starter Grafana dashboard
+      are checked in. External log drain/error
       tracking still needs provider credentials.
 - [x] **Alerting templates** on scrape failure, 5xx spikes, slow requests, and
       no traffic are checked in under `monitoring/`.
@@ -72,11 +77,11 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 
 ### P1 — Testing & QA
 
-- [x] **End-to-end smoke tests** for production routes and create/share are in
-      `scripts/e2e.mjs` and `scripts/smoke.mjs`. Playwright browser coverage is
+- [x] **End-to-end smoke tests** for production routes and pending community
+      submissions are in `scripts/e2e.mjs` and `scripts/smoke.mjs`. Playwright browser coverage is
       still a useful next layer.
 - [ ] Component tests (React Testing Library) for the game board and the draft form.
-- [ ] Add `govulncheck` + `npm audit` + Playwright to CI.
+- [ ] Add Playwright browser coverage to CI.
 - [ ] A quick load test (k6/vegeta) on `POST /api/guesses` to confirm the
       transactional path holds under real concurrency, not just the race test.
 - [ ] Accessibility audit (axe/Lighthouse); the UI is decent but formalize it.
@@ -92,7 +97,9 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 ### P2 — Product, legal, ops
 
 - [x] **Privacy policy + ToS.** Launch copy lives at `/privacy` and `/terms`.
-- [ ] Data retention policy for anonymous attempts.
+- [x] Guest attempt and guest-session retention. Both expire after up to 30
+      days; the app runs bounded database cleanup on boot and hourly. The public
+      privacy page states the window.
 - [x] UGC content policy + report/takedown mechanism (ties to moderation above)
       lives at `/policy` and in the admin moderation queue.
 - [ ] Full favicon/app-icon set (basic favicon + dynamic social image done).
@@ -125,11 +132,13 @@ sense; they are under-specified behaviors and product risks.
    generator composes a deterministic date-specific board from the curated bank.
 
 2. **Content sustainability.** The daily no longer depends on a human authoring
-   a puzzle every day, but editorial quality still does. There is no scheduling
-   calendar, no draft queue depth, and **no preview** (admins publish blind —
-   there is no "play this draft as a player" before publishing). Plan a calendar
-   view, queue-health view, and preview mode. The deferred AI-assisted-draft
-   (human-reviewed) idea is a quality accelerator, not a rollover requirement.
+   a puzzle every day, but editorial quality still does. Admins can preview the
+   exact public tile order and answer key before publish/approval, and `/admin`
+   shows queue health for the next launch window: scheduled editorial days,
+   evergreen fallback days, draft count, and pending community review count.
+   A richer drag-and-drop calendar remains a workflow refinement. The deferred
+   AI-assisted-draft (human-reviewed) idea is a quality accelerator, not a
+   rollover requirement.
 
 3. **Identity model (decided for launch).** Public players stay in guest mode for
    v1. "One attempt per puzzle" and the 4-mistake cap are **cookie-bound, not
@@ -148,8 +157,8 @@ sense; they are under-specified behaviors and product risks.
    this is the sanctioned "ML story", not the cut difficulty bandit).
 
 5. **Community/UGC model.** Confirm the intended shape:
-   - Link-only (no public gallery) — currently true, and the right default given
-     moderation cost. Keep it.
+   - Link-only (no public gallery) — currently true after admin approval, and the
+     right default given moderation cost. Keep it.
    - **No ownership/edit/delete** — unauthenticated creation means a creator
      cannot edit their puzzle. Removal happens through report/admin archive, and
      reinstatement happens through appeal/admin review.
@@ -173,7 +182,8 @@ sense; they are under-specified behaviors and product risks.
   the spoiler-safe colored-grid is *the* viral mechanic and is cheap — `colorIndex`
   already exists per group. Highest growth-per-effort item.
 - **Streaks** (needs the identity decision above to be meaningful).
-- **Draft preview mode** for admins (quality + the publishing-blind gap).
+- **Richer scheduling calendar** for admins; the lightweight queue-health view
+  is shipped.
 - **Difficulty calibration** view (builds on the stats layer).
 - **Profanity filter + report** for UGC (also a launch safety requirement).
 

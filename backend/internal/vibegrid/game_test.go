@@ -54,8 +54,9 @@ func TestReadinessReflectsReadyCheck(t *testing.T) {
 
 func TestPublicArchiveExcludesFuturePuzzles(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: StaticPuzzleSource(SeedPuzzles()),
-		Clock:   fixedClock,
+		Puzzles:      StaticPuzzleSource(SeedPuzzles()),
+		Clock:        fixedClock,
+		MetricsToken: "test-metrics-token",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/puzzles", nil)
@@ -396,8 +397,9 @@ func TestRequestIDHeaderIsBoundedAndPropagated(t *testing.T) {
 
 func TestMetricsEndpointCountsRequests(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: StaticPuzzleSource(SeedPuzzles()),
-		Clock:   fixedClock,
+		Puzzles:      StaticPuzzleSource(SeedPuzzles()),
+		Clock:        fixedClock,
+		MetricsToken: "test-metrics-token",
 	})
 
 	for _, path := range []string{"/healthz", "/api/puzzles/today"} {
@@ -418,6 +420,7 @@ func TestMetricsEndpointCountsRequests(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-metrics-token")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -438,7 +441,8 @@ func TestMetricsEndpointCountsRequests(t *testing.T) {
 
 func TestSharedPuzzleHTMLInjectsOGMetadata(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: StaticPuzzleSource(SeedPuzzles()),
+		Puzzles:       StaticPuzzleSource(SeedPuzzles()),
+		PublicBaseURL: "https://vibegrid.example",
 		Frontend: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte("<html><head></head><body>share</body></html>"))
@@ -447,7 +451,8 @@ func TestSharedPuzzleHTMLInjectsOGMetadata(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/p/vibegrid-2026-06-02", nil)
 	req.Host = "vibegrid.example"
-	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	req.Header.Set("X-Forwarded-Proto", "http")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

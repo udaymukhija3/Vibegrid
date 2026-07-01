@@ -2,6 +2,7 @@ package vibegrid
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,7 @@ type cachedPuzzleStore struct {
 
 type cachedPuzzleEntry struct {
 	puzzle    Puzzle
+	notFound  bool
 	expiresAt time.Time
 	cachedAt  time.Time
 }
@@ -79,21 +81,26 @@ func NewCachedPuzzleStore(inner puzzleBackend, ttl time.Duration) puzzleBackend 
 }
 
 func (store *cachedPuzzleStore) PuzzleByID(ctx context.Context, puzzleID string) (Puzzle, error) {
-	if puzzle, ok := store.getCached(puzzleID); ok {
+	if puzzle, err, ok := store.getCached(puzzleID); ok {
 		store.hits.Add(1)
-		return puzzle, nil
+		return puzzle, err
 	}
 
 	result := store.flights.DoChan(puzzleID, func() (any, error) {
-		if puzzle, ok := store.getCached(puzzleID); ok {
+		if puzzle, err, ok := store.getCached(puzzleID); ok {
 			store.hits.Add(1)
-			return puzzle, nil
+			return puzzle, err
 		}
 		store.misses.Add(1)
 		puzzle, err := store.inner.PuzzleByID(ctx, puzzleID)
 		if err != nil {
-			// Negative lookups are not cached: a community puzzle is shared by link
-			// the instant it is created, so a cached "not found" would hide it.
+			if errors.Is(err, ErrPuzzleNotFound) {
+				// Short, bounded negative caching prevents a random-id flood from
+				// becoming an unbounded sequence of database cache misses. Newly
+				// created puzzles use server-generated IDs, so they cannot collide
+				// with an attacker-controlled negative key.
+				store.setNotFound(puzzleID)
+			}
 			return Puzzle{}, err
 		}
 		store.setCached(puzzleID, puzzle)
@@ -140,6 +147,14 @@ func (store *cachedPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input
 	return store.inner.CreateCommunityPuzzle(ctx, input)
 }
 
+func (store *cachedPuzzleStore) ApproveCommunity(ctx context.Context, puzzleID string) error {
+	err := store.inner.ApproveCommunity(ctx, puzzleID)
+	if err == nil {
+		store.invalidate(puzzleID)
+	}
+	return err
+}
+
 // Publish, Archive, and Reinstate change a puzzle's status/publish_date, so they
 // evict the affected id after the write commits. Archive in particular must take
 // effect promptly: it is how moderation pulls an abusive community puzzle.
@@ -167,7 +182,7 @@ func (store *cachedPuzzleStore) Reinstate(ctx context.Context, puzzleID string) 
 	return err
 }
 
-func (store *cachedPuzzleStore) getCached(puzzleID string) (Puzzle, bool) {
+func (store *cachedPuzzleStore) getCached(puzzleID string) (Puzzle, error, bool) {
 	now := store.clock()
 
 	store.mu.Lock()
@@ -175,13 +190,16 @@ func (store *cachedPuzzleStore) getCached(puzzleID string) (Puzzle, bool) {
 
 	entry, ok := store.byID[puzzleID]
 	if !ok {
-		return Puzzle{}, false
+		return Puzzle{}, nil, false
 	}
 	if now.After(entry.expiresAt) {
 		delete(store.byID, puzzleID)
-		return Puzzle{}, false
+		return Puzzle{}, nil, false
 	}
-	return entry.puzzle, true
+	if entry.notFound {
+		return Puzzle{}, ErrPuzzleNotFound, true
+	}
+	return entry.puzzle, nil, true
 }
 
 func (store *cachedPuzzleStore) setCached(puzzleID string, puzzle Puzzle) {
@@ -198,6 +216,21 @@ func (store *cachedPuzzleStore) setCached(puzzleID string, puzzle Puzzle) {
 		store.evictOldestLocked()
 	}
 	store.byID[puzzleID] = cachedPuzzleEntry{puzzle: puzzle, expiresAt: now.Add(store.ttl), cachedAt: now}
+}
+
+func (store *cachedPuzzleStore) setNotFound(puzzleID string) {
+	now := store.clock()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.maxEntries <= 0 {
+		return
+	}
+	store.pruneExpiredLocked(now)
+	if _, exists := store.byID[puzzleID]; !exists && len(store.byID) >= store.maxEntries {
+		store.evictOldestLocked()
+	}
+	// Negative entries are intentionally much shorter lived than puzzle content.
+	store.byID[puzzleID] = cachedPuzzleEntry{notFound: true, expiresAt: now.Add(30 * time.Second), cachedAt: now}
 }
 
 func (store *cachedPuzzleStore) invalidate(puzzleID string) {

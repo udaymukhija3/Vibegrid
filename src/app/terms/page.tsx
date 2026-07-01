@@ -10,20 +10,20 @@ export default function TermsPage() {
     <PolicyPage
       eyebrow="Terms"
       title="VibeGrid terms"
-      intro="These are plain-language launch terms for playing the daily puzzle and sharing community grids."
+      intro="These are plain-language launch terms for playing the daily puzzle and submitting community grids for review."
       sections={[
         {
           title: "Using VibeGrid",
           body: [
-            "You can play daily puzzles, create community puzzles, and share direct links. Do not interfere with the service, bypass rate limits, scrape aggressively, or use the app to harm other people.",
-            "Community puzzles are unlisted by default. Anyone with the link can play them unless the grid is removed."
+            "You can play daily puzzles and submit community puzzles for review. Do not interfere with the service, bypass rate limits, scrape aggressively, or use the app to harm other people.",
+            "Community puzzles are not public until an administrator approves them. Approved grids stay unlisted; anyone with the direct link can play unless the grid is removed."
           ]
         },
         {
           title: "Your submissions",
           body: [
             "You are responsible for the words, group names, explanations, reports, and appeals you submit.",
-            "By creating a community grid, you allow VibeGrid to host it, display it, share it by link, moderate it, and store the records needed to run the service."
+            "By creating a community grid, you allow VibeGrid to review it and, if approved, host it, share it by link, moderate it, and store the records needed to run the service."
           ]
         },
         {

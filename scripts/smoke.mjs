@@ -31,6 +31,7 @@ export async function runSmoke({
   baseUrl = process.env.VIBEGRID_BASE_URL ?? "http://127.0.0.1:3000",
   mutate = false,
   createCommunity = false,
+  metricsToken = process.env.VIBEGRID_METRICS_TOKEN ?? "",
   log = console.log
 } = {}) {
   const base = normalizeBaseURL(baseUrl);
@@ -144,37 +145,30 @@ export async function runSmoke({
   }
 
   if (createCommunity) {
-    const created = await expectJSON("/api/community/puzzles", 201, {
+    const created = await expectJSON("/api/community/puzzles", 202, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sampleCommunityPuzzle())
     });
     assert(created.payload.ok === true && created.payload.id, "community create did not return a puzzle id");
-    await expectJSON(`/api/puzzles/${encodeURIComponent(created.payload.id)}`);
-    await expectText(`/p/${encodeURIComponent(created.payload.id)}`);
-    log(`ok community create #${created.payload.puzzleNumber}`);
-
-    const report = await expectJSON("/api/reports", 201, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        puzzleId: created.payload.id,
-        reason: "SPAM",
-        details: "Smoke test report for the moderation queue.",
-        contact: ""
-      })
-    });
-    assert(report.payload.ok === true && report.payload.id, "report did not return a moderation id");
-    log("ok moderation report write");
+    assert(created.payload.status === "PENDING", "community puzzle was not held for review");
+    await expectJSON(`/api/puzzles/${encodeURIComponent(created.payload.id)}`, 404);
+    log(`ok community submission #${created.payload.puzzleNumber} is pending review`);
   }
 
-  const metrics = await expectText("/metrics");
-  assert(metrics.text.includes("vibegrid_up 1"), "metrics did not expose vibegrid_up");
-  assert(metrics.text.includes("vibegrid_http_requests_total"), "metrics did not expose request counters");
-  assert(metrics.text.includes("vibegrid_http_response_bytes_total"), "metrics did not expose response byte counters");
-  assert(metrics.text.includes("vibegrid_process_heap_alloc_bytes"), "metrics did not expose process memory gauges");
-  assert(metrics.text.includes("vibegrid_store_operations_total"), "metrics did not expose storage operation counters");
-  log("ok metrics");
+  if (metricsToken) {
+    const metrics = await expectText("/metrics", 200, {
+      headers: { Authorization: `Bearer ${metricsToken}` }
+    });
+    assert(metrics.text.includes("vibegrid_up 1"), "metrics did not expose vibegrid_up");
+    assert(metrics.text.includes("vibegrid_http_requests_total"), "metrics did not expose request counters");
+    assert(metrics.text.includes("vibegrid_http_response_bytes_total"), "metrics did not expose response byte counters");
+    assert(metrics.text.includes("vibegrid_process_heap_alloc_bytes"), "metrics did not expose process memory gauges");
+    assert(metrics.text.includes("vibegrid_store_operations_total"), "metrics did not expose storage operation counters");
+    log("ok protected metrics");
+  } else {
+    log("skipped protected metrics (VIBEGRID_METRICS_TOKEN is not set)");
+  }
 
   return { baseUrl: base.toString(), puzzleId: puzzle.id, puzzleNumber: puzzle.puzzleNumber };
 }
@@ -230,7 +224,8 @@ function cliOptions(argv) {
   const options = {
     baseUrl: process.env.VIBEGRID_BASE_URL ?? "http://127.0.0.1:3000",
     mutate: process.env.VIBEGRID_SMOKE_MUTATE === "true",
-    createCommunity: process.env.VIBEGRID_SMOKE_CREATE_COMMUNITY === "true"
+    createCommunity: process.env.VIBEGRID_SMOKE_CREATE_COMMUNITY === "true",
+    metricsToken: process.env.VIBEGRID_METRICS_TOKEN ?? ""
   };
 
   for (let index = 0; index < args.length; index++) {
@@ -241,6 +236,8 @@ function cliOptions(argv) {
       options.createCommunity = true;
     } else if (arg === "--base-url") {
       options.baseUrl = args[++index];
+    } else if (arg === "--metrics-token") {
+      options.metricsToken = args[++index] ?? "";
     } else if (!arg.startsWith("--")) {
       options.baseUrl = arg;
     }

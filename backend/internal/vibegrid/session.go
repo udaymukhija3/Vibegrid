@@ -9,9 +9,9 @@ import (
 
 const sessionCookieName = "vibegrid_session"
 
-// sessionTTL is how long an anonymous session cookie lives. Long enough that a
-// returning player keeps their attempt history and streak across days.
-const sessionTTL = 24 * time.Hour * 183
+// sessionTTL is how long an anonymous session cookie lives. It matches attempt
+// retention so a returning browser never silently starts a second durable trail.
+const sessionTTL = 24 * time.Hour * 30
 
 const sessionMaxAgeDays = int(sessionTTL / (24 * time.Hour))
 

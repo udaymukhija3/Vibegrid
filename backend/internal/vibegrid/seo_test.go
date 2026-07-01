@@ -9,7 +9,7 @@ import (
 )
 
 func TestRobotsTxtPointsAtSitemap(t *testing.T) {
-	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())})
+	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), PublicBaseURL: "https://vibegrid.example"})
 
 	rec := seoRequest(handler, "/robots.txt")
 	if rec.Code != http.StatusOK {
@@ -28,7 +28,7 @@ func TestRobotsTxtPointsAtSitemap(t *testing.T) {
 }
 
 func TestSitemapListsPublishedPuzzlesOnly(t *testing.T) {
-	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), Clock: fixedClock})
+	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), Clock: fixedClock, PublicBaseURL: "https://vibegrid.example"})
 
 	rec := seoRequest(handler, "/sitemap.xml")
 	if rec.Code != http.StatusOK {
@@ -74,8 +74,6 @@ func TestSitemapListsPublishedPuzzlesOnly(t *testing.T) {
 
 func seoRequest(handler http.Handler, target string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, target, nil)
-	req.Host = "vibegrid.example"
-	req.Header.Set("X-Forwarded-Proto", "https")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec

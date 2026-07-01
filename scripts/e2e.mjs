@@ -28,8 +28,10 @@ async function main() {
       ...process.env,
       GOCACHE: goCache,
       VIBEGRID_ADDR: addr,
+      VIBEGRID_ENV: "development",
       VIBEGRID_TIMEZONE: "UTC",
-      VIBEGRID_BLOCKED_TERMS: "blocked-smoke-term"
+      VIBEGRID_BLOCKED_TERMS: "blocked-smoke-term",
+      VIBEGRID_METRICS_TOKEN: "e2e-metrics-token"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -43,6 +45,7 @@ async function main() {
     await runSmoke({
       baseUrl,
       mutate: true,
+      metricsToken: "e2e-metrics-token",
       log: (line) => console.log(`e2e ${line}`)
     });
     console.log(`e2e passed at ${baseUrl}`);

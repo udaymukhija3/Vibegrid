@@ -4,8 +4,8 @@ VibeGrid exposes three operational endpoints:
 
 - `/healthz` - process liveness.
 - `/readyz` - readiness; checks Postgres when `DATABASE_URL` is set.
-- `/metrics` - Prometheus text metrics for request count, status, and latency,
-  plus connection-pool and puzzle-cache series (see below).
+- `/metrics` - bearer-protected Prometheus text metrics for request count,
+  status, and latency, plus connection-pool and puzzle-cache series (see below).
 
 ## Public Uptime Checks
 
@@ -30,7 +30,11 @@ Import the files under `monitoring/` into the chosen metrics stack:
 - `monitoring/grafana-dashboard.json` - dashboard starter for traffic, errors,
   and latency by route.
 
-Replace `vibegrid.example.com` with the real domain before importing.
+Replace `vibegrid.example.com` with the real domain before importing. Mount a
+root-readable file at `/etc/prometheus/secrets/vibegrid_metrics_token` containing
+the app's `VIBEGRID_METRICS_TOKEN` (with no surrounding quotes). The checked-in
+Prometheus example sends it as a Bearer token; a request without it receives
+`401`.
 
 ### Exposed series
 
@@ -38,6 +42,11 @@ HTTP (always):
 
 - `vibegrid_http_requests_total{method,route,status}`
 - `vibegrid_http_request_duration_seconds{...}` (histogram)
+- `vibegrid_http_metric_series_dropped_total` (counter; alert if it rises)
+
+Route labels are a fixed, bounded set. Unknown API routes collapse to `/api/*`
+and the process keeps at most 256 HTTP metric series, so attacker-controlled
+paths cannot grow metrics memory without bound.
 
 Connection pool (when `DATABASE_URL` is set) — watch the wait series for pool
 saturation under load:

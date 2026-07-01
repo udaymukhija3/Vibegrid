@@ -18,6 +18,8 @@ export function formatStatus(status: PuzzleStatus) {
       return "Published";
     case "ARCHIVED":
       return "Archived";
+    case "PENDING":
+      return "Pending review";
     case "DRAFT":
     default:
       return "Draft";

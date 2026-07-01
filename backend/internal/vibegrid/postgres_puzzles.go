@@ -10,6 +10,7 @@ import (
 )
 
 var ErrPublishDateTaken = errors.New("a puzzle is already published for that date")
+var ErrPuzzleNotPending = errors.New("puzzle is not a pending community submission")
 
 // PostgresPuzzleStore reads and writes puzzle content in Postgres. It satisfies
 // PuzzleSource for the public read path and adds admin authoring operations.
@@ -244,9 +245,8 @@ func (store *PostgresPuzzleStore) CreateDraft(ctx context.Context, input AdminPu
 	return puzzle, nil
 }
 
-// CreateCommunityPuzzle persists a user-created puzzle. Unlike an editorial
-// draft it is immediately PUBLISHED (so the share link works right away), has no
-// publish_date, and is tagged COMMUNITY so it stays out of the daily rotation.
+// CreateCommunityPuzzle persists a user-created puzzle as PENDING. It has no
+// publish date and cannot be read publicly until an administrator approves it.
 func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (Puzzle, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
@@ -263,7 +263,7 @@ func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, inp
 	}
 
 	puzzle := input.toPuzzle(nextNumber)
-	puzzle.Status = PuzzleStatusPublished
+	puzzle.Status = PuzzleStatusPending
 	puzzle.Origin = OriginCommunity
 	if err := insertPuzzleTx(ctx, tx, puzzle, false); err != nil {
 		return Puzzle{}, err
@@ -272,6 +272,35 @@ func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, inp
 		return Puzzle{}, fmt.Errorf("commit community create: %w", err)
 	}
 	return puzzle, nil
+}
+
+func (store *PostgresPuzzleStore) ApproveCommunity(ctx context.Context, puzzleID string) error {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	result, err := store.db.ExecContext(ctx,
+		`update puzzles set status = 'PUBLISHED', updated_at = now()
+		 where id = $1 and origin = 'COMMUNITY' and status = 'PENDING'`,
+		puzzleID,
+	)
+	if err != nil {
+		return fmt.Errorf("approve community puzzle: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("approve community rows affected: %w", err)
+	}
+	if affected > 0 {
+		return nil
+	}
+	var exists bool
+	if err := store.db.QueryRowContext(ctx, `select exists(select 1 from puzzles where id = $1)`, puzzleID).Scan(&exists); err != nil {
+		return fmt.Errorf("check community puzzle: %w", err)
+	}
+	if !exists {
+		return ErrPuzzleNotFound
+	}
+	return ErrPuzzleNotPending
 }
 
 // Publish sets a draft live for a date. The unique constraint on publish_date

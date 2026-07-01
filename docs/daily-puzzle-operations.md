@@ -70,10 +70,12 @@ template.
 Use `/admin` for the queue:
 
 1. Save each candidate as a draft.
-2. Publish only after a manual solve.
-3. Assign dates in order.
-4. Keep community puzzles out of the daily queue.
-5. Review reports before reusing a theme or tile pattern.
+2. Check queue health for the next launch window.
+3. Preview the exact board and answer key before publishing.
+4. Publish only after a manual solve.
+5. Assign dates in order.
+6. Keep community puzzles out of the daily queue.
+7. Review reports before reusing a theme or tile pattern.
 
 ## Daily Review
 

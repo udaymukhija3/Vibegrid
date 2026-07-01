@@ -3,8 +3,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import clsx from "clsx";
 import { toast } from "sonner";
-import type { AdminPuzzle, ModerationAction, ModerationAppeal, ModerationReport } from "@/types/puzzle";
+import type {
+  AdminPuzzle,
+  AdminPuzzlePreview,
+  AdminQueueHealth,
+  ModerationAction,
+  ModerationAppeal,
+  ModerationReport
+} from "@/types/puzzle";
 import {
+  approveCommunityPuzzle,
   archivePuzzle,
   checkAdminSession,
   createDraftPuzzle,
@@ -12,6 +20,8 @@ import {
   fetchAnalytics,
   fetchAppeals,
   fetchAuditLog,
+  fetchPuzzlePreview,
+  fetchQueueHealth,
   fetchReports,
   loginAdmin,
   logoutAdmin,
@@ -27,6 +37,7 @@ import { PuzzleDraftForm } from "@/components/PuzzleDraftForm";
 
 const statusStyles: Record<string, string> = {
   PUBLISHED: "bg-mint",
+  PENDING: "bg-plum text-white",
   DRAFT: "bg-yolk",
   ARCHIVED: "bg-neutral-200",
   OPEN: "bg-yolk",
@@ -39,13 +50,16 @@ export function AdminDesk() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [passwordInput, setPasswordInput] = useState("");
   const [puzzles, setPuzzles] = useState<AdminPuzzle[] | null>(null);
+  const [queueHealth, setQueueHealth] = useState<AdminQueueHealth | null>(null);
   const [reports, setReports] = useState<ModerationReport[]>([]);
   const [appeals, setAppeals] = useState<ModerationAppeal[]>([]);
   const [auditLog, setAuditLog] = useState<ModerationAction[]>([]);
   const [publishDates, setPublishDates] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [analytics, setAnalytics] = useState<Record<string, PuzzleAnalytics>>({});
+  const [previews, setPreviews] = useState<Record<string, AdminPuzzlePreview>>({});
   const [openAnalyticsId, setOpenAnalyticsId] = useState<string | null>(null);
+  const [openPreviewId, setOpenPreviewId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -79,9 +93,20 @@ export function AdminDesk() {
     }
   }, []);
 
+  const loadQueueHealth = useCallback(async () => {
+    try {
+      setQueueHealth(await fetchQueueHealth());
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Could not load queue health.";
+      setQueueHealth(null);
+      setError(message);
+      toast.error(message);
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadPuzzles(), loadModeration()]);
-  }, [loadModeration, loadPuzzles]);
+    await Promise.all([loadPuzzles(), loadModeration(), loadQueueHealth()]);
+  }, [loadModeration, loadPuzzles, loadQueueHealth]);
 
   useEffect(() => {
     checkAdminSession()
@@ -119,6 +144,7 @@ export function AdminDesk() {
     await logoutAdmin().catch(() => undefined);
     setIsAuthenticated(false);
     setPuzzles(null);
+    setQueueHealth(null);
     setReports([]);
     setAppeals([]);
     setAuditLog([]);
@@ -144,6 +170,24 @@ export function AdminDesk() {
     }
   }
 
+  async function togglePreview(puzzleId: string) {
+    if (openPreviewId === puzzleId) {
+      setOpenPreviewId(null);
+      return;
+    }
+    setOpenPreviewId(puzzleId);
+    if (!previews[puzzleId]) {
+      try {
+        const data = await fetchPuzzlePreview(puzzleId);
+        setPreviews((current) => ({ ...current, [puzzleId]: data }));
+      } catch (previewError) {
+        const message = previewError instanceof Error ? previewError.message : "Could not load preview.";
+        setError(message);
+        toast.error(message);
+      }
+    }
+  }
+
   async function publish(puzzleId: string) {
     const date = publishDates[puzzleId];
     if (!date) {
@@ -159,6 +203,13 @@ export function AdminDesk() {
   async function archive(puzzleId: string) {
     await runAction("Puzzle archived.", async () => {
       await archivePuzzle(puzzleId);
+      await refreshAll();
+    });
+  }
+
+  async function approveCommunity(puzzleId: string) {
+    await runAction("Community grid approved and live.", async () => {
+      await approveCommunityPuzzle(puzzleId);
       await refreshAll();
     });
   }
@@ -247,6 +298,8 @@ export function AdminDesk() {
         </button>
       </div>
 
+      <QueueHealthPanel queueHealth={queueHealth} />
+
       <ModerationPanel
         reports={reports}
         appeals={appeals}
@@ -280,6 +333,14 @@ export function AdminDesk() {
                   <StatusBadge status={formatStatus(puzzle.status)} rawStatus={puzzle.status} />
                   <button
                     type="button"
+                    onClick={() => togglePreview(puzzle.id)}
+                    aria-expanded={openPreviewId === puzzle.id}
+                    className="inline-flex h-9 items-center rounded border border-neutral-300 bg-white px-3 text-sm font-black text-neutral-700"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => toggleAnalytics(puzzle.id)}
                     aria-expanded={openAnalyticsId === puzzle.id}
                     className="inline-flex h-9 items-center rounded border border-neutral-300 bg-white px-3 text-sm font-black text-neutral-700"
@@ -306,6 +367,16 @@ export function AdminDesk() {
                       </button>
                     </>
                   )}
+                  {puzzle.status === "PENDING" && puzzle.origin === "COMMUNITY" && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => approveCommunity(puzzle.id)}
+                      className="inline-flex h-9 items-center rounded border-2 border-ink bg-mint px-3 text-sm font-black shadow-[0_3px_0_#171717] disabled:opacity-50"
+                    >
+                      Approve
+                    </button>
+                  )}
                   {puzzle.status === "PUBLISHED" && (
                     <button
                       type="button"
@@ -329,6 +400,7 @@ export function AdminDesk() {
                 </div>
               </div>
 
+              {openPreviewId === puzzle.id && <PreviewPanel data={previews[puzzle.id]} />}
               {openAnalyticsId === puzzle.id && <AnalyticsPanel data={analytics[puzzle.id]} />}
             </div>
           ))}
@@ -349,6 +421,88 @@ export function AdminDesk() {
       </section>
     </div>
   );
+}
+
+const queueCoverageStyles: Record<string, string> = {
+  EDITORIAL: "border-mint bg-mint/20",
+  EVERGREEN: "border-yolk bg-yolk/20",
+  UNSCHEDULED: "border-tomato bg-tomato/10"
+};
+
+function QueueHealthPanel({ queueHealth }: { queueHealth: AdminQueueHealth | null }) {
+  if (!queueHealth) {
+    return (
+      <section className="rounded border-2 border-ink bg-white p-4 shadow-[0_6px_0_#171717]">
+        <h2 className="text-lg font-black">Queue health</h2>
+        <p className="mt-3 font-semibold text-neutral-600">Loading launch calendar.</p>
+      </section>
+    );
+  }
+
+  const unscheduled = queueHealth.days.filter((day) => day.coverage === "UNSCHEDULED").length;
+
+  return (
+    <section className="rounded border-2 border-ink bg-white p-4 shadow-[0_6px_0_#171717]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black text-plum">Launch calendar</p>
+          <h2 className="text-lg font-black">Queue health</h2>
+          <p className="mt-1 text-sm font-semibold text-neutral-600">
+            Server today is {queueHealth.today}. Editorial puzzles win; evergreen fallback fills open days.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-sm font-bold sm:grid-cols-4">
+          <QueueStat label="Scheduled" value={queueHealth.scheduledEditorial} />
+          <QueueStat label="Fallback" value={queueHealth.evergreenFallbacks} />
+          <QueueStat label="Drafts" value={queueHealth.drafts} />
+          <QueueStat label="Pending UGC" value={queueHealth.pendingCommunity} />
+        </div>
+      </div>
+
+      {unscheduled > 0 && (
+        <p className="mt-3 rounded border border-tomato bg-tomato/10 px-3 py-2 text-sm font-bold text-ink">
+          {unscheduled} day{unscheduled === 1 ? "" : "s"} have no editorial puzzle and no evergreen fallback. Add bank
+          content before launch.
+        </p>
+      )}
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+        {queueHealth.days.map((day) => (
+          <article
+            key={day.date}
+            className={clsx("rounded border-2 p-3", queueCoverageStyles[day.coverage] ?? "border-neutral-200 bg-neutral-50")}
+          >
+            <p className="text-xs font-black text-neutral-500">{day.date}</p>
+            <p className="mt-1 font-black">{queueCoverageLabel(day.coverage)}</p>
+            {day.puzzleNumber !== undefined && (
+              <p className="mt-1 text-sm font-semibold text-neutral-600">VibeGrid #{day.puzzleNumber}</p>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function QueueStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded border border-neutral-200 bg-neutral-50 px-3 py-2">
+      <p className="text-lg font-black">{value}</p>
+      <p className="text-xs text-neutral-500">{label}</p>
+    </div>
+  );
+}
+
+function queueCoverageLabel(coverage: AdminQueueHealth["days"][number]["coverage"]) {
+  switch (coverage) {
+    case "EDITORIAL":
+      return "Editorial";
+    case "EVERGREEN":
+      return "Evergreen";
+    case "UNSCHEDULED":
+    default:
+      return "Unscheduled";
+  }
 }
 
 function ModerationPanel({
@@ -540,6 +694,79 @@ function StatusBadge({ status, rawStatus }: { status: string; rawStatus: string 
     <span className={clsx("rounded px-3 py-1 text-xs font-black", statusStyles[rawStatus] ?? "bg-neutral-200")}>
       {status}
     </span>
+  );
+}
+
+const previewColorClasses = ["bg-mint", "bg-yolk", "bg-tomato text-white", "bg-plum text-white"];
+
+function previewColorClass(colorIndex: number) {
+  const index = ((colorIndex % previewColorClasses.length) + previewColorClasses.length) % previewColorClasses.length;
+  return previewColorClasses[index];
+}
+
+function PreviewPanel({ data }: { data: AdminPuzzlePreview | undefined }) {
+  if (!data) {
+    return <p className="mt-3 text-sm font-semibold text-neutral-600">Loading preview...</p>;
+  }
+
+  const groupByTile = new Map<string, { name: string; colorIndex: number }>();
+  for (const group of data.groups) {
+    for (const tileId of group.tileIds) {
+      groupByTile.set(tileId, { name: group.name, colorIndex: group.colorIndex });
+    }
+  }
+
+  return (
+    <div className="mt-3 grid gap-4 rounded border-2 border-ink bg-neutral-50 p-3">
+      <div>
+        <p className="text-xs font-black text-neutral-500">Public board preview</p>
+        <p className="mt-1 text-sm font-semibold text-neutral-600">
+          This is the same tile order players will see after publish or approval.
+        </p>
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {data.puzzle.tiles.map((tile) => {
+            const owner = groupByTile.get(tile.id);
+            return (
+              <div
+                key={tile.id}
+                title={owner?.name}
+                className={clsx(
+                  "flex min-h-14 items-center justify-center rounded border-2 border-ink px-2 text-center text-xs font-black sm:text-sm",
+                  owner ? previewColorClass(owner.colorIndex) : "bg-white"
+                )}
+              >
+                {tile.text}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-xs font-black text-neutral-500">Answer key</p>
+        <div className="mt-2 grid gap-2 md:grid-cols-2">
+          {data.groups
+            .slice()
+            .sort((left, right) => left.colorIndex - right.colorIndex)
+            .map((group) => (
+              <article key={group.id} className="rounded border border-neutral-200 bg-white p-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className={clsx(
+                      "h-3 w-3 rounded-full border border-ink",
+                      previewColorClass(group.colorIndex)
+                    )}
+                  />
+                  <p className="font-black">{group.name}</p>
+                </div>
+                <p className="mt-1 text-sm font-semibold text-neutral-600">{group.explanation}</p>
+                <p className="mt-2 text-sm text-neutral-700">{group.tiles.map((tile) => tile.text).join(", ")}</p>
+              </article>
+            ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

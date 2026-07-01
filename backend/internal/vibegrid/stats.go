@@ -29,6 +29,9 @@ type adminAnalyticsResponse struct {
 // handleStats serves public completion stats for any puzzle. Without a database
 // it returns empty stats so the UI can simply show nothing.
 func (server *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
 	if _, err := server.publicPuzzleByID(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 		return
@@ -72,6 +75,10 @@ func (server *Server) handleAdminAnalytics(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	puzzleID := r.PathValue("id")
+	if !validPuzzleID(puzzleID) {
+		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
+		return
+	}
 
 	stats, err := server.stats.PuzzleStats(r.Context(), puzzleID)
 	if err != nil {

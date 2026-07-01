@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -55,17 +58,52 @@ func runMigrate(logger *slog.Logger) error {
 }
 
 func run(logger *slog.Logger) error {
+	environment, err := runtimeEnvironment(os.Getenv("VIBEGRID_ENV"))
+	if err != nil {
+		return err
+	}
+	production := environment == "production"
 	addr := resolveAddr()
 	timeZone := env("VIBEGRID_TIMEZONE", "Asia/Kolkata")
 	databaseURL := os.Getenv("DATABASE_URL")
 	adminToken := os.Getenv("VIBEGRID_ADMIN_TOKEN")
 	adminPassword := os.Getenv("VIBEGRID_ADMIN_PASSWORD")
 	adminSessionSecret := os.Getenv("VIBEGRID_ADMIN_SESSION_SECRET")
-	secureCookies := os.Getenv("VIBEGRID_SECURE_COOKIES") == "true"
+	secureCookies, err := boolEnv("VIBEGRID_SECURE_COOKIES", production)
+	if err != nil {
+		return err
+	}
 	allowedOrigins := splitCommaList(os.Getenv("VIBEGRID_ALLOWED_ORIGINS"))
 	devCORS := os.Getenv("VIBEGRID_DEV_CORS") == "true"
-	requireDatabase := os.Getenv("VIBEGRID_REQUIRE_DATABASE") == "true"
+	requireDatabase, err := boolEnv("VIBEGRID_REQUIRE_DATABASE", production)
+	if err != nil {
+		return err
+	}
 	blockedTerms := splitCommaList(os.Getenv("VIBEGRID_BLOCKED_TERMS"))
+	metricsToken := os.Getenv("VIBEGRID_METRICS_TOKEN")
+	publicBaseURL, err := validatedPublicBaseURL(os.Getenv("VIBEGRID_PUBLIC_BASE_URL"), production)
+	if err != nil {
+		return err
+	}
+	trustedProxyCIDRs := splitCommaList(os.Getenv("VIBEGRID_TRUSTED_PROXY_CIDRS"))
+	if err := validateTrustedProxyCIDRs(trustedProxyCIDRs); err != nil {
+		return err
+	}
+
+	if production {
+		if !requireDatabase || databaseURL == "" {
+			return errors.New("DATABASE_URL and VIBEGRID_REQUIRE_DATABASE=true are required in production")
+		}
+		if !secureCookies {
+			return errors.New("VIBEGRID_SECURE_COOKIES=true is required in production")
+		}
+		if metricsToken == "" {
+			return errors.New("VIBEGRID_METRICS_TOKEN is required in production")
+		}
+		if devCORS {
+			return errors.New("VIBEGRID_DEV_CORS must be false in production")
+		}
+	}
 
 	// Root context cancelled on SIGINT/SIGTERM so startup and shutdown share one
 	// lifecycle signal.
@@ -92,6 +130,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer deps.close()
+	startRetentionPruner(ctx, logger, deps.pruneExpired)
 
 	if deps.adminPuzzles == nil {
 		logger.Warn("admin endpoints disabled (requires DATABASE_URL)")
@@ -105,6 +144,7 @@ func run(logger *slog.Logger) error {
 		Puzzles:            deps.puzzles,
 		Store:              deps.attempts,
 		AdminPuzzles:       deps.adminPuzzles,
+		AdminSessions:      deps.adminSessions,
 		Community:          deps.community,
 		Stats:              deps.stats,
 		RateLimits:         deps.rateLimits,
@@ -114,6 +154,9 @@ func run(logger *slog.Logger) error {
 		AdminToken:         adminToken,
 		AdminPassword:      adminPassword,
 		AdminSessionSecret: adminSessionSecret,
+		MetricsToken:       metricsToken,
+		PublicBaseURL:      publicBaseURL,
+		TrustedProxyCIDRs:  trustedProxyCIDRs,
 		Clock:              time.Now,
 		TimeZone:           timeZone,
 		AllowedOrigins:     allowedOrigins,
@@ -159,12 +202,14 @@ type deps struct {
 	puzzles          vibegrid.PuzzleSource
 	adminPuzzles     vibegrid.AdminPuzzleStore
 	community        vibegrid.CommunityPuzzleStore
+	adminSessions    vibegrid.AdminSessionStore
 	stats            vibegrid.StatsStore
 	rateLimits       vibegrid.RateLimitStore
 	moderation       vibegrid.ModerationStore
 	ready            func(context.Context) error
 	dbStats          func() sql.DBStats
 	puzzleCacheStats func() vibegrid.CacheStats
+	pruneExpired     func(context.Context) (int64, error)
 	close            func()
 }
 
@@ -216,23 +261,116 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 	publicPuzzles := vibegrid.NewDemoPuzzleSource(banked)
 
 	logger.Info("connected to postgres, puzzles seeded")
+	attempts := vibegrid.NewPostgresAttemptStore(database)
+	adminSessions := vibegrid.NewPostgresAdminSessionStore(database)
 	return deps{
-		attempts:         vibegrid.NewPostgresAttemptStore(database),
+		attempts:         attempts,
 		puzzles:          publicPuzzles,
 		adminPuzzles:     cached,
 		community:        cached,
+		adminSessions:    adminSessions,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
 		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
 		moderation:       vibegrid.NewPostgresModerationStore(database),
 		ready:            database.PingContext,
 		dbStats:          database.Stats,
 		puzzleCacheStats: puzzleCacheStats,
+		pruneExpired: func(pruneCtx context.Context) (int64, error) {
+			before := time.Now().Add(-30 * 24 * time.Hour)
+			attemptsDeleted, err := attempts.PruneExpired(pruneCtx, before, 1_000)
+			if err != nil {
+				return attemptsDeleted, err
+			}
+			sessionsDeleted, err := adminSessions.PruneExpired(pruneCtx, time.Now(), 1_000)
+			return attemptsDeleted + sessionsDeleted, err
+		},
 		close: func() {
 			if err := database.Close(); err != nil {
 				logger.Error("closing postgres pool", "error", err)
 			}
 		},
 	}, nil
+}
+
+func runtimeEnvironment(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "production", nil
+	}
+	if value == "production" || value == "development" || value == "test" {
+		return value, nil
+	}
+	return "", fmt.Errorf("VIBEGRID_ENV must be production, development, or test")
+}
+
+func boolEnv(key string, fallback bool) (bool, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	return value, nil
+}
+
+func validatedPublicBaseURL(raw string, production bool) (string, error) {
+	value := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if value == "" {
+		if production {
+			return "", errors.New("VIBEGRID_PUBLIC_BASE_URL is required in production")
+		}
+		return "http://localhost:3000", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("VIBEGRID_PUBLIC_BASE_URL must be an absolute http(s) origin without credentials, path, query, or fragment")
+	}
+	if production && parsed.Scheme != "https" {
+		return "", errors.New("VIBEGRID_PUBLIC_BASE_URL must use https in production")
+	}
+	return value, nil
+}
+
+func validateTrustedProxyCIDRs(cidrs []string) error {
+	for _, cidr := range cidrs {
+		if _, err := netip.ParsePrefix(cidr); err != nil {
+			return fmt.Errorf("VIBEGRID_TRUSTED_PROXY_CIDRS contains invalid CIDR %q", cidr)
+		}
+	}
+	return nil
+}
+
+func startRetentionPruner(ctx context.Context, logger *slog.Logger, prune func(context.Context) (int64, error)) {
+	if prune == nil {
+		return
+	}
+	run := func() {
+		pruneCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		deleted, err := prune(pruneCtx)
+		if err != nil {
+			logger.Warn("retention cleanup failed", "error", err)
+			return
+		}
+		if deleted > 0 {
+			logger.Info("retention cleanup complete", "deleted", deleted)
+		}
+	}
+	go func() {
+		run()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
 }
 
 func splitCommaList(raw string) []string {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,8 @@ import (
 // collectors are configured, and stay absent (no-database mode) when they are not.
 func TestMetricsExposesPoolAndCacheGauges(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles: StaticPuzzleSource(SeedPuzzles()),
+		Puzzles:      StaticPuzzleSource(SeedPuzzles()),
+		MetricsToken: "test-metrics-token",
 		DBStats: func() sql.DBStats {
 			return sql.DBStats{OpenConnections: 3, InUse: 1, Idle: 2, WaitCount: 7, WaitDuration: 250 * time.Millisecond}
 		},
@@ -47,7 +49,7 @@ func TestMetricsExposesPoolAndCacheGauges(t *testing.T) {
 	}
 
 	// Without collectors (no-database mode) the runtime gauges must not appear.
-	bare := getMetrics(t, NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())}))
+	bare := getMetrics(t, NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), MetricsToken: "test-metrics-token"}))
 	if strings.Contains(bare, "vibegrid_db_open_connections") || strings.Contains(bare, "vibegrid_puzzle_cache_hits_total") {
 		t.Fatalf("runtime gauges leaked without collectors\n%s", bare)
 	}
@@ -82,10 +84,49 @@ func TestPuzzleCacheStatsCountHitsAndMisses(t *testing.T) {
 	}
 }
 
+func TestMetricsNormalizeUnknownAPIPathsAndRequireAuthorization(t *testing.T) {
+	metrics := newHTTPMetrics()
+	handler := withRequestMetrics(http.NotFoundHandler(), metrics)
+	for index := 0; index < 400; index++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/unmatched-"+strconv.Itoa(index), nil)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if len(metrics.requests) != 1 {
+		t.Fatalf("unmatched API paths must share one series, got %d", len(metrics.requests))
+	}
+	for key := range metrics.requests {
+		if key.route != "/api/*" {
+			t.Fatalf("unexpected normalized route %q", key.route)
+		}
+	}
+
+	protected := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), MetricsToken: "test-metrics-token"})
+	unauthorized := httptest.NewRecorder()
+	protected.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("metrics without a bearer token: expected 401, got %d", unauthorized.Code)
+	}
+	authorized := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-metrics-token")
+	protected.ServeHTTP(authorized, req)
+	if got := authorized.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("metrics must not be cacheable, got %q", got)
+	}
+
+	disabled := httptest.NewRecorder()
+	NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())}).ServeHTTP(disabled, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if disabled.Code != http.StatusNotFound {
+		t.Fatalf("metrics must be absent when no token is configured, got %d", disabled.Code)
+	}
+}
+
 func getMetrics(t *testing.T, handler http.Handler) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-metrics-token")
+	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /metrics: expected 200, got %d", rec.Code)
 	}

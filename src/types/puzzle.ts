@@ -1,5 +1,5 @@
 export type Difficulty = "EASY" | "MEDIUM" | "HARD";
-export type PuzzleStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+export type PuzzleStatus = "DRAFT" | "PENDING" | "PUBLISHED" | "ARCHIVED";
 export type PuzzleOrigin = "EDITORIAL" | "COMMUNITY";
 export type ModerationStatus = "OPEN" | "ACTIONED" | "DISMISSED" | "RESOLVED";
 
@@ -63,6 +63,29 @@ export type AdminPuzzle = {
   difficulty: Difficulty;
   origin: PuzzleOrigin;
   groups: AdminGroup[];
+};
+
+export type AdminPuzzlePreview = {
+  puzzle: PublicPuzzle;
+  groups: SolvedGroup[];
+};
+
+export type AdminQueueCoverage = "EDITORIAL" | "EVERGREEN" | "UNSCHEDULED";
+
+export type AdminQueueDay = {
+  date: string;
+  coverage: AdminQueueCoverage;
+  puzzleId?: string;
+  puzzleNumber?: number;
+};
+
+export type AdminQueueHealth = {
+  today: string;
+  days: AdminQueueDay[];
+  drafts: number;
+  pendingCommunity: number;
+  scheduledEditorial: number;
+  evergreenFallbacks: number;
 };
 
 export type DraftGroupInput = {
@@ -148,12 +171,10 @@ export type GuessResponse =
       isCorrect: true;
       group: SolvedGroup;
       attempt: AttemptSnapshot;
-      sessionId: string;
     }
   | {
       ok: true;
       isCorrect: false;
-      sessionId: string;
       attempt: AttemptSnapshot;
       oneAway?: boolean;
       revealedGroups?: SolvedGroup[];

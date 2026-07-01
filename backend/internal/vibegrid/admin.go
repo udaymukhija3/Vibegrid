@@ -27,6 +27,7 @@ const (
 type AdminPuzzleStore interface {
 	CreateDraft(ctx context.Context, input AdminPuzzleInput) (Puzzle, error)
 	Publish(ctx context.Context, puzzleID, publishDate string) error
+	ApproveCommunity(ctx context.Context, puzzleID string) error
 	Archive(ctx context.Context, puzzleID string) error
 	Reinstate(ctx context.Context, puzzleID string) error
 }
@@ -45,6 +46,36 @@ type AdminPuzzleInput struct {
 type publishRequest struct {
 	PublishDate string `json:"publishDate"`
 }
+
+type adminPuzzlePreviewResponse struct {
+	Puzzle PublicPuzzle  `json:"puzzle"`
+	Groups []SolvedGroup `json:"groups"`
+}
+
+type adminQueueHealthResponse struct {
+	Today              string          `json:"today"`
+	Days               []adminQueueDay `json:"days"`
+	Drafts             int             `json:"drafts"`
+	PendingCommunity   int             `json:"pendingCommunity"`
+	ScheduledEditorial int             `json:"scheduledEditorial"`
+	EvergreenFallbacks int             `json:"evergreenFallbacks"`
+}
+
+type adminQueueDay struct {
+	Date         string `json:"date"`
+	Coverage     string `json:"coverage"`
+	PuzzleID     string `json:"puzzleId,omitempty"`
+	PuzzleNumber int    `json:"puzzleNumber,omitempty"`
+}
+
+const (
+	defaultQueueHealthDays = 14
+	maxQueueHealthDays     = 30
+
+	queueCoverageEditorial   = "EDITORIAL"
+	queueCoverageEvergreen   = "EVERGREEN"
+	queueCoverageUnscheduled = "UNSCHEDULED"
+)
 
 // Validate enforces puzzle structure server-side so a malformed or unfair puzzle
 // can never be persisted: exactly four groups of four tiles, non-empty labels,
@@ -138,8 +169,8 @@ func (input AdminPuzzleInput) toPuzzle(puzzleNumber int) Puzzle {
 	}
 }
 
-// requireAdmin gates admin handlers behind either the signed admin session
-// cookie used by the browser UI or the legacy bearer token used by scripts.
+// requireAdmin gates admin handlers behind either the opaque, revocable admin
+// session cookie used by the browser UI or the legacy bearer token used by scripts.
 func (server *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hasSessionAuth := server.adminPassword != "" && server.adminSessionSecret != ""
@@ -187,6 +218,66 @@ func (server *Server) handleAdminListPuzzles(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, puzzles)
 }
 
+func (server *Server) handleAdminQueueHealth(w http.ResponseWriter, r *http.Request) {
+	days := clampedQueryInt(r, "days", defaultQueueHealthDays, 1, maxQueueHealthDays)
+	puzzles, err := server.puzzles.Puzzles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load queue health.")
+		return
+	}
+
+	today := server.todayString()
+	start, err := time.Parse(dateLayout, today)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not read launch calendar.")
+		return
+	}
+
+	response := adminQueueHealthResponse{
+		Today: today,
+		Days:  make([]adminQueueDay, 0, days),
+	}
+	editorialByDate := make(map[string]Puzzle, len(puzzles))
+	for _, puzzle := range puzzles {
+		switch {
+		case puzzle.Status == PuzzleStatusDraft && puzzle.Origin == OriginEditorial:
+			response.Drafts++
+		case puzzle.Status == PuzzleStatusPending && puzzle.Origin == OriginCommunity:
+			response.PendingCommunity++
+		case puzzle.Status == PuzzleStatusPublished && puzzle.Origin == OriginEditorial && puzzle.PublishDate != "":
+			editorialByDate[puzzle.PublishDate] = puzzle
+		}
+	}
+
+	for offset := 0; offset < days; offset++ {
+		date := start.AddDate(0, 0, offset).Format(dateLayout)
+		if puzzle, ok := editorialByDate[date]; ok {
+			response.ScheduledEditorial++
+			response.Days = append(response.Days, adminQueueDay{
+				Date:         date,
+				Coverage:     queueCoverageEditorial,
+				PuzzleID:     puzzle.ID,
+				PuzzleNumber: puzzle.PuzzleNumber,
+			})
+			continue
+		}
+
+		day := adminQueueDay{
+			Date:     date,
+			Coverage: queueCoverageUnscheduled,
+		}
+		if puzzle, err := server.puzzles.TodaysPuzzle(r.Context(), date); err == nil && puzzle.PublishDate == date && strings.HasPrefix(puzzle.ID, "vibegrid-") {
+			day.Coverage = queueCoverageEvergreen
+			day.PuzzleID = puzzle.ID
+			day.PuzzleNumber = puzzle.PuzzleNumber
+			response.EvergreenFallbacks++
+		}
+		response.Days = append(response.Days, day)
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (server *Server) handleAdminCreatePuzzle(w http.ResponseWriter, r *http.Request) {
 	var input AdminPuzzleInput
 	if !decodeJSONBody(w, r, maxAdminBodyBytes, &input, "That puzzle payload is not valid JSON.") {
@@ -208,7 +299,7 @@ func (server *Server) handleAdminCreatePuzzle(w http.ResponseWriter, r *http.Req
 
 func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Request) {
 	puzzleID := r.PathValue("id")
-	if puzzleID == "" {
+	if !validPuzzleID(puzzleID) {
 		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
 		return
 	}
@@ -228,7 +319,7 @@ func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Re
 		if server.moderation != nil {
 			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
 				PuzzleID: puzzleID,
-				Actor:    adminActor(r),
+				Actor:    server.adminActor(r),
 				Action:   "PUZZLE_PUBLISHED",
 			})
 		}
@@ -242,9 +333,36 @@ func (server *Server) handleAdminPublishPuzzle(w http.ResponseWriter, r *http.Re
 	}
 }
 
+func (server *Server) handleAdminApproveCommunityPuzzle(w http.ResponseWriter, r *http.Request) {
+	puzzleID := r.PathValue("id")
+	if !validPuzzleID(puzzleID) {
+		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
+		return
+	}
+
+	err := server.adminPuzzles.ApproveCommunity(r.Context(), puzzleID)
+	switch {
+	case err == nil:
+		if server.moderation != nil {
+			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
+				PuzzleID: puzzleID,
+				Actor:    server.adminActor(r),
+				Action:   "COMMUNITY_PUZZLE_APPROVED",
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, ErrPuzzleNotFound):
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+	case errors.Is(err, ErrPuzzleNotPending):
+		writeError(w, http.StatusConflict, "Only pending community puzzles can be approved.")
+	default:
+		writeError(w, http.StatusInternalServerError, "Could not approve that puzzle.")
+	}
+}
+
 func (server *Server) handleAdminArchivePuzzle(w http.ResponseWriter, r *http.Request) {
 	puzzleID := r.PathValue("id")
-	if puzzleID == "" {
+	if !validPuzzleID(puzzleID) {
 		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
 		return
 	}
@@ -255,7 +373,7 @@ func (server *Server) handleAdminArchivePuzzle(w http.ResponseWriter, r *http.Re
 		if server.moderation != nil {
 			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
 				PuzzleID: puzzleID,
-				Actor:    adminActor(r),
+				Actor:    server.adminActor(r),
 				Action:   "PUZZLE_ARCHIVED",
 			})
 		}
@@ -269,7 +387,7 @@ func (server *Server) handleAdminArchivePuzzle(w http.ResponseWriter, r *http.Re
 
 func (server *Server) handleAdminReinstatePuzzle(w http.ResponseWriter, r *http.Request) {
 	puzzleID := r.PathValue("id")
-	if puzzleID == "" {
+	if !validPuzzleID(puzzleID) {
 		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
 		return
 	}
@@ -280,7 +398,7 @@ func (server *Server) handleAdminReinstatePuzzle(w http.ResponseWriter, r *http.
 		if server.moderation != nil {
 			_ = server.moderation.AddAction(r.Context(), ModerationActionInput{
 				PuzzleID: puzzleID,
-				Actor:    adminActor(r),
+				Actor:    server.adminActor(r),
 				Action:   "PUZZLE_REINSTATED",
 			})
 		}
@@ -289,6 +407,27 @@ func (server *Server) handleAdminReinstatePuzzle(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 	default:
 		writeError(w, http.StatusInternalServerError, "Could not reinstate that puzzle.")
+	}
+}
+
+func (server *Server) handleAdminPreviewPuzzle(w http.ResponseWriter, r *http.Request) {
+	puzzleID := r.PathValue("id")
+	if !validPuzzleID(puzzleID) {
+		writeError(w, http.StatusBadRequest, "Puzzle id is required.")
+		return
+	}
+
+	puzzle, err := server.puzzles.PuzzleByID(r.Context(), puzzleID)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, adminPuzzlePreviewResponse{
+			Puzzle: ToPublicPuzzle(puzzle),
+			Groups: AllSolvedGroups(puzzle),
+		})
+	case errors.Is(err, ErrPuzzleNotFound):
+		writeError(w, http.StatusNotFound, "Puzzle not found.")
+	default:
+		writeError(w, http.StatusInternalServerError, "Could not load that puzzle preview.")
 	}
 }
 

@@ -13,7 +13,7 @@ type fakeCommunityStore struct{}
 
 func (fakeCommunityStore) CreateCommunityPuzzle(_ context.Context, input AdminPuzzleInput) (Puzzle, error) {
 	puzzle := input.toPuzzle(999)
-	puzzle.Status = PuzzleStatusPublished
+	puzzle.Status = PuzzleStatusPending
 	puzzle.Origin = OriginCommunity
 	return puzzle, nil
 }
@@ -23,8 +23,8 @@ func TestCommunityCreateNeedsNoToken(t *testing.T) {
 
 	// No Authorization header at all.
 	response := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
-	if response.Code != http.StatusCreated {
-		t.Fatalf("expected 201 for community create without token, got %d: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for community create without token, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -71,33 +71,35 @@ func TestCommunityCreateRejectsBlockedTerms(t *testing.T) {
 	}
 }
 
-func TestClientIPUsesTrustedProxyHeaders(t *testing.T) {
+func TestClientIPOnlyUsesHeadersFromTrustedProxy(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/community/puzzles", nil)
 	request.RemoteAddr = "203.0.113.10:12345"
 	request.Header.Set("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
 	request.Header.Set("X-Real-IP", "198.51.100.9")
 	request.Header.Set("Fly-Client-IP", "198.51.100.8")
 
-	if got := clientIP(request); got != "198.51.100.8" {
-		t.Fatalf("expected Fly-Client-IP, got %q", got)
+	untrusted := newClientIdentity(nil)
+	if got := untrusted.clientIP(request); got != "203.0.113.10" {
+		t.Fatalf("untrusted client headers must be ignored, got %q", got)
 	}
 
-	request.Header.Del("Fly-Client-IP")
-	if got := clientIP(request); got != "198.51.100.9" {
-		t.Fatalf("expected X-Real-IP fallback, got %q", got)
+	trusted := newClientIdentity([]string{"203.0.113.0/24"})
+	if got := trusted.clientIP(request); got != "198.51.100.8" {
+		t.Fatalf("expected trusted Fly-Client-IP, got %q", got)
 	}
 
 	request.Header.Del("X-Real-IP")
-	if got := clientIP(request); got != "203.0.113.10" {
-		t.Fatalf("expected RemoteAddr fallback, got %q", got)
+	request.Header.Del("Fly-Client-IP")
+	if got := trusted.clientIP(request); got != "10.0.0.1" {
+		t.Fatalf("expected trusted X-Forwarded-For fallback, got %q", got)
 	}
 }
 
-func TestCommunityPuzzlePlayableByLinkButNotInDaily(t *testing.T) {
+func TestCommunityPuzzleRequiresApprovalBeforeItIsPlayable(t *testing.T) {
 	handler, _ := newAdminTestServer(t)
 
 	created := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
-	if created.Code != http.StatusCreated {
+	if created.Code != http.StatusAccepted {
 		t.Fatalf("create failed: %d %s", created.Code, created.Body.String())
 	}
 	var body createdPuzzleResponse
@@ -105,10 +107,24 @@ func TestCommunityPuzzlePlayableByLinkButNotInDaily(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Playable by direct link.
+	if body.Status != PuzzleStatusPending {
+		t.Fatalf("expected pending submission, got %q", body.Status)
+	}
+
+	// A pending submission must not be public, even when its opaque id is known.
 	play := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+body.ID, "", nil)
+	if play.Code != http.StatusNotFound {
+		t.Fatalf("expected pending puzzle to be hidden, got %d", play.Code)
+	}
+
+	approved := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+body.ID+"/approve", testAdminToken, nil)
+	if approved.Code != http.StatusOK {
+		t.Fatalf("approve failed: %d %s", approved.Code, approved.Body.String())
+	}
+
+	play = adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+body.ID, "", nil)
 	if play.Code != http.StatusOK {
-		t.Fatalf("expected 200 fetching community puzzle by id, got %d", play.Code)
+		t.Fatalf("expected approved community puzzle to be public, got %d", play.Code)
 	}
 	var public PublicPuzzle
 	if err := json.NewDecoder(play.Body).Decode(&public); err != nil {
