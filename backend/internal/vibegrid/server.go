@@ -923,10 +923,15 @@ func (server *Server) clientIP(r *http.Request) string {
 }
 
 func (server *Server) allowPuzzleRead(w http.ResponseWriter, r *http.Request) bool {
-	decision, err := server.checkRateLimit(r.Context(), "read-puzzle:"+server.clientIP(r), readRateLimit, readRateWindow, server.readLimiter)
+	key := "read-puzzle:" + server.clientIP(r)
+	decision, err := server.checkRateLimit(r.Context(), key, readRateLimit, readRateWindow, server.readLimiter)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
-		return false
+		// Public puzzle reads carry no per-user data and are the path caching is
+		// meant to keep alive, so a shared-limiter outage must not take them down.
+		// Degrade to the per-instance in-memory limiter; anonymous writes (guesses,
+		// creates, reports, logins) stay fail-closed.
+		slog.Warn("read rate-limit check failed, falling back to in-memory limiter", "error", err)
+		decision = server.readLimiter.check(key, server.clock())
 	}
 	if !decision.allowed {
 		writeRateLimit(w, "You're requesting puzzle data too quickly. Try again shortly.", decision.retryAfter)

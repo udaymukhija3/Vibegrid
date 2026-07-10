@@ -348,6 +348,43 @@ func TestPublicWriteRateLimiterErrorsFailClosed(t *testing.T) {
 	}
 }
 
+func TestPublicReadRateLimiterErrorsFallBackToMemory(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles:    StaticPuzzleSource(SeedPuzzles()),
+		RateLimits: failingRateLimitStore{},
+		Clock:      fixedClock,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/puzzles/today", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected public read to survive limiter outage via in-memory fallback, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The fallback still limits: exhaust the in-memory read budget and the next
+	// read must be throttled, not allowed through unbounded.
+	for i := 0; i < readRateLimit; i++ {
+		exhaust := httptest.NewRecorder()
+		handler.ServeHTTP(exhaust, httptest.NewRequest(http.MethodGet, "/api/puzzles/today", nil))
+	}
+	limited := httptest.NewRecorder()
+	handler.ServeHTTP(limited, httptest.NewRequest(http.MethodGet, "/api/puzzles/today", nil))
+	if limited.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected in-memory fallback to throttle after %d reads, got %d", readRateLimit, limited.Code)
+	}
+
+	// Guesses are anonymous writes and must keep failing closed on limiter errors.
+	guessBody := `{"puzzleId":"vibegrid-2026-06-02","clientGuessId":"guess-1","selectedTileIds":["a","b","c","d"]}`
+	guessReq := httptest.NewRequest(http.MethodPost, "/api/guesses", strings.NewReader(guessBody))
+	guessReq.Header.Set("Content-Type", "application/json")
+	guessRec := httptest.NewRecorder()
+	handler.ServeHTTP(guessRec, guessReq)
+	if guessRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected guess to fail closed on limiter error, got %d: %s", guessRec.Code, guessRec.Body.String())
+	}
+}
+
 func TestModerationPuzzleIDsAreValidatedBeforeStorage(t *testing.T) {
 	invalidID := strings.Repeat("x", maxPuzzleIDLength+1)
 	if err := validateReport(ReportInput{PuzzleID: invalidID, Reason: "SPAM"}); err == nil {

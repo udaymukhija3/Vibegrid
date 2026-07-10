@@ -15,7 +15,10 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /readyz
-    autoDeploy: true
+    # Deploys are gated on CI: .github/workflows/deploy.yml posts the Render
+    # deploy hook only after the CI workflow passes on main. Requires the
+    # RENDER_DEPLOY_HOOK_URL repo secret (see docs/runbooks/deploy-and-rollback.md).
+    autoDeploy: false
     envVars:
       - key: VIBEGRID_ENV
         value: production

@@ -1,0 +1,71 @@
+name: backup
+
+# Nightly logical backup of the production Neon database.
+#
+# The dump is encrypted with AES-256 before upload because this repo is PUBLIC:
+# workflow artifacts on a public repo are downloadable by anyone, so an
+# unencrypted dump would leak attempt/session data. The passphrase never leaves
+# GitHub secrets. Restore procedure: docs/runbooks/database-restore.md.
+#
+# Required repo secrets:
+#   BACKUP_DATABASE_URL  - the production Postgres URL (same value Render uses)
+#   BACKUP_PASSPHRASE    - long random string (e.g. `openssl rand -base64 32`)
+on:
+  schedule:
+    - cron: "30 21 * * *" # 03:00 IST
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets
+        env:
+          DB_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$DB_URL" ] || [ -z "$PASSPHRASE" ]; then
+            echo "::error::Set the BACKUP_DATABASE_URL and BACKUP_PASSPHRASE repo secrets to enable nightly backups (see docs/runbooks/database-restore.md)."
+            exit 1
+          fi
+
+      # pg_dump must be >= the server major version; postgres:17 covers Neon's
+      # current default and can dump older servers too.
+      - name: Dump database
+        env:
+          DB_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          docker run --rm -e DB_URL postgres:17 \
+            pg_dump --format=custom --no-owner --no-privileges "$DB_URL" \
+            > vibegrid.pgcustom
+          ls -la vibegrid.pgcustom
+
+      - name: Verify dump is readable
+        run: |
+          docker run --rm -v "$PWD:/backup" postgres:17 \
+            pg_restore --list /backup/vibegrid.pgcustom > /dev/null
+          echo "dump verified"
+
+      - name: Encrypt dump
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in vibegrid.pgcustom -out vibegrid.pgcustom.enc \
+            -pass env:BACKUP_PASSPHRASE
+          rm vibegrid.pgcustom
+
+      - name: Upload encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibegrid-db-${{ github.run_id }}
+          path: vibegrid.pgcustom.enc
+          retention-days: 30
+          if-no-files-found: error
