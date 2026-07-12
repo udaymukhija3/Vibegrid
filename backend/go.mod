@@ -1,6 +1,6 @@
 module github.com/vibegrid/vibegrid/backend
 
-go 1.25.7
+go 1.25.12
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2
