@@ -91,6 +91,7 @@ type Server struct {
 	readLimiter        *rateLimiter
 	reportLimiter      *rateLimiter
 	loginLimiter       *rateLimiter
+	clientErrorLimiter *rateLimiter
 	blocklist          *wordBlocklist
 	metrics            *httpMetrics
 	adminToken         string
@@ -131,6 +132,7 @@ func NewServer(config ServerConfig) http.Handler {
 		readLimiter:        newRateLimiter(readRateLimit, readRateWindow),
 		reportLimiter:      newRateLimiter(reportRateLimit, reportRateWindow),
 		loginLimiter:       newRateLimiter(adminLoginRateLimit, adminLoginRateWindow),
+		clientErrorLimiter: newRateLimiter(clientErrorRateLimit, clientErrorRateWindow),
 		blocklist:          newWordBlocklist(config.BlockedTerms),
 		metrics:            newHTTPMetrics(),
 		adminToken:         config.AdminToken,
@@ -186,6 +188,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("POST /api/community/puzzles", server.handleCommunityCreate)
 	mux.HandleFunc("POST /api/reports", server.handleCreateReport)
 	mux.HandleFunc("POST /api/appeals", server.handleCreateAppeal)
+	mux.HandleFunc("POST /api/client-errors", server.handleClientError)
 
 	mux.HandleFunc("GET /api/admin/session", server.handleAdminSessionStatus)
 	mux.HandleFunc("POST /api/admin/session", server.handleAdminSession)

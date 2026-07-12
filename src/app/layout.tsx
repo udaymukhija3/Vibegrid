@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { ClientErrorReporter } from "@/components/ClientErrorReporter";
 import { ToastProvider } from "@/components/ToastProvider";
 import "./globals.css";
 
@@ -24,6 +25,7 @@ export default function RootLayout({
       <body>
         {children}
         <ToastProvider />
+        <ClientErrorReporter />
       </body>
     </html>
   );

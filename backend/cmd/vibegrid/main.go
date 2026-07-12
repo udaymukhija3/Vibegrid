@@ -103,6 +103,12 @@ func run(logger *slog.Logger) error {
 		if devCORS {
 			return errors.New("VIBEGRID_DEV_CORS must be false in production")
 		}
+		if len(trustedProxyCIDRs) == 0 {
+			// Not fatal (small hosts may terminate TLS on the instance), but behind
+			// a platform proxy this means every visitor shares the proxy's address —
+			// and therefore one rate-limit bucket — so real traffic throttles itself.
+			logger.Warn("VIBEGRID_TRUSTED_PROXY_CIDRS is empty: all clients behind the platform proxy will share one rate-limit bucket; set it to your host's proxy network(s)")
+		}
 	}
 
 	// Root context cancelled on SIGINT/SIGTERM so startup and shutdown share one

@@ -1150,7 +1150,8 @@ export function VibeGridGame({
           {reportOpen && (
             <form className="grid gap-2 border-t border-neutral-200 pt-3" onSubmit={submitReport}>
               <p className="text-xs font-semibold leading-snug text-neutral-600">
-                No login needed. We review the grid id, your reason, and any note you add.
+                No login needed. Your report goes to the site operator&apos;s moderation queue,
+                with the grid id, your reason, and any note you add.
               </p>
               <label className="grid gap-1 text-xs font-semibold text-neutral-600">
                 Reason

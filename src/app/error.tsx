@@ -1,9 +1,21 @@
 "use client";
 
+import { useEffect } from "react";
 import Image from "next/image";
 import { RotateCcw } from "lucide-react";
+import { reportClientError } from "@/lib/errorReporting";
 
-export default function Error({ reset }: { reset: () => void }) {
+export default function Error({
+  error,
+  reset
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  useEffect(() => {
+    reportClientError(`Route error boundary: ${error.message}`, error.stack);
+  }, [error]);
+
   return (
     <main className="min-h-screen px-4 py-5 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-3xl items-center justify-center">

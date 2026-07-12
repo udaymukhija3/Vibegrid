@@ -166,6 +166,14 @@ export async function runSmoke({
       "fresh attempt read did not preserve the idempotent guess history"
     );
     log("ok guess write path and idempotent replay");
+
+    const clientError = await expectJSON("/api/client-errors", 202, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "smoke: synthetic client error", url: `${base}smoke` })
+    });
+    assert(clientError.payload.ok === true, "client error report was not accepted");
+    log("ok client error reporting");
   }
 
   if (createCommunity) {
