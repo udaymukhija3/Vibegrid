@@ -12,6 +12,7 @@
     "lint": "next lint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
+    "test:security": "node scripts/security-contract.mjs",
     "test:backend": "GOCACHE=$PWD/.cache/go-build go test ./backend/...",
     "test:e2e": "node scripts/e2e.mjs",
     "test:all": "npm run test && npm run test:backend && npm run test:e2e",

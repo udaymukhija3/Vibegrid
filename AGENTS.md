@@ -21,6 +21,7 @@ git status --short
 npm run typecheck
 npm run lint
 npm test
+npm run test:security
 go test ./backend/...
 ```
 
@@ -75,6 +76,8 @@ those locally or in CI if the sandbox blocks bind/network access.
   approval, archive/reinstate, analytics, reports, appeals, and audit logs.
 - JSON mutation endpoints require `Content-Type: application/json`; request
   bodies and public identifiers are size/shape capped before storage work.
+- `npm run test:security` gates SQL-bearing Go files against dynamic query
+  builders and ensures deploy defaults do not trust broad proxy CIDRs.
 
 ## Manual work that code cannot finish
 

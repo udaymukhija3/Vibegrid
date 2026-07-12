@@ -59,7 +59,10 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
       HttpOnly, revocable session cookie; only its hash is stored in Postgres.
       A static bearer token remains as an automation fallback, and moderation
       actions are audit logged.
-- [ ] Confirm parameterized queries everywhere (they are) and document it.
+- [x] **SQL/proxy security contract.** `npm run test:security` scans
+      SQL-bearing Go files for dynamic query builders, permits only the fixed
+      row-lock `for update` append, and fails if deploy defaults trust
+      `0.0.0.0/0` or `::/0` as proxy CIDRs.
 
 ### P1 — Reliability & data
 
@@ -77,8 +80,9 @@ hardening; P2 = operational/legal; P3 = scale (only if traffic warrants).
 
 ### P1 — Testing & QA
 
-- [x] **End-to-end smoke tests** for production routes and pending community
-      submissions are in `scripts/e2e.mjs` and `scripts/smoke.mjs`. Playwright browser coverage is
+- [x] **End-to-end smoke tests** for production routes, public answer-key
+      leakage, idempotent guess replay, and pending community submissions are in
+      `scripts/e2e.mjs` and `scripts/smoke.mjs`. Playwright browser coverage is
       still a useful next layer.
 - [ ] Component tests (React Testing Library) for the game board and the draft form.
 - [ ] Add Playwright browser coverage to CI.

@@ -61,6 +61,7 @@ jobs:
 
       - run: npm ci
 
+      - run: npm run test:security
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run typecheck

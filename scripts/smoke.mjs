@@ -82,6 +82,7 @@ export async function runSmoke({
   assert(typeof puzzle.id === "string" && puzzle.id.length > 0, "today puzzle has no id");
   assert(Number.isInteger(puzzle.puzzleNumber), "today puzzle has no puzzle number");
   assert(Array.isArray(puzzle.tiles) && puzzle.tiles.length === 16, "today puzzle does not expose 16 tiles");
+  assertPublicPuzzleDoesNotLeakAnswers(puzzle, "today puzzle");
   log(`ok today puzzle #${puzzle.puzzleNumber}`);
 
   const attempt = await expectJSON(`/api/attempts/${encodeURIComponent(puzzle.id)}`);
@@ -102,6 +103,7 @@ export async function runSmoke({
 
   const direct = await expectJSON(`/api/puzzles/${encodeURIComponent(puzzle.id)}`);
   assert(direct.payload.id === puzzle.id, "direct puzzle lookup returned a different puzzle");
+  assertPublicPuzzleDoesNotLeakAnswers(direct.payload, "direct puzzle lookup");
   log("ok direct puzzle api");
 
   const og = await expectText(`/api/og/puzzles/${encodeURIComponent(puzzle.id)}.svg`);
@@ -119,6 +121,7 @@ export async function runSmoke({
   const demoPuzzle = await expectJSON(`/api/puzzles/demo-${demoRoom}`);
   assert(demoPuzzle.payload.id === `demo-${demoRoom}`, "demo puzzle returned a different id");
   assert(Array.isArray(demoPuzzle.payload.tiles) && demoPuzzle.payload.tiles.length === 16, "demo puzzle does not expose 16 tiles");
+  assertPublicPuzzleDoesNotLeakAnswers(demoPuzzle.payload, "demo puzzle");
   await expectJSON(`/api/attempts/demo-${demoRoom}`);
   log("ok demo room");
 
@@ -130,18 +133,39 @@ export async function runSmoke({
 
   if (mutate) {
     const tileIds = puzzle.tiles.slice(0, 4).map((tile) => tile.id);
+    const clientGuessId = `smoke-${randomUUID()}`;
+    const guessBody = {
+      puzzleId: puzzle.id,
+      selectedTileIds: tileIds,
+      clientGuessId
+    };
     const guess = await expectJSON("/api/guesses", 200, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        puzzleId: puzzle.id,
-        selectedTileIds: tileIds,
-        clientGuessId: `smoke-${randomUUID()}`
-      })
+      body: JSON.stringify(guessBody)
     });
     assert(guess.payload.ok === true, "guess response was not ok");
     assert(guess.payload.attempt?.puzzleId === puzzle.id, "guess did not update the expected attempt");
-    log("ok guess write path");
+
+    const replay = await expectJSON("/api/guesses", 200, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(guessBody)
+    });
+    assert(replay.payload.ok === true, "idempotent replay response was not ok");
+    assertReplayDidNotAdvanceAttempt(guess.payload, replay.payload);
+
+    const reloaded = await expectJSON(`/api/attempts/${encodeURIComponent(puzzle.id)}`);
+    assert(
+      reloaded.payload.guessCount === guess.payload.attempt.guessCount,
+      `fresh attempt read changed guess count after replay (${reloaded.payload.guessCount} vs ${guess.payload.attempt.guessCount})`
+    );
+    assert(
+      Array.isArray(reloaded.payload.guessHistory) &&
+        reloaded.payload.guessHistory.length === guess.payload.attempt.guessHistory.length,
+      "fresh attempt read did not preserve the idempotent guess history"
+    );
+    log("ok guess write path and idempotent replay");
   }
 
   if (createCommunity) {
@@ -183,6 +207,37 @@ function normalizeBaseURL(value) {
 
 function isHTML(response) {
   return response.headers.get("content-type")?.includes("text/html");
+}
+
+function assertPublicPuzzleDoesNotLeakAnswers(puzzle, label) {
+  for (const forbiddenKey of ["groups", "answers", "answerKey", "solvedGroups", "revealedGroups"]) {
+    assert(!(forbiddenKey in puzzle), `${label} leaked ${forbiddenKey}`);
+  }
+  for (const [index, tile] of puzzle.tiles.entries()) {
+    const keys = Object.keys(tile).sort();
+    assert(keys.join(",") === "id,text", `${label} tile ${index} exposed unexpected keys: ${keys.join(",")}`);
+  }
+}
+
+function assertReplayDidNotAdvanceAttempt(first, replay) {
+  assert(replay.isCorrect === first.isCorrect, "idempotent replay changed correctness");
+  assert(replay.attempt?.puzzleId === first.attempt?.puzzleId, "idempotent replay changed puzzle id");
+  assert(
+    replay.attempt?.guessCount === first.attempt?.guessCount,
+    `idempotent replay changed guess count (${replay.attempt?.guessCount} vs ${first.attempt?.guessCount})`
+  );
+  assert(
+    replay.attempt?.mistakes === first.attempt?.mistakes,
+    `idempotent replay changed mistake count (${replay.attempt?.mistakes} vs ${first.attempt?.mistakes})`
+  );
+  assert(
+    replay.attempt?.solvedGroups?.length === first.attempt?.solvedGroups?.length,
+    "idempotent replay changed solved group count"
+  );
+  assert(
+    replay.attempt?.guessHistory?.length === first.attempt?.guessHistory?.length,
+    "idempotent replay appended duplicate guess history"
+  );
 }
 
 function assert(condition, message) {

@@ -106,6 +106,7 @@ npm run dev:backend   # Go API only on :8081
 npm run dev:web       # Next.js only on :3000
 npm run migrate:backend
 npm run test          # Vitest frontend tests
+npm run test:security # static security contract for SQL/proxy defaults
 npm run test:backend  # Go backend tests
 npm run typecheck
 npm run build
@@ -197,6 +198,7 @@ The local and CI verification ladder is:
 
 ```bash
 npm run test
+npm run test:security
 npm run test:backend
 npm run typecheck
 npm run build
@@ -205,6 +207,8 @@ npm run build
 GitHub Actions is configured to run:
 
 - Go formatting, `go vet`, and `go test -race ./...` against a Postgres service.
+- A repo security contract that catches dynamic SQL builders in SQL-bearing Go
+  files and broad trusted-proxy defaults.
 - `npm ci`, lint, typecheck, Vitest, and the static Next.js build.
 
 The deploy smoke script checks the runtime routes that matter for a public demo:
@@ -275,6 +279,7 @@ and [docs/production-readiness.md](docs/production-readiness.md).
 ## Project Docs
 
 - [Deployment runbook](docs/deployment.md)
+- [Recruiter evidence matrix](docs/RECRUITER_EVIDENCE.md)
 - [Production readiness review](docs/production-readiness.md)
 - [Launch sprint plan](docs/launch-sprint-plan.md)
 - [Observability runbook](docs/observability.md)
