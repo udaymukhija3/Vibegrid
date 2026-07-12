@@ -1,10 +1,10 @@
 name: deploy
 
-# Production deploys are gated on CI: render.yaml sets autoDeploy: false, and
-# this workflow triggers Render's deploy hook only after the CI workflow
-# succeeds on main. A red main therefore never reaches production.
+# Optional CI-gated deploys: when the RENDER_DEPLOY_HOOK_URL repo secret is set
+# AND render.yaml sets autoDeploy: false, this workflow becomes the only deploy
+# path and a red main never reaches production. Until then it skips quietly and
+# Render's autoDeploy handles releases.
 #
-# Required repo secret:
 #   RENDER_DEPLOY_HOOK_URL - Render dashboard -> vibegrid service -> Settings
 #                            -> Deploy Hook. Treat it like a password: anyone
 #                            holding the URL can trigger deploys.
@@ -30,8 +30,8 @@ jobs:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
           if [ -z "$HOOK" ]; then
-            echo "::error::RENDER_DEPLOY_HOOK_URL secret is not set. Create a deploy hook in the Render dashboard and add it as a repo secret, or deploys will not run (autoDeploy is off in render.yaml)."
-            exit 1
+            echo "::notice::RENDER_DEPLOY_HOOK_URL is not set; skipping — Render autoDeploy handles releases. Set the secret and flip autoDeploy to false in render.yaml to gate deploys on CI."
+            exit 0
           fi
           curl -fsS -X POST "$HOOK" -o /dev/null
           echo "Render deploy triggered for ${{ github.event.workflow_run.head_sha }}"

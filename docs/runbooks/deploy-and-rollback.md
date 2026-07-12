@@ -3,11 +3,10 @@
 ## How a change reaches production
 
 1. Push to `main` (via PR or directly).
-2. GitHub Actions runs **CI** (`.github/workflows/ci.yml`): Go race tests against Postgres, vuln scans, security contract, lint, typecheck, unit tests, build.
-3. On CI success, **deploy** (`.github/workflows/deploy.yml`) POSTs the Render deploy hook.
-4. Render builds the `Dockerfile` and swaps traffic only after `/readyz` passes (`render.yaml` `healthCheckPath`). Migrations apply on boot (`VIBEGRID_MIGRATE_ON_BOOT=true`).
+2. Render auto-deploys the push (`autoDeploy: true` in `render.yaml`): builds the `Dockerfile` and swaps traffic only after `/readyz` passes. Migrations apply on boot (`VIBEGRID_MIGRATE_ON_BOOT=true`).
+3. In parallel, GitHub Actions runs **CI** (`.github/workflows/ci.yml`): Go race tests against Postgres, vuln scans, security contract, lint, typecheck, unit tests, build. A red CI does not block the deploy in this mode — check Actions after pushing.
 
-`autoDeploy` is **off** in `render.yaml` — a red main never deploys. This requires the `RENDER_DEPLOY_HOOK_URL` repo secret (Render dashboard → service → Settings → Deploy Hook).
+**Optional upgrade — CI-gated deploys:** create a Deploy Hook (Render dashboard → service → Settings), save it as the `RENDER_DEPLOY_HOOK_URL` repo secret, and set `autoDeploy: false` in `render.yaml`. From then on `.github/workflows/deploy.yml` deploys only after CI passes, and a red main never reaches production.
 
 ## Verify a deploy
 

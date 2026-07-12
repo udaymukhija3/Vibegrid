@@ -32,13 +32,28 @@ jobs:
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           if [ -z "$DB_URL" ] || [ -z "$PASSPHRASE" ]; then
-            echo "::error::Set the BACKUP_DATABASE_URL and BACKUP_PASSPHRASE repo secrets to enable nightly backups (see docs/runbooks/database-restore.md)."
-            exit 1
+            MSG="Backups are NOT running: set the BACKUP_DATABASE_URL and BACKUP_PASSPHRASE repo secrets (see docs/runbooks/database-restore.md)."
+            # Nightly runs warn-and-skip so an unconfigured repo does not page
+            # every day; a manual run fails loudly because someone asked for a
+            # backup and must not believe they got one.
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "::error::$MSG"
+              exit 1
+            fi
+            echo "::warning::$MSG"
+            echo "SKIP_BACKUP=true" >> "$GITHUB_ENV"
           fi
+
+      - name: Stop if unconfigured
+        if: env.SKIP_BACKUP == 'true'
+        run: |
+          echo "Skipping backup (secrets not configured)."
+          exit 0
 
       # pg_dump must be >= the server major version; postgres:17 covers Neon's
       # current default and can dump older servers too.
       - name: Dump database
+        if: env.SKIP_BACKUP != 'true'
         env:
           DB_URL: ${{ secrets.BACKUP_DATABASE_URL }}
         run: |
@@ -48,12 +63,14 @@ jobs:
           ls -la vibegrid.pgcustom
 
       - name: Verify dump is readable
+        if: env.SKIP_BACKUP != 'true'
         run: |
           docker run --rm -v "$PWD:/backup" postgres:17 \
             pg_restore --list /backup/vibegrid.pgcustom > /dev/null
           echo "dump verified"
 
       - name: Encrypt dump
+        if: env.SKIP_BACKUP != 'true'
         env:
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
@@ -63,6 +80,7 @@ jobs:
           rm vibegrid.pgcustom
 
       - name: Upload encrypted backup
+        if: env.SKIP_BACKUP != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: vibegrid-db-${{ github.run_id }}
