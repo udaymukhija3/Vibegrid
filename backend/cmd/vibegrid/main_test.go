@@ -45,6 +45,13 @@ func TestProductionConfigHelpersRejectUnsafeValues(t *testing.T) {
 	if err != nil || environment != "production" {
 		t.Fatalf("unset environment must default to production, got %q, %v", environment, err)
 	}
+	// Absence degrades (with a runtime warning); only explicit bad values are
+	// fatal. A fatal absence check bricked every production deploy once — the
+	// platform env never received the new variable, so the binary always died
+	// at boot while the old release kept serving.
+	if value, err := validatedPublicBaseURL("", true); err != nil || value == "" {
+		t.Fatalf("missing public base URL must fall back, not fail boot: %q, %v", value, err)
+	}
 	if _, err := validatedPublicBaseURL("http://vibegrid.example", true); err == nil {
 		t.Fatal("production must reject a non-HTTPS public URL")
 	}

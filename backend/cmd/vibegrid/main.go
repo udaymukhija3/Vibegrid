@@ -97,11 +97,20 @@ func run(logger *slog.Logger) error {
 		if !secureCookies {
 			return errors.New("VIBEGRID_SECURE_COOKIES=true is required in production")
 		}
-		if metricsToken == "" {
-			return errors.New("VIBEGRID_METRICS_TOKEN is required in production")
-		}
 		if devCORS {
 			return errors.New("VIBEGRID_DEV_CORS must be false in production")
+		}
+		// Missing observability/metadata config degrades with a warning instead
+		// of refusing to boot: a disabled /metrics or wrong OG URLs beat a
+		// bricked deploy pipeline. (Fatal versions of these checks silently
+		// failed every deploy after they shipped — the platform env never had
+		// the new values, so the new binary always died at boot and the old
+		// release kept serving.)
+		if metricsToken == "" {
+			logger.Warn("VIBEGRID_METRICS_TOKEN is not set: /metrics stays disabled until it is")
+		}
+		if strings.TrimSpace(os.Getenv("VIBEGRID_PUBLIC_BASE_URL")) == "" {
+			logger.Warn("VIBEGRID_PUBLIC_BASE_URL is not set: share/OG and sitemap URLs fall back to localhost")
 		}
 		if len(trustedProxyCIDRs) == 0 {
 			// Not fatal (small hosts may terminate TLS on the instance), but behind
@@ -324,9 +333,9 @@ func boolEnv(key string, fallback bool) (bool, error) {
 func validatedPublicBaseURL(raw string, production bool) (string, error) {
 	value := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if value == "" {
-		if production {
-			return "", errors.New("VIBEGRID_PUBLIC_BASE_URL is required in production")
-		}
+		// An absent value must not brick a deploy: boot with the local default
+		// (run() logs a production warning). An explicitly wrong value below is
+		// still fatal — misconfiguration should fail loudly, absence should not.
 		return "http://localhost:3000", nil
 	}
 	parsed, err := url.Parse(value)

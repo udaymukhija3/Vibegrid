@@ -37,9 +37,12 @@ services:
         sync: false
       - key: VIBEGRID_ADMIN_SESSION_SECRET
         sync: false
-      - key: VIBEGRID_METRICS_TOKEN
-        sync: false
+      # Not a secret — it is the site's own public origin.
       - key: VIBEGRID_PUBLIC_BASE_URL
-        sync: false
+        value: https://vibegrid.onrender.com
+      # Render generates a random value on sync; read it in the dashboard when
+      # pointing a metrics scraper at /metrics.
+      - key: VIBEGRID_METRICS_TOKEN
+        generateValue: true
       - key: VIBEGRID_TRUSTED_PROXY_CIDRS
         sync: false
