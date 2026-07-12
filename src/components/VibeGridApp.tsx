@@ -63,37 +63,67 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
     "rain check",
     "orange peel",
     "voice note",
-    "third place"
+    "third place",
+    "night market",
+    "paper cup",
+    "walk home",
+    "old receipt",
+    "inside joke",
+    "window seat",
+    "playlist",
+    "last slice"
   ];
 
   return (
-    <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-6xl content-center gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <section className="vg-panel overflow-hidden">
-        <div className="grid gap-6 p-5 sm:p-7">
-          <div className="flex items-center gap-3">
-            <Image src="/vibegrid-mark.svg" width={44} height={44} alt="" className="rounded" priority />
-            <div>
-              <p className="vg-kicker">Daily semantic grid</p>
-              <h1 className="text-4xl font-extrabold leading-tight sm:text-5xl">VibeGrid</h1>
+    <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-7xl content-center gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <section className="vg-board-sheet">
+        <div className="grid gap-5 sm:gap-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Image src="/vibegrid-mark.svg" width={50} height={50} alt="" className="rounded-lg" priority />
+              <div>
+                <p className="vg-kicker">Daily semantic grid</p>
+                <h1 className="text-4xl font-extrabold leading-tight sm:text-6xl">VibeGrid</h1>
+              </div>
+            </div>
+            <div className="vg-mode-track w-full max-w-sm sm:w-80" aria-hidden="true">
+              {["Easy", "Medium", "Hard"].map((label, index) => (
+                <span
+                  key={label}
+                  className={`vg-mode-tab inline-flex items-center justify-center ${
+                    index === 1 ? "bg-card text-ink" : "bg-ink text-card/75"
+                  }`}
+                >
+                  {label}
+                </span>
+              ))}
             </div>
           </div>
 
-          <p className="max-w-2xl text-base font-medium leading-7 text-neutral-700">
+          <p className="max-w-2xl text-base font-medium leading-7 text-neutral-700 sm:text-lg">
             Sort the board by feel, not trivia. Four hidden groups, sixteen plain-language tiles,
             and just enough misdirection to make the win feel earned.
           </p>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-hidden="true">
-            {sampleTiles.map((tile, index) => (
-              <span
-                key={tile}
-                className={`flex min-h-16 items-center justify-center rounded-lg border border-line px-2 text-center text-sm font-semibold ${
-                  index % 3 === 0 ? "bg-mint/35" : index % 3 === 1 ? "bg-yolk/35" : "bg-card"
-                }`}
-              >
-                {tile}
-              </span>
-            ))}
+          <div className="rounded-lg border border-line bg-white/70 p-2 shadow-tile sm:p-3" aria-hidden="true">
+            <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+              {sampleTiles.map((tile, index) => (
+                <span
+                  key={tile}
+                  className={`flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.68rem] font-semibold leading-tight shadow-tile sm:aspect-[1.35] sm:px-2 sm:text-sm ${
+                    index % 4 === 0
+                      ? "bg-mint/30"
+                      : index % 4 === 1
+                        ? "bg-yolk/[.32]"
+                        : index % 4 === 2
+                          ? "bg-pool/25"
+                          : "bg-card"
+                  }`}
+                >
+                  {tile}
+                </span>
+              ))}
+            </div>
           </div>
 
           <button type="button" onClick={onPlayGuest} className="vg-button-primary w-full justify-between sm:w-fit">
@@ -106,16 +136,16 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
         </div>
       </section>
 
-      <aside className="grid content-start gap-3">
-        <div className="vg-panel p-4">
+      <aside className="vg-control-rail grid content-start gap-3">
+        <div className="rounded-lg border border-line bg-card/90 p-4">
           <p className="text-sm font-semibold text-neutral-500">This browser</p>
           <p className="mt-2 text-sm font-medium leading-6 text-neutral-700">
             Guest play saves progress locally. Editor tools stay behind the admin password.
           </p>
         </div>
 
-        <Link href="/demo" className="vg-panel group grid gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-lift">
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-yolk/55">
+        <Link href="/demo" className="group grid gap-3 rounded-lg border border-line bg-card/90 p-4 transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift">
+          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-yolk/[.55]">
             <Compass aria-hidden size={20} />
           </span>
           <span>
@@ -132,9 +162,9 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
         <button
           type="button"
           onClick={onPlayGuest}
-          className="vg-panel group grid gap-3 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lift lg:hidden"
+          className="group grid gap-3 rounded-lg border border-line bg-card/90 p-4 text-left transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift lg:hidden"
         >
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-mint/55">
+          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-mint/[.55]">
             <UserRound aria-hidden size={20} />
           </span>
           <span>
@@ -150,9 +180,9 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
 
         <Link
           href="/admin"
-          className="vg-panel group grid gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-lift"
+          className="group grid gap-3 rounded-lg border border-line bg-card/90 p-4 transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift"
         >
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-plum/15 text-plum">
+          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-plum/[.15] text-plum">
             <ShieldCheck aria-hidden size={20} />
           </span>
           <span>
@@ -173,7 +203,7 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
 function StatusCard({ title, message }: { title: string; message: string }) {
   return (
     <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-3xl items-center justify-center">
-      <div className="vg-panel w-full p-6 text-center">
+      <div className="vg-board-sheet w-full text-center">
         <h1 className="text-3xl font-extrabold">{title}</h1>
         <p className="mt-3 font-medium text-neutral-600">{message}</p>
       </div>

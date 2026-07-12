@@ -62,7 +62,10 @@ export function HowToPlay() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="vg-panel w-full max-w-md p-5"
+            // Explicit text-ink: the dialog can be mounted inside the dark spine
+            // rail (text-card), and inherited cream text would vanish on the
+            // light panel.
+            className="vg-panel w-full max-w-md p-5 text-ink"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">

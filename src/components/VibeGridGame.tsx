@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, Compass, Flag, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
+import { Archive, Compass, Flag, Flame, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   ATTEMPT_STORAGE_PREFIX,
@@ -101,10 +101,10 @@ function normalizeStoredAttempt(puzzleId: string, parsed: Partial<StoredAttempt>
 }
 
 const groupColors = [
-  "border-mint/70 bg-mint/35 text-ink",
-  "border-yolk/80 bg-yolk/35 text-ink",
-  "border-tomato/75 bg-tomato/25 text-ink",
-  "border-plum/55 bg-plum/15 text-ink"
+  "border-mint/[.70] bg-mint/[.35] text-ink",
+  "border-yolk/[.80] bg-yolk/[.35] text-ink",
+  "border-tomato/[.75] bg-tomato/[.25] text-ink",
+  "border-plum/[.55] bg-plum/[.15] text-ink"
 ];
 
 // Background-only palette (matching groupColors) for the share-grid squares.
@@ -123,6 +123,61 @@ const modeDescriptions: Record<GameMode, string> = {
   medium: "Guided: we name one vibe at a time.",
   hard: "All four vibes hidden."
 };
+
+const easyThoughtStarters: Record<string, string> = {
+  "Sunday reset": "Picture the little rituals that make a week feel possible again.",
+  "Sunday scaries": "Think about the mood that creeps in when the weekend starts closing.",
+  "Lazy recovery": "Look for the low-energy comforts of doing almost nothing.",
+  "Productivity cosplay": "Find the tiles that look productive from far away.",
+  "Deep work cosplay": "Picture someone building a fortress around focus.",
+  "First date": "Think of two people trying to make awkwardness look effortless.",
+  "Remote meeting": "Listen for the phrases and moments that belong inside a video call.",
+  "Friends catching up": "Look for the rhythm of a conversation that keeps unfolding.",
+  "The planner": "Find the person quietly keeping everyone organized.",
+  "The ghost": "Think of someone present in the chat but barely there.",
+  "The oversharer": "Picture a message that arrives with every possible detail attached.",
+  "The chaos": "Look for the friend who turns the chat sideways.",
+  "Gate gremlin": "Picture the traveler hovering before it is actually time to board.",
+  "Duty-free daze": "Think of airport shopping with no real plan.",
+  "Delay despair": "Look for the small signs that travel momentum has stalled.",
+  "Smug frequent flyer": "Find the moves of someone who has done this too many times.",
+  "Replaying it": "Picture the late-night loop of one awkward moment after another.",
+  "Grand 2am plans": "Think of huge plans made when tomorrow still feels theoretical.",
+  "Existential dread": "Look for thoughts that make the room feel much bigger.",
+  "Snack logistics": "Find the practical food problem your brain can still solve.",
+  "Looking busy": "Picture work theatre: plenty of motion, not much progress.",
+  "Meeting bingo": "Listen for office phrases that sound useful but say very little.",
+  "Kitchen politics": "Think of tiny shared-space tensions around snacks and coffee.",
+  "Friday wind-down": "Look for the slow fade before the week is officially over.",
+  "We're fine": "Find messages that feel genuinely relaxed.",
+  "We are not fine": "Think of texts where punctuation is doing the real talking.",
+  "Overthinking it": "Picture a reply being drafted, deleted, and drafted again.",
+  "Unhinged friend": "Look for chaotic friendship energy with no context needed.",
+  "New year hopeful": "Think of fresh motivation before reality has weighed in.",
+  "The regular": "Find the signs of someone who practically owns the routine.",
+  "Mirror crew": "Picture a workout where the phone gets as much attention as the reps.",
+  "Cardio escapist": "Look for movement that is really a way to drift off mentally.",
+  "Kitchen dweller": "Picture the guest who somehow never leaves the food table.",
+  "The connector": "Find the person turning strangers into introductions.",
+  "Early ghost": "Think of leaving so cleanly people notice only later.",
+  "Last to leave": "Look for the end-of-night energy after everyone else has gone.",
+  "Cart guilt": "Picture the moment between wanting the thing and questioning the thing.",
+  "Sale brain": "Think of a discount making all judgment temporarily vanish.",
+  "Delivery watch": "Look for the restless wait after the order is already on its way.",
+  "Return spiral": "Picture the small admin loop after buying the wrong thing.",
+  "Open bar arc": "Think of the predictable timeline once drinks are easy to get.",
+  "Dance floor": "Find the moment when the music finally wins.",
+  "Small talk loop": "Listen for polite questions that keep circling the same ground.",
+  "Logistics nerd": "Picture the person who read every practical detail in advance.",
+  "Productive avoidance": "Look for chores that appear when the real task is waiting.",
+  "The chair": "Think of the in-between place where clothes wait for a verdict.",
+  "Doom drawer": "Picture the hiding place for small things with no better home.",
+  "Adulting wins": "Find the tiny responsible acts that feel weirdly triumphant."
+};
+
+function easyThoughtStarter(name: string) {
+  return easyThoughtStarters[name] ?? `Picture the situation or mood behind "${name}", then look for four tiles that share it.`;
+}
 
 const EASY_HINT_GUESSES = 2;
 const MODE_STORAGE_KEY = "vibegrid_mode";
@@ -736,54 +791,38 @@ export function VibeGridGame({
     }
   }
 
+  const puzzleLabel = isDemoPuzzle ? "Demo room" : `VibeGrid #${puzzle.puzzleNumber}`;
+  const puzzleDate = !isDemoPuzzle && puzzle.publishDate ? puzzle.publishDate : null;
+  const solvedCount = attempt.solvedGroups.length;
+  const progressLabel = `${solvedCount}/${puzzle.groupCount}`;
+
   return (
-    <div className="mx-auto grid min-h-[calc(100vh-2.5rem)] max-w-6xl grid-rows-[auto_1fr] gap-5">
-      <header className="vg-panel flex flex-wrap items-center justify-between gap-4 p-3 sm:p-4">
-        <div className="flex items-center gap-3">
-          <Image src="/vibegrid-mark.svg" width={48} height={48} alt="" className="rounded" priority />
-          <div>
-            <h1 className="text-3xl font-extrabold leading-none sm:text-4xl">VibeGrid</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium text-neutral-600">
-                {isDemoPuzzle ? "Demo room" : `#${puzzle.puzzleNumber}`}
-                {!isDemoPuzzle && puzzle.publishDate ? ` / ${puzzle.publishDate}` : ""}
-              </p>
-              {streak && streak.currentStreak > 0 && (
-                <span
-                  title={`Longest streak: ${streak.longestStreak} · Solved: ${streak.totalCompleted}`}
-                  className="inline-flex items-center gap-1 rounded-lg border border-yolk/80 bg-yolk/35 px-2 py-0.5 text-xs font-semibold"
-                >
-                  🔥 {streak.currentStreak} day{streak.currentStreak === 1 ? "" : "s"}
-                </span>
-              )}
+    <div className="vg-desk">
+      <aside className="vg-spine flex flex-col justify-between gap-4 p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
+        <div className="flex items-center justify-between gap-3 lg:grid lg:justify-items-center">
+          <div className="flex min-w-0 items-center gap-3 lg:grid lg:justify-items-center lg:gap-2">
+            <Image src="/vibegrid-mark.svg" width={48} height={48} alt="" className="rounded-lg bg-card" priority />
+            <div className="min-w-0 lg:text-center">
+              <h1 className="text-2xl font-extrabold leading-none lg:text-base">VibeGrid</h1>
+              <p className="mt-1 text-xs font-semibold text-card/[.65] lg:hidden">{puzzleLabel}</p>
             </div>
+          </div>
+
+          <div className="hidden rounded-lg border border-card/[.15] bg-card/10 px-2 py-3 text-center lg:block">
+            <p className="text-[0.68rem] font-semibold text-card/[.65]">Solved</p>
+            <p className="mt-1 text-xl font-extrabold">{progressLabel}</p>
           </div>
         </div>
 
-        <nav className="flex items-center gap-2">
+        <nav className="flex flex-wrap items-center gap-2 lg:grid lg:justify-items-center" aria-label="Game tools">
           <HowToPlay />
-          <Link
-            href="/demo"
-            aria-label="Demo walkthrough"
-            title="Demo walkthrough"
-            className="vg-icon-button"
-          >
+          <Link href="/demo" aria-label="Demo walkthrough" title="Demo walkthrough" className="vg-icon-button">
             <Compass aria-hidden size={18} />
           </Link>
-          <Link
-            href="/create"
-            aria-label="Make your own"
-            title="Make your own"
-            className="vg-icon-button"
-          >
+          <Link href="/create" aria-label="Make your own" title="Make your own" className="vg-icon-button">
             <Sparkles aria-hidden size={18} />
           </Link>
-          <Link
-            href="/archive"
-            aria-label="Archive"
-            title="Archive"
-            className="vg-icon-button"
-          >
+          <Link href="/archive" aria-label="Archive" title="Archive" className="vg-icon-button">
             <Archive aria-hidden size={18} />
           </Link>
           <button
@@ -797,24 +836,56 @@ export function VibeGridGame({
             <Shuffle aria-hidden size={18} />
           </button>
         </nav>
-      </header>
+      </aside>
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0">
-          {currentVibe && (
-            <div
-              className={clsx(
-                "mb-4 rounded-lg border p-4 shadow-soft",
-                groupColors[currentVibe.colorIndex % groupColors.length]
-              )}
-            >
-              <p className="text-xs font-semibold opacity-80">
-                Match this vibe · {attempt.solvedGroups.length + 1} of {puzzle.groupCount}
-              </p>
-              <p className="mt-1 text-2xl font-extrabold leading-tight">{currentVibe.name}</p>
-              <p className="mt-1 text-sm font-medium opacity-80">Pick the 4 tiles that fit it.</p>
-            </div>
-          )}
+      <main className="vg-board-sheet min-w-0">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
+          <div>
+            <p className="vg-kicker">{puzzleLabel}</p>
+            <h2 className="mt-1 text-3xl font-extrabold leading-tight sm:text-5xl">
+              {isOver ? "Result grid" : "Find the hidden sets"}
+            </h2>
+          </div>
+          <div className="grid justify-items-start gap-1 text-sm font-semibold text-neutral-600 sm:justify-items-end">
+            {puzzleDate && <p>{puzzleDate}</p>}
+            {streak && streak.currentStreak > 0 && (
+              <span
+                title={`Longest streak: ${streak.longestStreak} · Solved: ${streak.totalCompleted}`}
+                className="inline-flex items-center gap-1 rounded-lg border border-yolk/80 bg-yolk/30 px-2 py-1 text-xs text-ink"
+              >
+                <Flame aria-hidden size={14} />
+                {streak.currentStreak} day{streak.currentStreak === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {!isOver && (
+          <div
+            className={clsx(
+              "mt-4 rounded-lg border p-4 shadow-tile",
+              currentVibe
+                ? groupColors[currentVibe.colorIndex % groupColors.length]
+                : "border-line bg-white/[.72] text-ink"
+            )}
+          >
+            <p className="text-xs font-semibold opacity-75">
+              {currentVibe ? `Vibe ${solvedCount + 1} of ${puzzle.groupCount}` : "Hard mode"}
+            </p>
+            <p className="mt-1 text-2xl font-extrabold leading-tight">
+              {currentVibe?.name ?? "No named clues"}
+            </p>
+            <p className="mt-1 text-sm font-medium opacity-80">
+              {currentVibe && mode === "easy"
+                ? easyThoughtStarter(currentVibe.name)
+                : currentVibe
+                  ? "Pick the 4 tiles that fit it."
+                  : "Solve from the board alone."}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 rounded-lg border border-line bg-white/[.65] p-2 shadow-tile sm:p-3">
           <div className="grid gap-3">
             {displayedGroups.map((group) => {
               const isSolved = attempt.solvedGroups.some((solvedGroup) => solvedGroup.id === group.id);
@@ -823,16 +894,16 @@ export function VibeGridGame({
                 <section
                   key={group.id}
                   className={clsx(
-                    "rounded-lg border p-4 shadow-soft",
+                    "rounded-lg border p-3 shadow-tile sm:p-4",
                     groupColors[group.colorIndex % groupColors.length]
                   )}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-xl font-extrabold">{group.name}</h2>
+                      <h3 className="text-xl font-extrabold">{group.name}</h3>
                       <p className="mt-1 text-sm font-medium opacity-80">{group.explanation}</p>
                     </div>
-                    <p className="text-sm font-semibold">
+                    <p className="rounded-lg border border-white/60 bg-white/[.45] px-2 py-1 text-xs font-semibold">
                       {isSolved ? "Locked" : "Revealed"}
                     </p>
                   </div>
@@ -840,7 +911,7 @@ export function VibeGridGame({
                     {group.tiles.map((tile) => (
                       <div
                         key={tile.id}
-                        className="flex min-h-14 items-center justify-center rounded-lg border border-white/70 bg-card/80 px-1 text-center text-[0.7rem] font-semibold leading-tight sm:px-2 sm:text-sm"
+                        className="flex min-h-14 items-center justify-center rounded-lg border border-white/70 bg-card/[.82] px-1 text-center text-[0.7rem] font-semibold leading-tight sm:px-2 sm:text-sm"
                       >
                         {tile.text}
                       </div>
@@ -851,7 +922,7 @@ export function VibeGridGame({
             })}
           </div>
 
-          <div className="mt-4 grid grid-cols-4 gap-1.5 sm:gap-3">
+          <div className="mt-3 grid grid-cols-4 gap-1.5 sm:gap-3">
             {remainingTiles.map((tile) => {
               const isSelected = selectedTileIds.has(tile.id);
 
@@ -861,7 +932,7 @@ export function VibeGridGame({
                   className={clsx(
                     "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.7rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
                     isSelected
-                      ? "translate-y-0.5 border-ink bg-ink text-white shadow-none ring-2 ring-mint/70"
+                      ? "translate-y-0.5 border-ink bg-ink text-card shadow-none ring-2 ring-pool/70"
                       : "bg-card hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/25 hover:shadow-lift"
                   )}
                   type="button"
@@ -874,270 +945,262 @@ export function VibeGridGame({
             })}
           </div>
         </div>
+      </main>
 
-        <aside className="vg-panel flex flex-col justify-between gap-4 p-4">
-          <div>
-            {!isOver && (
-              <div className="mb-4">
-                <div className="grid grid-cols-3 gap-1 rounded-lg border border-line bg-white/60 p-1">
-                  {modeOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setMode(option.value)}
-                      aria-pressed={mode === option.value}
-                      className={clsx(
-                        "h-9 rounded-md text-sm font-semibold transition",
-                        mode === option.value ? "bg-ink text-white" : "bg-white text-ink"
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-xs font-medium text-neutral-600">
-                  {modeDescriptions[mode]}
-                </p>
+      <aside className="vg-control-rail flex flex-col justify-between gap-4 lg:sticky lg:top-5 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-auto">
+        <div>
+          {!isOver && (
+            <div>
+              <p className="text-sm font-semibold text-neutral-500">Mode</p>
+              <div className="vg-mode-track mt-2">
+                {modeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setMode(option.value)}
+                    aria-pressed={mode === option.value}
+                    className={clsx(
+                      "vg-mode-tab",
+                      mode === option.value ? "bg-card text-ink" : "bg-ink text-card/75 hover:bg-card/[.12]"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
-            )}
-
-            {mode === "easy" && !isOver && (
-              <div className="mb-4 border-t border-neutral-200 pt-3">
-                <p className="text-xs font-semibold text-neutral-500">Selected tiles</p>
-                <div className="mt-2 grid min-h-24 grid-cols-2 gap-1.5">
-                  {Array.from({ length: 4 }).map((_, index) => {
-                    const tile = selectedTiles[index];
-                    return (
-                      <div
-                        key={tile?.id ?? `empty-${index}`}
-                        className={clsx(
-                          "flex min-h-10 items-center justify-center rounded-lg border px-2 text-center text-xs font-semibold leading-tight",
-                          tile
-                            ? "border-ink bg-card text-ink"
-                            : "border-neutral-200 bg-neutral-50 text-neutral-400"
-                        )}
-                      >
-                        {tile?.text ?? "Pick tile"}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-3 border-t border-neutral-200 pt-3">
-                  <p className="text-xs font-semibold text-neutral-500">Easy hint</p>
-                  {guessesUntilEasyHint > 0 ? (
-                    <p className="mt-1 text-sm font-medium text-neutral-600">
-                      Unlocks after {guessesUntilEasyHint} more{" "}
-                      {guessesUntilEasyHint === 1 ? "guess" : "guesses"}.
-                    </p>
-                  ) : unlockedEasyHint ? (
-                    <div
-                      className={clsx(
-                        "mt-2 border-l-4 pl-3",
-                        hintBorderColors[unlockedEasyHint.colorIndex % hintBorderColors.length]
-                      )}
-                    >
-                      <p className="text-sm font-semibold">{unlockedEasyHint.name}</p>
-                      <p className="mt-1 text-sm font-medium leading-snug text-neutral-700">
-                        {unlockedEasyHint.text}
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="mt-1 text-sm font-medium text-neutral-600">
-                      {easyHintStatus === "error" ? "Hint is unavailable right now." : "Hint is checking."}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="vg-panel-muted p-3">
-                <p className="text-xs font-semibold text-neutral-500">Selected</p>
-                <p className="mt-1 text-2xl font-extrabold">{attempt.selectedTileIds.length}/4</p>
-              </div>
-              <div className="vg-panel-muted p-3">
-                <p className="text-xs font-semibold text-neutral-500">Mistakes</p>
-                <p className="mt-1 text-2xl font-extrabold">
-                  {attempt.mistakes}/{puzzle.mistakesAllowed}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-4 gap-2" aria-label="Mistake counter">
-              {Array.from({ length: puzzle.mistakesAllowed }).map((_, index) => (
-                <div
-                  key={index}
-                  className={clsx(
-                    "h-3 rounded-full border border-line",
-                    index < attempt.mistakes ? "bg-tomato" : "bg-neutral-100"
-                  )}
-                />
-              ))}
-            </div>
-
-            <p className="mt-5 min-h-12 text-lg font-extrabold leading-snug">{message}</p>
-
-            {syncState === "error" && (
-              <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-tomato/60 bg-tomato/10 px-3 py-2 text-sm font-semibold">
-                <span>Couldn&apos;t sync — showing saved progress.</span>
-                <button
-                  type="button"
-                  onClick={() => void syncAttempt()}
-                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-line bg-card px-2 text-xs font-semibold"
-                >
-                  Resync
-                </button>
-              </div>
-            )}
-
-            <div className="mt-4 border-t border-neutral-200 pt-4 text-sm font-medium text-neutral-600">
-              <p>Elapsed {formatElapsedTime(attempt.startedAt, elapsedFinishedAt)}</p>
-              <p className="mt-1">Guesses {attempt.guessCount}</p>
-              <p className="mt-1">
-                {resolvedSession?.guest.label ?? "Guest session"}. Saved in this browser.
+              <p className="mt-2 min-h-8 text-xs font-medium leading-snug text-neutral-600">
+                {modeDescriptions[mode]}
               </p>
-              {resolvedSession?.admin.authenticated && (
-                <p className="mt-1 font-semibold text-plum">Editor session active.</p>
+            </div>
+          )}
+
+          {!isOver && (
+            <div className="vg-rule mt-4 pt-4">
+              <p className="text-sm font-semibold text-neutral-500">Selection tray</p>
+              <div className="mt-2 grid min-h-24 grid-cols-2 gap-1.5">
+                {Array.from({ length: 4 }).map((_, index) => {
+                  const tile = selectedTiles[index];
+                  return (
+                    <div
+                      key={tile?.id ?? `empty-${index}`}
+                      className={clsx(
+                        "flex min-h-10 items-center justify-center rounded-lg border px-2 text-center text-xs font-semibold leading-tight",
+                        tile
+                          ? "border-ink bg-card text-ink shadow-tile"
+                          : "border-neutral-200 bg-neutral-50 text-neutral-400"
+                      )}
+                    >
+                      {tile?.text ?? "Pick tile"}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {mode === "easy" && !isOver && (
+            <div className="vg-rule mt-4 pt-4">
+              <p className="text-sm font-semibold text-neutral-500">Easy hint</p>
+              {guessesUntilEasyHint > 0 ? (
+                <p className="mt-1 text-sm font-medium text-neutral-600">
+                  Unlocks after {guessesUntilEasyHint} more{" "}
+                  {guessesUntilEasyHint === 1 ? "guess" : "guesses"}.
+                </p>
+              ) : unlockedEasyHint ? (
+                <div
+                  className={clsx(
+                    "mt-2 rounded-lg border bg-card/80 p-3",
+                    hintBorderColors[unlockedEasyHint.colorIndex % hintBorderColors.length]
+                  )}
+                >
+                  <p className="text-sm font-semibold">{unlockedEasyHint.name}</p>
+                  <p className="mt-1 text-sm font-medium leading-snug text-neutral-700">
+                    {unlockedEasyHint.text}
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-1 text-sm font-medium text-neutral-600">
+                  {easyHintStatus === "error" ? "Hint is unavailable right now." : "Hint is checking."}
+                </p>
               )}
             </div>
+          )}
 
-            {isOver && stats && stats.players >= MIN_STATS_PLAYERS && (
-              <div className="mt-4 rounded-lg border border-plum/30 bg-plum/10 p-3">
-                <p className="text-xs font-semibold text-plum">How others did</p>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-medium">
-                  <p>{Math.round(stats.solveRate * 100)}% solved</p>
-                  <p>{stats.players} {stats.players === 1 ? "player" : "players"}</p>
-                  <p>~{stats.medianMistakes.toFixed(0)} mistakes</p>
-                  {stats.medianSolveSeconds !== undefined && (
-                    <p>~{formatSeconds(stats.medianSolveSeconds)} median</p>
-                  )}
-                </div>
-              </div>
-            )}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="vg-stat-cell">
+              <p className="text-xs font-semibold text-neutral-500">Selected</p>
+              <p className="mt-1 text-2xl font-extrabold">{attempt.selectedTileIds.length}/4</p>
+            </div>
+            <div className="vg-stat-cell">
+              <p className="text-xs font-semibold text-neutral-500">Misses</p>
+              <p className="mt-1 text-2xl font-extrabold">
+                {attempt.mistakes}/{puzzle.mistakesAllowed}
+              </p>
+            </div>
+          </div>
 
-            {isOver && attempt.guessHistory.length > 0 && (
-              <div className="mt-4">
-                <p className="text-xs font-semibold text-neutral-500">Your grid</p>
-                <div className="mt-2 grid gap-1">
-                  {attempt.guessHistory.map((row, rowIndex) => (
-                    <div key={rowIndex} className="flex gap-1">
-                      {row.map((tileId, tileIndex) => (
-                        <span
-                          key={`${rowIndex}-${tileIndex}`}
-                          className={clsx(
-                            "h-5 w-5 rounded-sm border border-line",
-                            squareColors[(colorByTile[tileId] ?? 0) % squareColors.length]
-                          )}
-                        />
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
+          <div className="mt-4 grid grid-cols-4 gap-2" aria-label="Mistake counter">
+            {Array.from({ length: puzzle.mistakesAllowed }).map((_, index) => (
+              <div
+                key={index}
+                className={clsx(
+                  "h-3 rounded-full border border-line",
+                  index < attempt.mistakes ? "bg-tomato" : "bg-neutral-100"
+                )}
+              />
+            ))}
+          </div>
+
+          <p className="mt-5 min-h-12 text-lg font-extrabold leading-snug">{message}</p>
+
+          {syncState === "error" && (
+            <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-tomato/60 bg-tomato/10 px-3 py-2 text-sm font-semibold">
+              <span>Couldn&apos;t sync. Showing saved progress.</span>
+              <button
+                type="button"
+                onClick={() => void syncAttempt()}
+                className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-line bg-card px-2 text-xs font-semibold"
+              >
+                Resync
+              </button>
+            </div>
+          )}
+
+          <div className="vg-rule mt-4 pt-4 text-sm font-medium text-neutral-600">
+            <p>Elapsed {formatElapsedTime(attempt.startedAt, elapsedFinishedAt)}</p>
+            <p className="mt-1">Guesses {attempt.guessCount}</p>
+            <p className="mt-1">
+              {resolvedSession?.guest.label ?? "Guest session"}. Saved in this browser.
+            </p>
+            {resolvedSession?.admin.authenticated && (
+              <p className="mt-1 font-semibold text-plum">Editor session active.</p>
             )}
           </div>
 
-          <div className="grid gap-2">
-            {!isOver ? (
-              <button
-                className="vg-button-primary h-12"
-                type="button"
-                disabled={attempt.selectedTileIds.length !== 4 || isSubmitting}
-                onClick={submitGuess}
-              >
-                <Send aria-hidden size={18} />
-                Submit
-              </button>
-            ) : (
-              <button
-                className="vg-button-primary h-12 bg-yolk"
-                type="button"
-                onClick={shareResult}
-              >
-                <Share2 aria-hidden size={18} />
-                {copied ? "Copied" : "Share"}
-              </button>
-            )}
+          {isOver && stats && stats.players >= MIN_STATS_PLAYERS && (
+            <div className="mt-4 rounded-lg border border-plum/30 bg-plum/10 p-3">
+              <p className="text-xs font-semibold text-plum">How others did</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-sm font-medium">
+                <p>{Math.round(stats.solveRate * 100)}% solved</p>
+                <p>{stats.players} {stats.players === 1 ? "player" : "players"}</p>
+                <p>~{stats.medianMistakes.toFixed(0)} mistakes</p>
+                {stats.medianSolveSeconds !== undefined && (
+                  <p>~{formatSeconds(stats.medianSolveSeconds)} median</p>
+                )}
+              </div>
+            </div>
+          )}
 
-            <Link
-              href="/create"
-              className="vg-button-secondary h-11"
-            >
-              <Sparkles aria-hidden size={16} />
-              Make your own
-            </Link>
-            <button
-              type="button"
-              onClick={() => setReportOpen((open) => !open)}
-              className="vg-button-secondary h-10"
-            >
-              <Flag aria-hidden size={16} />
-              Report a problem
-            </button>
-            {reportOpen && (
-              <form className="grid gap-2 border-t border-neutral-200 pt-3" onSubmit={submitReport}>
-                <p className="text-xs font-semibold leading-snug text-neutral-600">
-                  No login needed. We review the grid id, your reason, and any note you add.
-                </p>
-                <label className="grid gap-1 text-xs font-semibold text-neutral-600">
-                  Reason
-                  <select
-                    value={reportReason}
-                    onChange={(event) => setReportReason(event.target.value as ReportReason)}
-                    className="vg-input h-10 text-sm font-medium"
-                  >
-                    {reportReasons.map((reason) => (
-                      <option key={reason.value} value={reason.value}>
-                        {reason.label}
-                      </option>
+          {isOver && attempt.guessHistory.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-neutral-500">Your grid</p>
+              <div className="mt-2 grid gap-1">
+                {attempt.guessHistory.map((row, rowIndex) => (
+                  <div key={rowIndex} className="flex gap-1">
+                    {row.map((tileId, tileIndex) => (
+                      <span
+                        key={`${rowIndex}-${tileIndex}`}
+                        className={clsx(
+                          "h-5 w-5 rounded-sm border border-line",
+                          squareColors[(colorByTile[tileId] ?? 0) % squareColors.length]
+                        )}
+                      />
                     ))}
-                  </select>
-                </label>
-                <label className="grid gap-1 text-xs font-semibold text-neutral-600">
-                  What happened?
-                  <textarea
-                    value={reportDetails}
-                    onChange={(event) => setReportDetails(event.target.value)}
-                    maxLength={1000}
-                    rows={3}
-                    placeholder="Tell us what feels unsafe, copied, broken, or unfair."
-                    className="vg-input resize-none py-2 text-sm font-medium"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs font-semibold text-neutral-600">
-                  Email for reply (optional)
-                  <input
-                    value={reportContact}
-                    onChange={(event) => setReportContact(event.target.value)}
-                    maxLength={200}
-                    placeholder="Only if you want a reply"
-                    className="vg-input h-10 text-sm font-medium"
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setReportOpen(false)}
-                    className="vg-button-secondary h-10"
-                  >
-                    <X aria-hidden size={15} />
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isReporting}
-                    className="vg-button-primary h-10 bg-yolk px-3 text-sm"
-                  >
-                    <Send aria-hidden size={15} />
-                    {isReporting ? "Sending" : "Send"}
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </aside>
-      </section>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-2">
+          {!isOver ? (
+            <button
+              className="vg-button-primary h-12"
+              type="button"
+              disabled={attempt.selectedTileIds.length !== 4 || isSubmitting}
+              onClick={submitGuess}
+            >
+              <Send aria-hidden size={18} />
+              Submit
+            </button>
+          ) : (
+            <button
+              className="vg-button-primary h-12 bg-yolk"
+              type="button"
+              onClick={shareResult}
+            >
+              <Share2 aria-hidden size={18} />
+              {copied ? "Copied" : "Share"}
+            </button>
+          )}
+
+          <Link href="/create" className="vg-button-secondary h-11">
+            <Sparkles aria-hidden size={16} />
+            Make your own
+          </Link>
+          <button
+            type="button"
+            onClick={() => setReportOpen((open) => !open)}
+            className="vg-button-secondary h-10"
+          >
+            <Flag aria-hidden size={16} />
+            Report a problem
+          </button>
+          {reportOpen && (
+            <form className="grid gap-2 border-t border-neutral-200 pt-3" onSubmit={submitReport}>
+              <p className="text-xs font-semibold leading-snug text-neutral-600">
+                No login needed. We review the grid id, your reason, and any note you add.
+              </p>
+              <label className="grid gap-1 text-xs font-semibold text-neutral-600">
+                Reason
+                <select
+                  value={reportReason}
+                  onChange={(event) => setReportReason(event.target.value as ReportReason)}
+                  className="vg-input h-10 text-sm font-medium"
+                >
+                  {reportReasons.map((reason) => (
+                    <option key={reason.value} value={reason.value}>
+                      {reason.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-neutral-600">
+                What happened?
+                <textarea
+                  value={reportDetails}
+                  onChange={(event) => setReportDetails(event.target.value)}
+                  maxLength={1000}
+                  rows={3}
+                  placeholder="Tell us what feels unsafe, copied, broken, or unfair."
+                  className="vg-input resize-none py-2 text-sm font-medium"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-neutral-600">
+                Email for reply (optional)
+                <input
+                  value={reportContact}
+                  onChange={(event) => setReportContact(event.target.value)}
+                  maxLength={200}
+                  placeholder="Only if you want a reply"
+                  className="vg-input h-10 text-sm font-medium"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setReportOpen(false)} className="vg-button-secondary h-10">
+                  <X aria-hidden size={15} />
+                  Cancel
+                </button>
+                <button type="submit" disabled={isReporting} className="vg-button-primary h-10 bg-yolk px-3 text-sm">
+                  <Send aria-hidden size={15} />
+                  {isReporting ? "Sending" : "Send"}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
