@@ -105,12 +105,22 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
             and just enough misdirection to make the win feel earned.
           </p>
 
-          <div className="rounded-lg border border-line bg-white/70 p-2 shadow-tile sm:p-3" aria-hidden="true">
+          {/* order-last on mobile: this is an inert preview that looks identical to the
+              real board, so leaving it above the CTA both buries "Play today" under the
+              fold and invites taps that do nothing. Desktop keeps the original order. */}
+          <div
+            className="order-last rounded-lg border border-line bg-white/70 p-2 shadow-tile sm:p-3 lg:order-none"
+            aria-hidden="true"
+          >
             <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
               {sampleTiles.map((tile, index) => (
                 <span
                   key={tile}
-                  className={`flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.68rem] font-semibold leading-tight shadow-tile sm:aspect-[1.35] sm:px-2 sm:text-sm ${
+                  className={`aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.68rem] font-semibold leading-tight shadow-tile sm:aspect-[1.35] sm:px-2 sm:text-sm ${
+                    // Half the preview is enough to convey the idea; sixteen tiles is a
+                    // second full-height board to scroll past on a phone.
+                    index >= 8 ? "hidden sm:flex" : "flex"
+                  } ${
                     index % 4 === 0
                       ? "bg-mint/30"
                       : index % 4 === 1
@@ -159,28 +169,20 @@ function EntryScreen({ onPlayGuest }: { onPlayGuest: () => void }) {
           </span>
         </Link>
 
-        <button
-          type="button"
-          onClick={onPlayGuest}
-          className="group grid gap-3 rounded-lg border border-line bg-card/90 p-4 text-left transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift lg:hidden"
+        {/* Editor login is owner-only. Below lg it competes with "Play today" as an
+            equal-weight card, so it drops to a quiet link and stops reading like a
+            step a new player is meant to take. */}
+        <Link
+          href="/admin"
+          className="inline-flex items-center gap-2 justify-self-start rounded-lg px-1 py-2 text-sm font-semibold text-neutral-500 underline underline-offset-4 lg:hidden"
         >
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-mint/[.55]">
-            <UserRound aria-hidden size={20} />
-          </span>
-          <span>
-            <span className="block text-xl font-extrabold">Play as guest</span>
-            <span className="mt-1 block text-sm font-medium leading-6 text-neutral-600">
-              Browser-saved attempts, refresh recovery, and no account setup.
-            </span>
-          </span>
-          <span className="inline-flex items-center gap-2 text-sm font-semibold">
-            Start <ArrowRight aria-hidden size={16} />
-          </span>
-        </button>
+          <ShieldCheck aria-hidden size={16} />
+          Editor login
+        </Link>
 
         <Link
           href="/admin"
-          className="group grid gap-3 rounded-lg border border-line bg-card/90 p-4 transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift"
+          className="group hidden gap-3 rounded-lg border border-line bg-card/90 p-4 transition hover:-translate-y-0.5 hover:border-ink hover:shadow-lift lg:grid"
         >
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-plum/[.15] text-plum">
             <ShieldCheck aria-hidden size={20} />
