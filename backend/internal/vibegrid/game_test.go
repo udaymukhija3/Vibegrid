@@ -459,8 +459,22 @@ func TestSharedPuzzleHTMLInjectsOGMetadata(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `https://vibegrid.example/api/og/puzzles/vibegrid-2026-06-02.svg`) {
-		t.Fatalf("expected injected OG image metadata, got %s", rec.Body.String())
+	// The preview image must be a raster format — no major scraper renders an SVG
+	// og:image — and it is injected ahead of the frontend's own tags, so this is
+	// what actually shows up when the link is shared.
+	body := rec.Body.String()
+	if !strings.Contains(body, `<meta property="og:image" content="https://vibegrid.example/og.png">`) {
+		t.Fatalf("expected PNG OG image metadata, got %s", body)
+	}
+	if !strings.Contains(body, `<meta property="og:image:type" content="image/png">`) {
+		t.Fatalf("expected PNG OG image type, got %s", body)
+	}
+	if strings.Contains(body, "image/svg+xml") {
+		t.Fatalf("OG image must not be an SVG, got %s", body)
+	}
+	if !strings.Contains(body, `<meta property="og:image:width" content="1200">`) ||
+		!strings.Contains(body, `<meta property="og:image:height" content="630">`) {
+		t.Fatalf("expected OG image dimensions, got %s", body)
 	}
 }
 

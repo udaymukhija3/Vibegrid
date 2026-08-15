@@ -664,6 +664,14 @@ func (server *Server) withFrontendMetadata(next http.Handler) http.Handler {
 	})
 }
 
+// Static preview card shipped with the frontend build (public/og.png).
+const (
+	ogPreviewImagePath   = "/og.png"
+	ogPreviewImageType   = "image/png"
+	ogPreviewImageWidth  = "1200"
+	ogPreviewImageHeight = "630"
+)
+
 type frontendMetadata struct {
 	title       string
 	description string
@@ -672,6 +680,13 @@ type frontendMetadata struct {
 	imageType   string
 }
 
+// These tags are injected directly after <head>, ahead of the ones Next emits, and
+// scrapers honour the first occurrence of a property. That makes this function the
+// authoritative source for link previews — whatever it returns is what renders.
+//
+// It previously pointed at SVGs. No major consumer rasterizes an SVG og:image:
+// iMessage, WhatsApp, Slack, Facebook and Twitter all skip it, so shared links
+// showed bare text. Both routes now use the static 1200x630 PNG.
 func (server *Server) frontendMetadataFor(r *http.Request) (frontendMetadata, bool) {
 	baseURL := server.publicBaseURL
 	if puzzleID := sharedPuzzleID(r.URL.Path); puzzleID != "" {
@@ -680,8 +695,10 @@ func (server *Server) frontendMetadataFor(r *http.Request) (frontendMetadata, bo
 			title:       "VibeGrid shared puzzle",
 			description: "A four-by-four vibe puzzle. Find the hidden groups.",
 			pageURL:     baseURL + "/p/" + escapedID,
-			imageURL:    baseURL + "/api/og/puzzles/" + escapedID + ".svg",
-			imageType:   "image/svg+xml",
+			// /api/og/puzzles/<id>.svg still serves the per-puzzle card for anything
+			// that can use it; it just cannot be the preview image.
+			imageURL:  baseURL + ogPreviewImagePath,
+			imageType: ogPreviewImageType,
 		}, true
 	}
 
@@ -692,8 +709,8 @@ func (server *Server) frontendMetadataFor(r *http.Request) (frontendMetadata, bo
 		title:       "VibeGrid",
 		description: "Group the words. Guess the vibe. Try not to overthink it.",
 		pageURL:     baseURL + r.URL.Path,
-		imageURL:    baseURL + "/vibegrid-mark.svg",
-		imageType:   "image/svg+xml",
+		imageURL:    baseURL + ogPreviewImagePath,
+		imageType:   ogPreviewImageType,
 	}, true
 }
 
@@ -732,6 +749,8 @@ func injectFrontendMetadata(body []byte, metadata frontendMetadata) []byte {
 		fmt.Sprintf(`<meta property="og:url" content="%s">`, html.EscapeString(metadata.pageURL)),
 		fmt.Sprintf(`<meta property="og:image" content="%s">`, html.EscapeString(metadata.imageURL)),
 		fmt.Sprintf(`<meta property="og:image:type" content="%s">`, html.EscapeString(metadata.imageType)),
+		fmt.Sprintf(`<meta property="og:image:width" content="%s">`, ogPreviewImageWidth),
+		fmt.Sprintf(`<meta property="og:image:height" content="%s">`, ogPreviewImageHeight),
 		`<meta name="twitter:card" content="summary_large_image">`,
 		fmt.Sprintf(`<meta name="twitter:title" content="%s">`, html.EscapeString(metadata.title)),
 		fmt.Sprintf(`<meta name="twitter:description" content="%s">`, html.EscapeString(metadata.description)),
