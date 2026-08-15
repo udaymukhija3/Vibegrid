@@ -792,19 +792,33 @@ export function VibeGridGame({
   }
 
   const puzzleLabel = isDemoPuzzle ? "Demo room" : `VibeGrid #${puzzle.puzzleNumber}`;
+  // The mobile spine shows this directly under the wordmark, where the "VibeGrid"
+  // prefix is redundant and long enough to truncate at 375px.
+  const shortPuzzleLabel = isDemoPuzzle ? "Demo room" : `#${puzzle.puzzleNumber}`;
   const puzzleDate = !isDemoPuzzle && puzzle.publishDate ? puzzle.publishDate : null;
   const solvedCount = attempt.solvedGroups.length;
   const progressLabel = `${solvedCount}/${puzzle.groupCount}`;
 
   return (
     <div className="vg-desk">
-      <aside className="vg-spine flex flex-col justify-between gap-4 p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
-        <div className="flex items-center justify-between gap-3 lg:grid lg:justify-items-center">
-          <div className="flex min-w-0 items-center gap-3 lg:grid lg:justify-items-center lg:gap-2">
-            <Image src="/vibegrid-mark.svg" width={48} height={48} alt="" className="rounded-lg bg-card" priority />
+      {/* Below lg the spine is a slim top bar. Stacked, its two rows cost ~200px of
+          board space on a phone, which pushes the tile grid under the fold. */}
+      <aside className="vg-spine flex flex-row items-center justify-between gap-3 p-2.5 lg:flex-col lg:items-stretch lg:gap-4 lg:p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
+        <div className="flex min-w-0 items-center justify-between gap-3 lg:grid lg:justify-items-center">
+          <div className="flex min-w-0 items-center gap-2.5 lg:grid lg:justify-items-center lg:gap-2">
+            <Image
+              src="/vibegrid-mark.svg"
+              width={48}
+              height={48}
+              alt=""
+              className="h-9 w-9 rounded-lg bg-card lg:h-12 lg:w-12"
+              priority
+            />
             <div className="min-w-0 lg:text-center">
-              <h1 className="text-2xl font-extrabold leading-none lg:text-base">VibeGrid</h1>
-              <p className="mt-1 text-xs font-semibold text-card/[.65] lg:hidden">{puzzleLabel}</p>
+              <h1 className="text-lg font-extrabold leading-none lg:text-base">VibeGrid</h1>
+              <p className="mt-0.5 truncate text-xs font-semibold text-card/[.65] lg:hidden">
+                {shortPuzzleLabel}
+              </p>
             </div>
           </div>
 
@@ -814,7 +828,7 @@ export function VibeGridGame({
           </div>
         </div>
 
-        <nav className="flex flex-wrap items-center gap-2 lg:grid lg:justify-items-center" aria-label="Game tools">
+        <nav className="flex shrink-0 items-center gap-1.5 lg:grid lg:justify-items-center lg:gap-2" aria-label="Game tools">
           <HowToPlay />
           <Link href="/demo" aria-label="Demo walkthrough" title="Demo walkthrough" className="vg-icon-button">
             <Compass aria-hidden size={18} />
@@ -825,10 +839,12 @@ export function VibeGridGame({
           <Link href="/archive" aria-label="Archive" title="Archive" className="vg-icon-button">
             <Archive aria-hidden size={18} />
           </Link>
+          {/* Hidden below lg: five 44px buttons plus the wordmark overflow a 375px
+              row, and the pinned mobile guess bar carries its own Shuffle. */}
           <button
             aria-label="Shuffle tiles"
             title="Shuffle tiles"
-            className="vg-icon-button"
+            className="vg-icon-button hidden lg:inline-flex"
             disabled={isOver || remainingTiles.length < 2}
             type="button"
             onClick={shuffleRemaining}
@@ -839,10 +855,11 @@ export function VibeGridGame({
       </aside>
 
       <main className="vg-board-sheet min-w-0">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3 sm:pb-4">
           <div>
-            <p className="vg-kicker">{puzzleLabel}</p>
-            <h2 className="mt-1 text-3xl font-extrabold leading-tight sm:text-5xl">
+            {/* The spine already carries the puzzle label below lg. */}
+            <p className="vg-kicker hidden lg:block">{puzzleLabel}</p>
+            <h2 className="text-xl font-extrabold leading-tight sm:text-5xl lg:mt-1">
               {isOver ? "Result grid" : "Find the hidden sets"}
             </h2>
           </div>
@@ -930,7 +947,7 @@ export function VibeGridGame({
                 <button
                   key={tile.id}
                   className={clsx(
-                    "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.7rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
+                    "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1.5 text-center text-[0.8rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
                     isSelected
                       ? "translate-y-0.5 border-ink bg-ink text-card shadow-none ring-2 ring-pool/70"
                       : "bg-card hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/25 hover:shadow-lift"
@@ -944,6 +961,47 @@ export function VibeGridGame({
               );
             })}
           </div>
+
+          {/* Below lg the control rail renders after the whole board, leaving Submit
+              ~550px under the fold: every guess costs a scroll down to submit and a
+              scroll back up to pick. Pinning it keeps board and Submit on one screen;
+              it settles into normal flow at the board's end. */}
+          {!isOver && (
+            <section
+              className="sticky bottom-2 z-20 mt-3 grid gap-1.5 rounded-lg border border-line bg-card/95 p-2.5 shadow-lift backdrop-blur lg:hidden"
+              aria-label="Guess controls"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="whitespace-nowrap text-sm font-extrabold">
+                  Selected {attempt.selectedTileIds.length}/4
+                  <span className="ml-2 text-xs font-semibold text-neutral-500">
+                    · {attempt.mistakes}/{puzzle.mistakesAllowed} misses
+                  </span>
+                </p>
+                <button
+                  aria-label="Shuffle tiles"
+                  title="Shuffle tiles"
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 text-xs font-semibold shadow-tile disabled:opacity-50"
+                  disabled={remainingTiles.length < 2}
+                  type="button"
+                  onClick={shuffleRemaining}
+                >
+                  <Shuffle aria-hidden size={15} />
+                  Shuffle
+                </button>
+              </div>
+
+              <button
+                className="vg-button-primary h-11 w-full"
+                type="button"
+                disabled={attempt.selectedTileIds.length !== 4 || isSubmitting}
+                onClick={submitGuess}
+              >
+                <Send aria-hidden size={18} />
+                {isSubmitting ? "Checking…" : "Submit guess"}
+              </button>
+            </section>
+          )}
         </div>
       </main>
 
