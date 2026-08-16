@@ -97,6 +97,7 @@ func TestInvalidGuessDoesNotAllocateAnonymousAttempt(t *testing.T) {
 		PuzzleID:        puzzle.ID,
 		ClientGuessID:   "invalid-before-write",
 		SelectedTileIDs: []string{"unknown-a", "unknown-b", "unknown-c", "unknown-d"},
+		Mode:            AttemptModeMedium,
 	}
 
 	if _, err := store.SubmitGuess(context.Background(), puzzle, "0123456789abcdef0123456789abcdef", request, fixedClock()); !errors.Is(err, ErrUnknownTile) {
@@ -104,6 +105,35 @@ func TestInvalidGuessDoesNotAllocateAnonymousAttempt(t *testing.T) {
 	}
 	if len(store.attempts) != 0 {
 		t.Fatalf("invalid guess must not allocate an attempt, found %d", len(store.attempts))
+	}
+}
+
+func TestAttemptModeLocksOnFirstGuess(t *testing.T) {
+	store := NewMemoryAttemptStore()
+	puzzle := SeedPuzzles()[0]
+	first := wrongGuess("mode-first")
+	first.Mode = AttemptModeEasy
+
+	submission, err := store.SubmitGuess(context.Background(), puzzle, "mode-session", first, fixedClock())
+	if err != nil {
+		t.Fatalf("first guess: %v", err)
+	}
+	if submission.Attempt.Mode != AttemptModeEasy {
+		t.Fatalf("expected Easy mode in snapshot, got %q", submission.Attempt.Mode)
+	}
+
+	changed := wrongGuess("mode-second")
+	changed.Mode = AttemptModeHard
+	if _, err := store.SubmitGuess(context.Background(), puzzle, "mode-session", changed, fixedClock()); !errors.Is(err, ErrAttemptModeConflict) {
+		t.Fatalf("expected mode conflict, got %v", err)
+	}
+
+	snapshot, err := store.GetAttempt(context.Background(), puzzle, "mode-session", fixedClock())
+	if err != nil {
+		t.Fatalf("get attempt: %v", err)
+	}
+	if snapshot.Mode != AttemptModeEasy || snapshot.GuessCount != 1 {
+		t.Fatalf("mode conflict mutated attempt: %#v", snapshot)
 	}
 }
 
@@ -348,10 +378,11 @@ func TestPublicWriteRateLimiterErrorsFailClosed(t *testing.T) {
 	}
 }
 
-func TestPublicReadRateLimiterErrorsFallBackToMemory(t *testing.T) {
+func TestPublicReadsUseMemoryLimiterAndWritesUseSharedLimiter(t *testing.T) {
+	shared := &countingFailingRateLimitStore{}
 	handler := NewServer(ServerConfig{
 		Puzzles:    StaticPuzzleSource(SeedPuzzles()),
-		RateLimits: failingRateLimitStore{},
+		RateLimits: shared,
 		Clock:      fixedClock,
 	})
 
@@ -359,10 +390,13 @@ func TestPublicReadRateLimiterErrorsFallBackToMemory(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected public read to survive limiter outage via in-memory fallback, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected public read to use the in-memory limiter, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if shared.checks != 0 {
+		t.Fatalf("public read touched the shared limiter %d times", shared.checks)
 	}
 
-	// The fallback still limits: exhaust the in-memory read budget and the next
+	// The local limiter still limits: exhaust the in-memory read budget and the next
 	// read must be throttled, not allowed through unbounded.
 	for i := 0; i < readRateLimit; i++ {
 		exhaust := httptest.NewRecorder()
@@ -373,6 +407,9 @@ func TestPublicReadRateLimiterErrorsFallBackToMemory(t *testing.T) {
 	if limited.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected in-memory fallback to throttle after %d reads, got %d", readRateLimit, limited.Code)
 	}
+	if shared.checks != 0 {
+		t.Fatalf("rate-limited public reads touched the shared limiter %d times", shared.checks)
+	}
 
 	// Guesses are anonymous writes and must keep failing closed on limiter errors.
 	guessBody := `{"puzzleId":"vibegrid-2026-06-02","clientGuessId":"guess-1","selectedTileIds":["a","b","c","d"]}`
@@ -382,6 +419,9 @@ func TestPublicReadRateLimiterErrorsFallBackToMemory(t *testing.T) {
 	handler.ServeHTTP(guessRec, guessReq)
 	if guessRec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected guess to fail closed on limiter error, got %d: %s", guessRec.Code, guessRec.Body.String())
+	}
+	if shared.checks != 1 {
+		t.Fatalf("expected guess to check the shared limiter once, got %d", shared.checks)
 	}
 }
 
@@ -451,7 +491,7 @@ func TestAdminQueueHealthUsesLaunchTimezoneAndEvergreenFallback(t *testing.T) {
 	pendingCommunity.Origin = OriginCommunity
 
 	handler := NewServer(ServerConfig{
-		Puzzles:      NewBankPuzzleSource(StaticPuzzleSource([]Puzzle{scheduled, draft, pendingCommunity}), PuzzleBank()),
+		Puzzles:      NewBankPuzzleSource(StaticPuzzleSource([]Puzzle{scheduled, draft, pendingCommunity}), PuzzleBank(), nil),
 		AdminPuzzles: newFakePuzzleBackend(),
 		AdminToken:   "script-token",
 		Clock:        fixedClock,
@@ -494,7 +534,23 @@ func TestAdminQueueHealthUsesLaunchTimezoneAndEvergreenFallback(t *testing.T) {
 type failingRateLimitStore struct{}
 
 func (failingRateLimitStore) Check(context.Context, string, int, time.Duration, time.Time) (rateLimitDecision, error) {
-	return rateLimitDecision{}, errors.New("rate limiter unavailable")
+	return rateLimitDecision{}, errors.New("failing DB limiter")
+}
+func (failingRateLimitStore) Prune(context.Context) error {
+	return errors.New("failing DB limiter")
+}
+
+type countingFailingRateLimitStore struct {
+	checks int
+}
+
+func (store *countingFailingRateLimitStore) Check(context.Context, string, int, time.Duration, time.Time) (rateLimitDecision, error) {
+	store.checks++
+	return rateLimitDecision{}, errors.New("failing DB limiter")
+}
+
+func (*countingFailingRateLimitStore) Prune(context.Context) error {
+	return nil
 }
 
 func adminCookiePostRequest(cookie *http.Cookie, csrfToken string) *http.Request {

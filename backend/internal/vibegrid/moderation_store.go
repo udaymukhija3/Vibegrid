@@ -106,9 +106,29 @@ func NewPostgresModerationStore(database *sql.DB) *PostgresModerationStore {
 func (store *PostgresModerationStore) CreateReport(ctx context.Context, input ReportInput, sessionID string) (ModerationReport, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
+	if tx := transactionFromContext(ctx); tx != nil {
+		return store.createReportTx(ctx, tx, input, sessionID)
+	}
 
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModerationReport{}, fmt.Errorf("begin create report tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	report, err := store.createReportTx(ctx, tx, input, sessionID)
+	if err != nil {
+		return ModerationReport{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ModerationReport{}, fmt.Errorf("commit create report: %w", err)
+	}
+	return report, nil
+}
+
+func (store *PostgresModerationStore) createReportTx(ctx context.Context, tx *sql.Tx, input ReportInput, sessionID string) (ModerationReport, error) {
 	id := newID("rpt")
-	_, err := store.db.ExecContext(ctx,
+	_, err := tx.ExecContext(ctx,
 		`insert into moderation_reports (id, puzzle_id, reporter_session_id, reason, details, contact)
 		 values ($1, $2, $3, $4, $5, $6)`,
 		id, input.PuzzleID, nullString(sessionID), input.Reason, input.Details, input.Contact,
@@ -116,7 +136,7 @@ func (store *PostgresModerationStore) CreateReport(ctx context.Context, input Re
 	if err != nil {
 		return ModerationReport{}, fmt.Errorf("create report: %w", err)
 	}
-	if err := store.AddAction(ctx, ModerationActionInput{
+	if err := addActionTx(ctx, tx, ModerationActionInput{
 		ReportID: id,
 		PuzzleID: input.PuzzleID,
 		Actor:    "public",
@@ -126,7 +146,7 @@ func (store *PostgresModerationStore) CreateReport(ctx context.Context, input Re
 	}); err != nil {
 		return ModerationReport{}, err
 	}
-	return store.reportByID(ctx, id)
+	return store.reportByIDTx(ctx, tx, id)
 }
 
 func (store *PostgresModerationStore) ListReports(ctx context.Context) ([]ModerationReport, error) {
@@ -152,7 +172,13 @@ func (store *PostgresModerationStore) ResolveReport(ctx context.Context, reportI
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	result, err := store.db.ExecContext(ctx,
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModerationReport{}, fmt.Errorf("begin resolve report tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx,
 		`update moderation_reports
 		 set status = $1, resolution_note = $2, resolved_at = now()
 		 where id = $3`,
@@ -166,11 +192,12 @@ func (store *PostgresModerationStore) ResolveReport(ctx context.Context, reportI
 	} else if affected == 0 {
 		return ModerationReport{}, ErrReportNotFound
 	}
-	report, err := store.reportByID(ctx, reportID)
+
+	report, err := store.reportByIDTx(ctx, tx, reportID)
 	if err != nil {
 		return ModerationReport{}, err
 	}
-	if err := store.AddAction(ctx, ModerationActionInput{
+	if err := addActionTx(ctx, tx, ModerationActionInput{
 		ReportID: reportID,
 		PuzzleID: report.PuzzleID,
 		Actor:    actor,
@@ -180,15 +207,38 @@ func (store *PostgresModerationStore) ResolveReport(ctx context.Context, reportI
 	}); err != nil {
 		return ModerationReport{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return ModerationReport{}, fmt.Errorf("commit resolve report: %w", err)
+	}
 	return report, nil
 }
 
 func (store *PostgresModerationStore) CreateAppeal(ctx context.Context, input AppealInput) (ModerationAppeal, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
+	if tx := transactionFromContext(ctx); tx != nil {
+		return store.createAppealTx(ctx, tx, input)
+	}
 
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModerationAppeal{}, fmt.Errorf("begin create appeal tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	appeal, err := store.createAppealTx(ctx, tx, input)
+	if err != nil {
+		return ModerationAppeal{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ModerationAppeal{}, fmt.Errorf("commit create appeal: %w", err)
+	}
+	return appeal, nil
+}
+
+func (store *PostgresModerationStore) createAppealTx(ctx context.Context, tx *sql.Tx, input AppealInput) (ModerationAppeal, error) {
 	id := newID("apl")
-	_, err := store.db.ExecContext(ctx,
+	_, err := tx.ExecContext(ctx,
 		`insert into moderation_appeals (id, puzzle_id, contact, message)
 		 values ($1, $2, $3, $4)`,
 		id, input.PuzzleID, input.Contact, input.Message,
@@ -196,7 +246,7 @@ func (store *PostgresModerationStore) CreateAppeal(ctx context.Context, input Ap
 	if err != nil {
 		return ModerationAppeal{}, fmt.Errorf("create appeal: %w", err)
 	}
-	if err := store.AddAction(ctx, ModerationActionInput{
+	if err := addActionTx(ctx, tx, ModerationActionInput{
 		AppealID: id,
 		PuzzleID: input.PuzzleID,
 		Actor:    "public",
@@ -205,7 +255,7 @@ func (store *PostgresModerationStore) CreateAppeal(ctx context.Context, input Ap
 	}); err != nil {
 		return ModerationAppeal{}, err
 	}
-	return store.appealByID(ctx, id)
+	return store.appealByIDTx(ctx, tx, id)
 }
 
 func (store *PostgresModerationStore) ListAppeals(ctx context.Context) ([]ModerationAppeal, error) {
@@ -231,7 +281,13 @@ func (store *PostgresModerationStore) ResolveAppeal(ctx context.Context, appealI
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	result, err := store.db.ExecContext(ctx,
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModerationAppeal{}, fmt.Errorf("begin resolve appeal tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx,
 		`update moderation_appeals
 		 set status = 'RESOLVED', resolution_note = $1, resolved_at = now()
 		 where id = $2`,
@@ -245,11 +301,11 @@ func (store *PostgresModerationStore) ResolveAppeal(ctx context.Context, appealI
 	} else if affected == 0 {
 		return ModerationAppeal{}, ErrAppealNotFound
 	}
-	appeal, err := store.appealByID(ctx, appealID)
+	appeal, err := store.appealByIDTx(ctx, tx, appealID)
 	if err != nil {
 		return ModerationAppeal{}, err
 	}
-	if err := store.AddAction(ctx, ModerationActionInput{
+	if err := addActionTx(ctx, tx, ModerationActionInput{
 		AppealID: appealID,
 		PuzzleID: appeal.PuzzleID,
 		Actor:    actor,
@@ -258,6 +314,9 @@ func (store *PostgresModerationStore) ResolveAppeal(ctx context.Context, appealI
 	}); err != nil {
 		return ModerationAppeal{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return ModerationAppeal{}, fmt.Errorf("commit resolve appeal: %w", err)
+	}
 	return appeal, nil
 }
 
@@ -265,7 +324,20 @@ func (store *PostgresModerationStore) AddAction(ctx context.Context, action Mode
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	_, err := store.db.ExecContext(ctx,
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin add action tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := addActionTx(ctx, tx, action); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func addActionTx(ctx context.Context, tx *sql.Tx, action ModerationActionInput) error {
+	_, err := tx.ExecContext(ctx,
 		`insert into moderation_actions (report_id, appeal_id, puzzle_id, actor, action, reason, note)
 		 values ($1, $2, $3, $4, $5, $6, $7)`,
 		nullString(action.ReportID), nullString(action.AppealID), nullString(action.PuzzleID),
@@ -325,7 +397,24 @@ func (store *PostgresModerationStore) AuditLog(ctx context.Context, limit int) (
 }
 
 func (store *PostgresModerationStore) reportByID(ctx context.Context, reportID string) (ModerationReport, error) {
-	rows, err := store.db.QueryContext(ctx,
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModerationReport{}, fmt.Errorf("begin report by id tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	report, err := store.reportByIDTx(ctx, tx, reportID)
+	if err != nil {
+		return ModerationReport{}, err
+	}
+	return report, tx.Commit()
+}
+
+func (store *PostgresModerationStore) reportByIDTx(ctx context.Context, tx *sql.Tx, reportID string) (ModerationReport, error) {
+	rows, err := tx.QueryContext(ctx,
 		`select r.id, r.puzzle_id, p.puzzle_number, p.status, p.origin,
 		        r.reason, r.details, r.contact, r.status, r.created_at,
 		        r.resolved_at, r.resolution_note
@@ -349,7 +438,24 @@ func (store *PostgresModerationStore) reportByID(ctx context.Context, reportID s
 }
 
 func (store *PostgresModerationStore) appealByID(ctx context.Context, appealID string) (ModerationAppeal, error) {
-	rows, err := store.db.QueryContext(ctx,
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModerationAppeal{}, fmt.Errorf("begin appeal by id tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	appeal, err := store.appealByIDTx(ctx, tx, appealID)
+	if err != nil {
+		return ModerationAppeal{}, err
+	}
+	return appeal, tx.Commit()
+}
+
+func (store *PostgresModerationStore) appealByIDTx(ctx context.Context, tx *sql.Tx, appealID string) (ModerationAppeal, error) {
+	rows, err := tx.QueryContext(ctx,
 		`select a.id, a.puzzle_id, p.puzzle_number, p.status, p.origin,
 		        a.contact, a.message, a.status, a.created_at,
 		        a.resolved_at, a.resolution_note

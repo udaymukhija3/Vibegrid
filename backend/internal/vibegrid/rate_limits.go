@@ -9,6 +9,7 @@ import (
 
 type RateLimitStore interface {
 	Check(ctx context.Context, key string, limit int, window time.Duration, now time.Time) (rateLimitDecision, error)
+	Prune(ctx context.Context) error
 }
 
 type PostgresRateLimitStore struct {
@@ -40,13 +41,6 @@ func (store *PostgresRateLimitStore) Check(ctx context.Context, key string, limi
 		return rateLimitDecision{}, fmt.Errorf("rate limit hit: %w", err)
 	}
 
-	// Best-effort pruning keeps the table from growing forever. It is intentionally
-	// not in a transaction with the hit path; a prune failure should not reject a user.
-	if hits == 1 {
-		_, _ = store.db.ExecContext(ctx,
-			`delete from rate_limit_hits where updated_at < now() - interval '2 days'`)
-	}
-
 	if hits > limit {
 		retryAfter := bucketStart.Add(window).Sub(now.UTC())
 		if retryAfter <= 0 {
@@ -55,4 +49,16 @@ func (store *PostgresRateLimitStore) Check(ctx context.Context, key string, limi
 		return rateLimitDecision{retryAfter: retryAfter}, nil
 	}
 	return rateLimitDecision{allowed: true}, nil
+}
+
+func (store *PostgresRateLimitStore) Prune(ctx context.Context) error {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	_, err := store.db.ExecContext(ctx,
+		`delete from rate_limit_hits where updated_at < now() - interval '2 days'`)
+	if err != nil {
+		return fmt.Errorf("prune rate limit hits: %w", err)
+	}
+	return nil
 }

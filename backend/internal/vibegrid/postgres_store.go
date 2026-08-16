@@ -179,7 +179,7 @@ func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzl
 		return GuessSubmission{}, err
 	}
 
-	if err := store.ensureAttempt(ctx, puzzle.ID, sessionID, now); err != nil {
+	if err := store.ensureAttempt(ctx, puzzle.ID, sessionID, request.Mode, now); err != nil {
 		return GuessSubmission{}, err
 	}
 
@@ -194,6 +194,9 @@ func (store *PostgresAttemptStore) SubmitGuess(ctx context.Context, puzzle Puzzl
 	state, err := store.readState(ctx, tx, puzzle.ID, sessionID, true)
 	if err != nil {
 		return GuessSubmission{}, err
+	}
+	if state.Mode != request.Mode {
+		return GuessSubmission{}, ErrAttemptModeConflict
 	}
 
 	var attemptID string
@@ -285,12 +288,12 @@ func (store *PostgresAttemptStore) PruneExpired(ctx context.Context, before time
 
 // ensureAttempt inserts the attempt row if it does not exist. The unique key on
 // (puzzle_id, session_id) keeps this to exactly one attempt per session.
-func (store *PostgresAttemptStore) ensureAttempt(ctx context.Context, puzzleID, sessionID string, now time.Time) error {
+func (store *PostgresAttemptStore) ensureAttempt(ctx context.Context, puzzleID, sessionID string, mode AttemptMode, now time.Time) error {
 	_, err := store.db.ExecContext(ctx,
-		`insert into attempts (puzzle_id, session_id, started_at)
-		 values ($1, $2, $3)
+		`insert into attempts (puzzle_id, session_id, mode, started_at)
+		 values ($1, $2, $3, $4)
 		 on conflict (puzzle_id, session_id) do nothing`,
-		puzzleID, sessionID, now.UTC(),
+		puzzleID, sessionID, mode, now.UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("ensure attempt: %w", err)
@@ -359,7 +362,7 @@ func scanGuessHistory(rows *sql.Rows) ([][]string, error) {
 }
 
 func (store *PostgresAttemptStore) readState(ctx context.Context, q rowQuerier, puzzleID, sessionID string, forUpdate bool) (attemptState, error) {
-	query := `select puzzle_id, session_id, mistakes, guess_count, failed,
+	query := `select puzzle_id, session_id, mode, mistakes, guess_count, failed,
 	                 started_at, completed_at, solved_group_ids
 	          from attempts where puzzle_id = $1 and session_id = $2`
 	if forUpdate {
@@ -374,6 +377,7 @@ func (store *PostgresAttemptStore) readState(ctx context.Context, q rowQuerier, 
 	err := q.QueryRowContext(ctx, query, puzzleID, sessionID).Scan(
 		&state.PuzzleID,
 		&state.SessionID,
+		&state.Mode,
 		&state.Mistakes,
 		&state.GuessCount,
 		&state.Failed,
@@ -423,12 +427,16 @@ func (store *PostgresAttemptStore) insertGuess(ctx context.Context, tx *sql.Tx, 
 	if stored.MatchedGroupID != "" {
 		matchedGroupID = sql.NullString{String: stored.MatchedGroupID, Valid: true}
 	}
+	selectedTileIDs := request.SelectedTileIDs
+	if !stored.IsCorrect {
+		selectedTileIDs = canonicalTileSet(selectedTileIDs)
+	}
 
 	_, err := tx.ExecContext(ctx,
 		`insert into attempt_guesses
 		   (attempt_id, client_guess_id, selected_tile_ids, is_correct, matched_group_id, revealed)
 		 values ($1, $2, $3, $4, $5, $6)`,
-		attemptID, request.ClientGuessID, pq.Array(request.SelectedTileIDs),
+		attemptID, request.ClientGuessID, pq.Array(selectedTileIDs),
 		stored.IsCorrect, matchedGroupID, stored.Revealed,
 	)
 	if err != nil {

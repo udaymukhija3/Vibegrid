@@ -10,6 +10,8 @@ import (
 
 var ErrAttemptFinished = errors.New("attempt is already finished")
 
+var ErrAttemptModeConflict = errors.New("attempt mode is already locked")
+
 var ErrAttemptCapacity = errors.New("anonymous attempt capacity is temporarily full")
 
 // Store owns mutable per-session game state: attempts and the guesses made
@@ -58,6 +60,7 @@ type GuessSubmission struct {
 type attemptState struct {
 	PuzzleID       string
 	SessionID      string
+	Mode           AttemptMode
 	Mistakes       int
 	GuessCount     int
 	StartedAt      time.Time
@@ -135,6 +138,7 @@ func buildSnapshot(puzzle Puzzle, state attemptState) AttemptSnapshot {
 
 	return AttemptSnapshot{
 		PuzzleID:       state.PuzzleID,
+		Mode:           state.Mode,
 		SolvedGroups:   solvedGroups,
 		RevealedGroups: revealedGroups,
 		Mistakes:       state.Mistakes,
@@ -220,9 +224,12 @@ func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, s
 	defer store.mu.Unlock()
 	store.pruneExpiredLocked(now)
 
-	attempt, err := store.getOrCreateLocked(puzzle.ID, sessionID, now)
+	attempt, err := store.getOrCreateLocked(puzzle.ID, sessionID, request.Mode, now)
 	if err != nil {
 		return GuessSubmission{}, err
+	}
+	if attempt.state.Mode != request.Mode {
+		return GuessSubmission{}, ErrAttemptModeConflict
 	}
 
 	if storedGuess, ok := attempt.guesses[request.ClientGuessID]; ok {
@@ -243,7 +250,7 @@ func (store *MemoryAttemptStore) SubmitGuess(_ context.Context, puzzle Puzzle, s
 	return buildSubmission(puzzle, attempt.state, storedGuess), nil
 }
 
-func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID string, now time.Time) (*memoryAttempt, error) {
+func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID string, mode AttemptMode, now time.Time) (*memoryAttempt, error) {
 	key := attemptKey(puzzleID, sessionID)
 	if attempt, ok := store.attempts[key]; ok {
 		return attempt, nil
@@ -256,6 +263,7 @@ func (store *MemoryAttemptStore) getOrCreateLocked(puzzleID string, sessionID st
 		state:   freshState(puzzleID, sessionID, now),
 		guesses: map[string]StoredGuess{},
 	}
+	attempt.state.Mode = mode
 	store.attempts[key] = attempt
 	return attempt, nil
 }

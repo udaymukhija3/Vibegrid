@@ -152,6 +152,7 @@ export type ModerationAction = {
 
 export type AttemptSnapshot = {
   puzzleId: string;
+  mode?: "easy" | "medium" | "hard";
   solvedGroups: SolvedGroup[];
   revealedGroups: SolvedGroup[];
   mistakes: number;

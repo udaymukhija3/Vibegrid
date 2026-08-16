@@ -2,6 +2,7 @@ package vibegrid
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -54,7 +55,7 @@ func newTestStore(t *testing.T) *PostgresAttemptStore {
 
 	// Truncating puzzles cascades to groups, tiles, attempts, and guesses, giving
 	// each test a clean slate regardless of what other tests left behind.
-	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate idempotency_keys, rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	// Attempts reference puzzles by foreign key, so the seed puzzle must exist
@@ -70,6 +71,7 @@ func correctGuess(clientGuessID string) GuessRequest {
 		PuzzleID:        "vibegrid-2026-06-02",
 		ClientGuessID:   clientGuessID,
 		SelectedTileIDs: []string{"p1-espresso", "p1-linen", "p1-vespa", "p1-balcony"},
+		Mode:            AttemptModeMedium,
 	}
 }
 
@@ -78,6 +80,7 @@ func wrongGuess(clientGuessID string) GuessRequest {
 		PuzzleID:        "vibegrid-2026-06-02",
 		ClientGuessID:   clientGuessID,
 		SelectedTileIDs: []string{"p1-espresso", "p1-linen", "p1-slack", "p1-balcony"},
+		Mode:            AttemptModeMedium,
 	}
 }
 
@@ -95,6 +98,32 @@ func TestPostgresCorrectGuessSolvesGroup(t *testing.T) {
 	}
 	if len(submission.Attempt.SolvedGroups) != 1 || submission.Attempt.GuessCount != 1 {
 		t.Fatalf("expected one solved group and one guess, got %#v", submission.Attempt)
+	}
+}
+
+func TestPostgresAttemptModeIsImmutable(t *testing.T) {
+	store := newTestStore(t)
+	puzzle := SeedPuzzles()[0]
+	ctx := context.Background()
+
+	first := wrongGuess("mode-first")
+	first.Mode = AttemptModeEasy
+	if _, err := store.SubmitGuess(ctx, puzzle, "session-mode", first, fixedClock()); err != nil {
+		t.Fatalf("first guess: %v", err)
+	}
+
+	changed := wrongGuess("mode-second")
+	changed.Mode = AttemptModeHard
+	if _, err := store.SubmitGuess(ctx, puzzle, "session-mode", changed, fixedClock()); !errors.Is(err, ErrAttemptModeConflict) {
+		t.Fatalf("expected mode conflict, got %v", err)
+	}
+
+	snapshot, err := store.GetAttempt(ctx, puzzle, "session-mode", fixedClock())
+	if err != nil {
+		t.Fatalf("get attempt: %v", err)
+	}
+	if snapshot.Mode != AttemptModeEasy || snapshot.GuessCount != 1 {
+		t.Fatalf("mode conflict mutated attempt: %#v", snapshot)
 	}
 }
 
@@ -118,7 +147,7 @@ func TestPostgresDuplicateClientGuessIsIdempotent(t *testing.T) {
 
 func TestPostgresBankDailyCanRecordAttempts(t *testing.T) {
 	store := newTestStore(t)
-	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank())
+	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank(), nil)
 	puzzle, err := source.TodaysPuzzle(context.Background(), "2026-06-13")
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +157,7 @@ func TestPostgresBankDailyCanRecordAttempts(t *testing.T) {
 	guess := GuessRequest{
 		PuzzleID:      puzzle.ID,
 		ClientGuessID: "bank-daily",
+		Mode:          AttemptModeMedium,
 		SelectedTileIDs: []string{
 			puzzle.Groups[0].Tiles[0].ID,
 			puzzle.Groups[0].Tiles[1].ID,

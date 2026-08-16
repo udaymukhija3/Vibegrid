@@ -3,11 +3,16 @@ package vibegrid
 type Difficulty string
 type PuzzleStatus string
 type PuzzleOrigin string
+type AttemptMode string
 
 const (
 	DifficultyEasy   Difficulty = "EASY"
 	DifficultyMedium Difficulty = "MEDIUM"
 	DifficultyHard   Difficulty = "HARD"
+
+	AttemptModeEasy   AttemptMode = "easy"
+	AttemptModeMedium AttemptMode = "medium"
+	AttemptModeHard   AttemptMode = "hard"
 
 	PuzzleStatusDraft     PuzzleStatus = "DRAFT"
 	PuzzleStatusPending   PuzzleStatus = "PENDING"
@@ -92,6 +97,7 @@ type SolvedGroup struct {
 
 type AttemptSnapshot struct {
 	PuzzleID       string        `json:"puzzleId"`
+	Mode           AttemptMode   `json:"mode,omitempty"`
 	SolvedGroups   []SolvedGroup `json:"solvedGroups"`
 	RevealedGroups []SolvedGroup `json:"revealedGroups"`
 	Mistakes       int           `json:"mistakes"`
@@ -113,9 +119,10 @@ type StreakSummary struct {
 }
 
 type GuessRequest struct {
-	PuzzleID        string   `json:"puzzleId"`
-	SelectedTileIDs []string `json:"selectedTileIds"`
-	ClientGuessID   string   `json:"clientGuessId"`
+	PuzzleID        string      `json:"puzzleId"`
+	SelectedTileIDs []string    `json:"selectedTileIds"`
+	ClientGuessID   string      `json:"clientGuessId"`
+	Mode            AttemptMode `json:"mode"`
 }
 
 type GuessResponse struct {

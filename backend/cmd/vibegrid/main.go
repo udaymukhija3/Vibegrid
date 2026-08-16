@@ -81,6 +81,15 @@ func run(logger *slog.Logger) error {
 	}
 	blockedTerms := splitCommaList(os.Getenv("VIBEGRID_BLOCKED_TERMS"))
 	metricsToken := os.Getenv("VIBEGRID_METRICS_TOKEN")
+	turnstileSiteKey := strings.TrimSpace(os.Getenv("VIBEGRID_TURNSTILE_SITE_KEY"))
+	turnstileSecretKey := strings.TrimSpace(os.Getenv("VIBEGRID_TURNSTILE_SECRET_KEY"))
+	if (turnstileSiteKey == "") != (turnstileSecretKey == "") {
+		return errors.New("VIBEGRID_TURNSTILE_SITE_KEY and VIBEGRID_TURNSTILE_SECRET_KEY must be set together")
+	}
+	operatorWebhookURL, err := validatedWebhookURL(os.Getenv("VIBEGRID_OPERATOR_WEBHOOK_URL"), production)
+	if err != nil {
+		return err
+	}
 	publicBaseURL, err := validatedPublicBaseURL(os.Getenv("VIBEGRID_PUBLIC_BASE_URL"), production)
 	if err != nil {
 		return err
@@ -99,6 +108,9 @@ func run(logger *slog.Logger) error {
 		}
 		if devCORS {
 			return errors.New("VIBEGRID_DEV_CORS must be false in production")
+		}
+		if turnstileSiteKey == "" {
+			return errors.New("VIBEGRID_TURNSTILE_SITE_KEY and VIBEGRID_TURNSTILE_SECRET_KEY are required in production")
 		}
 		// Missing observability/metadata config degrades with a warning instead
 		// of refusing to boot: a disabled /metrics or wrong OG URLs beat a
@@ -146,6 +158,13 @@ func run(logger *slog.Logger) error {
 	}
 	defer deps.close()
 	startRetentionPruner(ctx, logger, deps.pruneExpired)
+	startDailyGenerator(ctx, logger, deps.bankSource)
+	startRateLimitPruner(ctx, logger, deps.rateLimits)
+	if operatorWebhookURL != "" {
+		vibegrid.RunNotificationOutbox(ctx, logger, deps.outbox, vibegrid.NewWebhookNotificationDeliverer(operatorWebhookURL))
+	} else if production {
+		logger.Warn("VIBEGRID_OPERATOR_WEBHOOK_URL is not set: notification events remain pending in the transactional outbox")
+	}
 
 	if deps.adminPuzzles == nil {
 		logger.Warn("admin endpoints disabled (requires DATABASE_URL)")
@@ -153,6 +172,10 @@ func run(logger *slog.Logger) error {
 		logger.Warn("admin endpoints disabled: set VIBEGRID_ADMIN_PASSWORD or VIBEGRID_ADMIN_TOKEN to enable")
 	} else if adminPassword != "" && adminSessionSecret == "" {
 		logger.Warn("admin password set without VIBEGRID_ADMIN_SESSION_SECRET; browser admin login disabled")
+	}
+	var botVerifier vibegrid.BotVerifier
+	if turnstileSecretKey != "" {
+		botVerifier = vibegrid.NewTurnstileVerifier(turnstileSecretKey, publicHostname(publicBaseURL))
 	}
 
 	handler := vibegrid.NewServer(vibegrid.ServerConfig{
@@ -163,6 +186,7 @@ func run(logger *slog.Logger) error {
 		Community:          deps.community,
 		Stats:              deps.stats,
 		RateLimits:         deps.rateLimits,
+		Idempotency:        deps.idempotency,
 		Moderation:         deps.moderation,
 		ReadyCheck:         deps.ready,
 		Frontend:           frontend.NewHandler(frontend.Embedded()),
@@ -171,6 +195,8 @@ func run(logger *slog.Logger) error {
 		AdminSessionSecret: adminSessionSecret,
 		MetricsToken:       metricsToken,
 		PublicBaseURL:      publicBaseURL,
+		TurnstileSiteKey:   turnstileSiteKey,
+		BotVerifier:        botVerifier,
 		TrustedProxyCIDRs:  trustedProxyCIDRs,
 		Clock:              time.Now,
 		TimeZone:           timeZone,
@@ -180,6 +206,7 @@ func run(logger *slog.Logger) error {
 		BlockedTerms:       blockedTerms,
 		DBStats:            deps.dbStats,
 		PuzzleCacheStats:   deps.puzzleCacheStats,
+		OutboxStats:        deps.outboxStats,
 	})
 
 	server := &http.Server{
@@ -210,6 +237,29 @@ func run(logger *slog.Logger) error {
 	}
 }
 
+func publicHostname(publicBaseURL string) string {
+	parsed, err := url.Parse(publicBaseURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
+
+func validatedWebhookURL(raw string, production bool) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Fragment != "" {
+		return "", errors.New("VIBEGRID_OPERATOR_WEBHOOK_URL must be an absolute http(s) URL without credentials or a fragment")
+	}
+	if production && parsed.Scheme != "https" {
+		return "", errors.New("VIBEGRID_OPERATOR_WEBHOOK_URL must use https in production")
+	}
+	return value, nil
+}
+
 // deps bundles the store implementations the server needs, plus a close hook
 // and a readiness probe (nil when there is no database to check).
 type deps struct {
@@ -220,12 +270,16 @@ type deps struct {
 	adminSessions    vibegrid.AdminSessionStore
 	stats            vibegrid.StatsStore
 	rateLimits       vibegrid.RateLimitStore
+	idempotency      vibegrid.IdempotencyStore
 	moderation       vibegrid.ModerationStore
+	outbox           vibegrid.NotificationOutbox
 	ready            func(context.Context) error
 	dbStats          func() sql.DBStats
 	puzzleCacheStats func() vibegrid.CacheStats
+	outboxStats      func(context.Context) vibegrid.NotificationOutboxStats
 	pruneExpired     func(context.Context) (int64, error)
 	close            func()
+	bankSource       *vibegrid.BankPuzzleSource
 }
 
 // buildDeps wires the durable Postgres stores when DATABASE_URL is set and
@@ -240,7 +294,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 		return deps{
 			attempts: vibegrid.NewMemoryAttemptStore(),
 			puzzles: vibegrid.NewDemoPuzzleSource(
-				vibegrid.NewBankPuzzleSource(vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()), vibegrid.PuzzleBank()),
+				vibegrid.NewBankPuzzleSource(vibegrid.StaticPuzzleSource(vibegrid.SeedPuzzles()), vibegrid.PuzzleBank(), nil),
 			),
 			close: func() {},
 		}, nil
@@ -272,21 +326,27 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 	// Public reads go through the bank decorator so the daily never runs dry when
 	// nothing is explicitly scheduled. Admin/community management uses the concrete
 	// cached store directly (the bank only synthesizes the read-only daily).
-	banked := vibegrid.NewBankPuzzleSource(cached, vibegrid.PuzzleBank())
+	banked := vibegrid.NewBankPuzzleSource(cached, vibegrid.PuzzleBank(), puzzleStore)
 	publicPuzzles := vibegrid.NewDemoPuzzleSource(banked)
 
 	logger.Info("connected to postgres, puzzles seeded")
 	attempts := vibegrid.NewPostgresAttemptStore(database)
 	adminSessions := vibegrid.NewPostgresAdminSessionStore(database)
+	idempotency := vibegrid.NewPostgresIdempotencyStore(database)
+	outbox := vibegrid.NewPostgresNotificationOutbox(database)
 	return deps{
 		attempts:         attempts,
 		puzzles:          publicPuzzles,
 		adminPuzzles:     cached,
 		community:        cached,
 		adminSessions:    adminSessions,
+		bankSource:       banked,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
 		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
+		idempotency:      idempotency,
 		moderation:       vibegrid.NewPostgresModerationStore(database),
+		outbox:           outbox,
+		outboxStats:      outbox.Stats,
 		ready:            database.PingContext,
 		dbStats:          database.Stats,
 		puzzleCacheStats: puzzleCacheStats,
@@ -297,7 +357,11 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 				return attemptsDeleted, err
 			}
 			sessionsDeleted, err := adminSessions.PruneExpired(pruneCtx, time.Now(), 1_000)
-			return attemptsDeleted + sessionsDeleted, err
+			if err != nil {
+				return attemptsDeleted + sessionsDeleted, err
+			}
+			idempotencyDeleted, err := idempotency.PruneExpired(pruneCtx, time.Now().Add(-48*time.Hour), 1_000)
+			return attemptsDeleted + sessionsDeleted + idempotencyDeleted, err
 		},
 		close: func() {
 			if err := database.Close(); err != nil {
@@ -374,6 +438,72 @@ func startRetentionPruner(ctx context.Context, logger *slog.Logger, prune func(c
 		}
 	}
 	go func() {
+		run()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
+}
+
+type rateLimitPruner interface {
+	Prune(context.Context) error
+}
+
+func startRateLimitPruner(ctx context.Context, logger *slog.Logger, store rateLimitPruner) {
+	if store == nil {
+		return
+	}
+	run := func() {
+		pruneCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := store.Prune(pruneCtx); err != nil {
+			logger.Warn("rate limit cleanup failed", "error", err)
+		}
+	}
+	go func() {
+		run()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
+}
+
+func startDailyGenerator(ctx context.Context, logger *slog.Logger, source *vibegrid.BankPuzzleSource) {
+	if source == nil {
+		return
+	}
+	run := func() {
+		date := time.Now().UTC().Format("2006-01-02")
+		// Also ensure tomorrow is persisted to be safe
+		tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+
+		ensureCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		if err := source.EnsureDailyPersisted(ensureCtx, date); err != nil {
+			logger.Warn("failed to persist today's daily puzzle", "date", date, "error", err)
+		}
+		if err := source.EnsureDailyPersisted(ensureCtx, tomorrow); err != nil {
+			logger.Warn("failed to persist tomorrow's daily puzzle", "date", tomorrow, "error", err)
+		}
+	}
+
+	go func() {
+		// Run once on boot to ensure current day is caught up
 		run()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()

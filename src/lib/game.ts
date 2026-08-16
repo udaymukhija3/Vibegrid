@@ -91,6 +91,7 @@ export function buildShareGrid(guessHistory: string[][], colorByTile: Record<str
 
 export function buildShareText(input: {
   puzzleNumber: number;
+  mode?: GameMode;
   mistakes: number;
   mistakesAllowed: number;
   solvedCount: number;
@@ -105,7 +106,8 @@ export function buildShareText(input: {
     ? `${input.solvedCount}/${input.groupCount} vibes found`
     : `Solved in ${formatElapsedTime(input.startedAt, input.finishedAt)}`;
 
-  const lines = [`VibeGrid #${input.puzzleNumber}`];
+  const modeLabel = input.mode ? ` · ${input.mode[0].toUpperCase()}${input.mode.slice(1)}` : "";
+  const lines = [`VibeGrid #${input.puzzleNumber}${modeLabel}`];
   if (input.grid && input.grid.length > 0) {
     lines.push(...input.grid);
   }

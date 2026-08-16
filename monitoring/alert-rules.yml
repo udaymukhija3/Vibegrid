@@ -55,6 +55,24 @@ groups:
           summary: VibeGrid storage errors are elevated
           description: Storage interface operations are returning errors at more than 0.05 per second for 5 minutes.
 
+      - alert: VibeGridNotificationBacklogOld
+        expr: vibegrid_notification_outbox_oldest_pending_seconds{job="vibegrid"} > 600
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: VibeGrid notifications are delayed
+          description: The oldest undelivered notification has been waiting for more than 10 minutes. Check webhook configuration and provider health.
+
+      - alert: VibeGridNotificationDead
+        expr: vibegrid_notification_outbox_dead{job="vibegrid"} > 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: VibeGrid notification delivery exhausted retries
+          description: At least one transactional outbox event is dead and needs operator review or replay.
+
       - alert: VibeGridNoTraffic
         expr: sum(rate(vibegrid_http_requests_total{job="vibegrid"}[30m])) == 0
         for: 30m

@@ -1,9 +1,17 @@
 # Runbook: database restore
 
-## Where backups live
+## Where backups should live
 
-- **Nightly encrypted dumps:** GitHub → Actions → **backup** workflow → run → artifact `vibegrid-db-<run id>` (30-day retention). Encrypted because the repo is public; decrypting requires the `BACKUP_PASSPHRASE` secret value.
-- **Neon point-in-time restore:** Neon console → project → Restore. The free-tier window is short (check current plan limits) — good for "I just broke it", useless for last week.
+- **Nightly encrypted dumps:** once `BACKUP_DATABASE_URL` and
+  `BACKUP_PASSPHRASE` are configured, GitHub → Actions → **backup** workflow →
+  run → artifact `vibegrid-db-<run id>` (30-day retention). Encrypted because
+  the repo is public; decrypting requires the `BACKUP_PASSPHRASE` secret value.
+  As of the August 1, 2026 readiness review, the inspected scheduled run skipped
+  backup creation and produced no artifact. Treat this path as unconfigured
+  until a successful artifact and restore drill are recorded.
+- **Neon point-in-time restore:** Neon console → project → Restore. Verify that
+  PITR is enabled for the current plan and record the actual recovery window;
+  configuration is not proven by this runbook.
 
 An on-demand backup can be taken any time: Actions → backup → "Run workflow".
 

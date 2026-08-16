@@ -223,6 +223,9 @@ func (store *PostgresPuzzleStore) Seed(ctx context.Context, puzzles []Puzzle) er
 func (store *PostgresPuzzleStore) CreateDraft(ctx context.Context, input AdminPuzzleInput) (Puzzle, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
+	if tx := transactionFromContext(ctx); tx != nil {
+		return createDraftTx(ctx, tx, input)
+	}
 
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -230,13 +233,8 @@ func (store *PostgresPuzzleStore) CreateDraft(ctx context.Context, input AdminPu
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	nextNumber, err := nextPuzzleNumberTx(ctx, tx)
+	puzzle, err := createDraftTx(ctx, tx, input)
 	if err != nil {
-		return Puzzle{}, err
-	}
-
-	puzzle := input.toPuzzle(nextNumber)
-	if err := insertPuzzleTx(ctx, tx, puzzle, false); err != nil {
 		return Puzzle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -245,11 +243,26 @@ func (store *PostgresPuzzleStore) CreateDraft(ctx context.Context, input AdminPu
 	return puzzle, nil
 }
 
+func createDraftTx(ctx context.Context, tx *sql.Tx, input AdminPuzzleInput) (Puzzle, error) {
+	nextNumber, err := nextPuzzleNumberTx(ctx, tx)
+	if err != nil {
+		return Puzzle{}, err
+	}
+	puzzle := input.toPuzzle(nextNumber)
+	if err := insertPuzzleTx(ctx, tx, puzzle, false); err != nil {
+		return Puzzle{}, err
+	}
+	return puzzle, nil
+}
+
 // CreateCommunityPuzzle persists a user-created puzzle as PENDING. It has no
 // publish date and cannot be read publicly until an administrator approves it.
-func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (Puzzle, error) {
+func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput, claimHash string) (Puzzle, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
+	if tx := transactionFromContext(ctx); tx != nil {
+		return createCommunityPuzzleTx(ctx, tx, input, claimHash)
+	}
 
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -257,21 +270,117 @@ func (store *PostgresPuzzleStore) CreateCommunityPuzzle(ctx context.Context, inp
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	nextNumber, err := nextPuzzleNumberTx(ctx, tx)
+	puzzle, err := createCommunityPuzzleTx(ctx, tx, input, claimHash)
 	if err != nil {
-		return Puzzle{}, err
-	}
-
-	puzzle := input.toPuzzle(nextNumber)
-	puzzle.Status = PuzzleStatusPending
-	puzzle.Origin = OriginCommunity
-	if err := insertPuzzleTx(ctx, tx, puzzle, false); err != nil {
 		return Puzzle{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Puzzle{}, fmt.Errorf("commit community create: %w", err)
 	}
 	return puzzle, nil
+}
+
+func createCommunityPuzzleTx(ctx context.Context, tx *sql.Tx, input AdminPuzzleInput, claimHash string) (Puzzle, error) {
+	nextNumber, err := nextPuzzleNumberTx(ctx, tx)
+	if err != nil {
+		return Puzzle{}, err
+	}
+	puzzle := input.toPuzzle(nextNumber)
+	puzzle.Status = PuzzleStatusPending
+	puzzle.Origin = OriginCommunity
+	if err := insertPuzzleTx(ctx, tx, puzzle, false); err != nil {
+		return Puzzle{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`update puzzles set creator_claim_hash = $2 where id = $1`,
+		puzzle.ID, claimHash,
+	); err != nil {
+		return Puzzle{}, fmt.Errorf("store creator claim: %w", err)
+	}
+	return puzzle, nil
+}
+
+func (store *PostgresPuzzleStore) CreatorStatus(ctx context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+	if tx := transactionFromContext(ctx); tx != nil {
+		return loadCreatorStatus(ctx, tx, puzzleID, claimHash)
+	}
+	return loadCreatorStatus(ctx, store.db, puzzleID, claimHash)
+}
+
+func (store *PostgresPuzzleStore) WithdrawCommunityPuzzle(ctx context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+	if tx := transactionFromContext(ctx); tx != nil {
+		return withdrawCommunityPuzzle(ctx, tx, puzzleID, claimHash)
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CreatorPuzzleStatus{}, fmt.Errorf("begin creator withdrawal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	status, err := withdrawCommunityPuzzle(ctx, tx, puzzleID, claimHash)
+	if err != nil {
+		return CreatorPuzzleStatus{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CreatorPuzzleStatus{}, fmt.Errorf("commit creator withdrawal: %w", err)
+	}
+	return status, nil
+}
+
+type puzzleMutationQuerier interface {
+	rowQuerier
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func loadCreatorStatus(ctx context.Context, q rowQuerier, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	var status CreatorPuzzleStatus
+	err := q.QueryRowContext(ctx,
+		`select id, puzzle_number, status, updated_at, creator_withdrawn_at is not null
+		 from puzzles
+		 where id = $1 and origin = 'COMMUNITY' and creator_claim_hash = $2`,
+		puzzleID, claimHash,
+	).Scan(&status.ID, &status.PuzzleNumber, &status.Status, &status.UpdatedAt, &status.Withdrawn)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CreatorPuzzleStatus{}, ErrCreatorClaimInvalid
+	}
+	if err != nil {
+		return CreatorPuzzleStatus{}, fmt.Errorf("load creator status: %w", err)
+	}
+	return status, nil
+}
+
+func withdrawCommunityPuzzle(ctx context.Context, q puzzleMutationQuerier, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	var status CreatorPuzzleStatus
+	err := q.QueryRowContext(ctx,
+		`update puzzles
+		 set status = 'ARCHIVED', creator_withdrawn_at = now(), updated_at = now()
+		 where id = $1
+		   and origin = 'COMMUNITY'
+		   and creator_claim_hash = $2
+		   and status = 'PENDING'
+		   and creator_withdrawn_at is null
+		 returning id, puzzle_number, status, updated_at, true`,
+		puzzleID, claimHash,
+	).Scan(&status.ID, &status.PuzzleNumber, &status.Status, &status.UpdatedAt, &status.Withdrawn)
+	if err == nil {
+		return status, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return CreatorPuzzleStatus{}, fmt.Errorf("withdraw community puzzle: %w", err)
+	}
+
+	current, loadErr := loadCreatorStatus(ctx, q, puzzleID, claimHash)
+	if loadErr != nil {
+		return CreatorPuzzleStatus{}, loadErr
+	}
+	if current.Withdrawn {
+		return current, nil
+	}
+	return CreatorPuzzleStatus{}, ErrCreatorWithdrawalUnavailable
 }
 
 func (store *PostgresPuzzleStore) ApproveCommunity(ctx context.Context, puzzleID string) error {
@@ -445,6 +554,31 @@ func insertPuzzleTx(ctx context.Context, tx *sql.Tx, puzzle Puzzle, ignoreConfli
 				return fmt.Errorf("insert tile: %w", err)
 			}
 		}
+	}
+	return nil
+}
+
+func (store *PostgresPuzzleStore) PersistDaily(ctx context.Context, puzzle Puzzle) error {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin persist daily tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	nextNumber, err := nextPuzzleNumberTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	puzzle.PuzzleNumber = nextNumber
+
+	if err := insertPuzzleTx(ctx, tx, puzzle, true); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit persist daily: %w", err)
 	}
 	return nil
 }

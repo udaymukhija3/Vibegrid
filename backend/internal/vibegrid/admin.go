@@ -30,6 +30,7 @@ type AdminPuzzleStore interface {
 	ApproveCommunity(ctx context.Context, puzzleID string) error
 	Archive(ctx context.Context, puzzleID string) error
 	Reinstate(ctx context.Context, puzzleID string) error
+	PersistDaily(ctx context.Context, puzzle Puzzle) error
 }
 
 type AdminGroupInput struct {

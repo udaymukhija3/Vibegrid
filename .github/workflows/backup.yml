@@ -33,15 +33,8 @@ jobs:
         run: |
           if [ -z "$DB_URL" ] || [ -z "$PASSPHRASE" ]; then
             MSG="Backups are NOT running: set the BACKUP_DATABASE_URL and BACKUP_PASSPHRASE repo secrets (see docs/runbooks/database-restore.md)."
-            # Nightly runs warn-and-skip so an unconfigured repo does not page
-            # every day; a manual run fails loudly because someone asked for a
-            # backup and must not believe they got one.
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              echo "::error::$MSG"
-              exit 1
-            fi
-            echo "::warning::$MSG"
-            echo "SKIP_BACKUP=true" >> "$GITHUB_ENV"
+            echo "::error::$MSG"
+            exit 1
           fi
 
       - name: Stop if unconfigured

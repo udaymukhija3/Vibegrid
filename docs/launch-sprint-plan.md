@@ -1,9 +1,10 @@
 # VibeGrid — Launch & Production Sprint Plan
 
 Status anchor: the app is **feature-complete locally** (play / create→review→share / admin
-author / stats / moderation) and **pushed to GitHub** (PRs #1, #2 merged, CI wired),
-but **not yet deployed to a permanent host**. This document turns the remaining
-work in [`production-readiness.md`](production-readiness.md) and
+author / stats / moderation), pushed to GitHub, and available on a public Render
+demo/beta deployment. It is **not yet production-ready**; the current decision
+and blockers live in [`production-readiness.md`](production-readiness.md). This
+document turns the remaining work in that review and
 [`tier3-plan.md`](tier3-plan.md) into **vertical, shippable slices**.
 
 > Companion docs: [`production-readiness.md`](production-readiness.md) (the P0–P3

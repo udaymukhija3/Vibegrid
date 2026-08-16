@@ -55,6 +55,7 @@ type ServerConfig struct {
 	Community          CommunityPuzzleStore
 	Stats              StatsStore
 	RateLimits         RateLimitStore
+	Idempotency        IdempotencyStore
 	Moderation         ModerationStore
 	ReadyCheck         func(context.Context) error
 	Frontend           http.Handler
@@ -63,6 +64,8 @@ type ServerConfig struct {
 	AdminSessionSecret string
 	MetricsToken       string
 	PublicBaseURL      string
+	TurnstileSiteKey   string
+	BotVerifier        BotVerifier
 	TrustedProxyCIDRs  []string
 	Clock              func() time.Time
 	TimeZone           string
@@ -74,6 +77,7 @@ type ServerConfig struct {
 	// mode, where there is no pool or content cache to observe.
 	DBStats          func() sql.DBStats
 	PuzzleCacheStats func() CacheStats
+	OutboxStats      func(context.Context) NotificationOutboxStats
 }
 
 type Server struct {
@@ -84,6 +88,7 @@ type Server struct {
 	community          CommunityPuzzleStore
 	stats              StatsStore
 	rateLimits         RateLimitStore
+	idempotency        IdempotencyStore
 	moderation         ModerationStore
 	readyCheck         func(context.Context) error
 	createLimiter      *rateLimiter
@@ -99,12 +104,15 @@ type Server struct {
 	adminSessionSecret string
 	metricsToken       string
 	publicBaseURL      string
+	turnstileSiteKey   string
+	botVerifier        BotVerifier
 	clientIdentity     clientIdentity
 	clock              func() time.Time
 	timeZone           string
 	secureCookies      bool
 	dbStats            func() sql.DBStats
 	puzzleCacheStats   func() CacheStats
+	outboxStats        func(context.Context) NotificationOutboxStats
 }
 
 func NewServer(config ServerConfig) http.Handler {
@@ -125,6 +133,7 @@ func NewServer(config ServerConfig) http.Handler {
 		community:          config.Community,
 		stats:              config.Stats,
 		rateLimits:         config.RateLimits,
+		idempotency:        config.Idempotency,
 		moderation:         config.Moderation,
 		readyCheck:         config.ReadyCheck,
 		createLimiter:      newRateLimiter(20, time.Hour),
@@ -141,12 +150,15 @@ func NewServer(config ServerConfig) http.Handler {
 		adminSessions:      config.AdminSessions,
 		metricsToken:       strings.TrimSpace(config.MetricsToken),
 		publicBaseURL:      normalizePublicBaseURL(config.PublicBaseURL),
+		turnstileSiteKey:   strings.TrimSpace(config.TurnstileSiteKey),
+		botVerifier:        config.BotVerifier,
 		clientIdentity:     newClientIdentity(config.TrustedProxyCIDRs),
 		clock:              clock,
 		timeZone:           timeZone,
 		secureCookies:      config.SecureCookies,
 		dbStats:            config.DBStats,
 		puzzleCacheStats:   config.PuzzleCacheStats,
+		outboxStats:        config.OutboxStats,
 	}
 	if server.store == nil {
 		server.store = NewMemoryAttemptStore()
@@ -163,6 +175,7 @@ func NewServer(config ServerConfig) http.Handler {
 	server.community = observeCommunityPuzzleStore(server.community, server.metrics)
 	server.stats = observeStatsStore(server.stats, server.metrics)
 	server.rateLimits = observeRateLimitStore(server.rateLimits, server.metrics)
+	server.idempotency = observeIdempotencyStore(server.idempotency, server.metrics)
 	server.moderation = observeModerationStore(server.moderation, server.metrics)
 
 	mux := http.NewServeMux()
@@ -178,6 +191,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzles/{id}/vibes", server.handlePuzzleVibes)
 	mux.HandleFunc("GET /api/puzzles/{id}/easy-hint", server.handleEasyHint)
 	mux.HandleFunc("GET /api/puzzle-templates", server.handlePuzzleTemplates)
+	mux.HandleFunc("GET /api/public-config", server.handlePublicConfig)
 	mux.HandleFunc("GET /api/session", server.handleSessionStatus)
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
 	mux.HandleFunc("GET /robots.txt", server.handleRobots)
@@ -186,6 +200,8 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/streak", server.handleStreak)
 	mux.HandleFunc("POST /api/guesses", server.handleGuess)
 	mux.HandleFunc("POST /api/community/puzzles", server.handleCommunityCreate)
+	mux.HandleFunc("GET /api/community/puzzles/{id}/claim", server.handleCreatorStatus)
+	mux.HandleFunc("POST /api/community/puzzles/{id}/withdraw", server.handleCreatorWithdraw)
 	mux.HandleFunc("POST /api/reports", server.handleCreateReport)
 	mux.HandleFunc("POST /api/appeals", server.handleCreateAppeal)
 	mux.HandleFunc("POST /api/client-errors", server.handleClientError)
@@ -195,7 +211,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("DELETE /api/admin/session", server.handleAdminLogout)
 	mux.HandleFunc("GET /api/admin/queue-health", server.requireAdmin(server.handleAdminQueueHealth))
 	mux.HandleFunc("GET /api/admin/puzzles", server.requireAdmin(server.handleAdminListPuzzles))
-	mux.HandleFunc("POST /api/admin/puzzles", server.requireAdmin(server.handleAdminCreatePuzzle))
+	mux.HandleFunc("POST /api/admin/puzzles", server.requireAdmin(server.withIdempotency("admin-puzzle.create", server.adminIdempotencyCaller, server.handleAdminCreatePuzzle)))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/publish", server.requireAdmin(server.handleAdminPublishPuzzle))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/approve", server.requireAdmin(server.handleAdminApproveCommunityPuzzle))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/archive", server.requireAdmin(server.handleAdminArchivePuzzle))
@@ -218,6 +234,10 @@ func NewServer(config ServerConfig) http.Handler {
 	handler = withRequestMetrics(handler, server.metrics)
 	handler = withRequestLogging(handler)
 	return withRequestID(handler)
+}
+
+func (server *Server) handlePublicConfig(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"turnstileSiteKey": server.turnstileSiteKey})
 }
 
 // todayString is the current daily date in the configured launch timezone — the
@@ -350,6 +370,8 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusUnprocessableEntity
 		switch {
 		case errors.Is(err, ErrAttemptFinished):
+			status = http.StatusConflict
+		case errors.Is(err, ErrAttemptModeConflict):
 			status = http.StatusConflict
 		case isGuessValidationError(err):
 			status = http.StatusUnprocessableEntity
@@ -569,7 +591,8 @@ func isGuessValidationError(err error) bool {
 		errors.Is(err, ErrUnknownTile) ||
 		errors.Is(err, ErrAlreadySolved) ||
 		errors.Is(err, ErrInvalidPuzzleID) ||
-		errors.Is(err, ErrInvalidClientGuessID)
+		errors.Is(err, ErrInvalidClientGuessID) ||
+		errors.Is(err, ErrInvalidAttemptMode)
 }
 
 func humanError(err error) string {
@@ -584,6 +607,10 @@ func humanError(err error) string {
 		return "That puzzle id is not valid."
 	case errors.Is(err, ErrInvalidClientGuessID):
 		return "That guess id is not valid."
+	case errors.Is(err, ErrInvalidAttemptMode):
+		return "Choose Easy, Medium, or Hard before submitting."
+	case errors.Is(err, ErrAttemptModeConflict):
+		return "This attempt already started in a different mode. Refresh to continue."
 	case errors.Is(err, ErrAttemptFinished):
 		return "This attempt is already finished."
 	default:
@@ -946,15 +973,7 @@ func (server *Server) clientIP(r *http.Request) string {
 
 func (server *Server) allowPuzzleRead(w http.ResponseWriter, r *http.Request) bool {
 	key := "read-puzzle:" + server.clientIP(r)
-	decision, err := server.checkRateLimit(r.Context(), key, readRateLimit, readRateWindow, server.readLimiter)
-	if err != nil {
-		// Public puzzle reads carry no per-user data and are the path caching is
-		// meant to keep alive, so a shared-limiter outage must not take them down.
-		// Degrade to the per-instance in-memory limiter; anonymous writes (guesses,
-		// creates, reports, logins) stay fail-closed.
-		slog.Warn("read rate-limit check failed, falling back to in-memory limiter", "error", err)
-		decision = server.readLimiter.check(key, server.clock())
-	}
+	decision := server.readLimiter.check(key, server.clock())
 	if !decision.allowed {
 		writeRateLimit(w, "You're requesting puzzle data too quickly. Try again shortly.", decision.retryAfter)
 		return false
@@ -1040,7 +1059,7 @@ func withCORS(next http.Handler, origins []string, devCORS bool) http.Handler {
 		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key, X-VibeGrid-Creator-Claim, X-VibeGrid-Turnstile")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 			w.Header().Set("Vary", "Origin")
 		}
@@ -1088,11 +1107,12 @@ func contentSecurityPolicy(route string) string {
 	}
 	return strings.Join([]string{
 		"default-src 'self'",
-		"script-src 'self' 'unsafe-inline'",
+		"script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data:",
 		"font-src 'self' data:",
-		"connect-src 'self'",
+		"connect-src 'self' https://challenges.cloudflare.com",
+		"frame-src https://challenges.cloudflare.com",
 		"object-src 'none'",
 		"frame-ancestors 'none'",
 		"base-uri 'self'",

@@ -31,7 +31,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate idempotency_keys, rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -43,6 +43,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 		AdminSessions:      NewPostgresAdminSessionStore(database),
 		Community:          puzzleStore,
 		RateLimits:         NewPostgresRateLimitStore(database),
+		Idempotency:        NewPostgresIdempotencyStore(database),
 		Moderation:         NewPostgresModerationStore(database),
 		AdminToken:         testAdminToken,
 		AdminPassword:      testAdminPassword,
@@ -87,6 +88,26 @@ func adminRequest(t *testing.T, handler http.Handler, method, path, token string
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
 	return response
+}
+
+func creatorRequest(t *testing.T, handler http.Handler, method, path, claimSecret string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader *bytes.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(payload)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(creatorClaimHeader, claimSecret)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder
 }
 
 func TestAdminRequiresValidToken(t *testing.T) {
@@ -286,7 +307,7 @@ func TestModerationReportArchiveAppealReinstateFlow(t *testing.T) {
 		t.Fatalf("expected archived community puzzle to be hidden, got %d: %s", hidden.Code, hidden.Body.String())
 	}
 
-	appealed := adminRequest(t, handler, http.MethodPost, "/api/appeals", "", AppealInput{
+	appealed := creatorRequest(t, handler, http.MethodPost, "/api/appeals", createdBody.ClaimSecret, AppealInput{
 		PuzzleID: createdBody.ID,
 		Message:  "please restore this test puzzle",
 	})

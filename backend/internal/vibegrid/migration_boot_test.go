@@ -51,4 +51,15 @@ func TestMigrateOnBootFromScratch(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("expected the attempt_guesses idempotency constraint to exist, found %d", n)
 	}
+	if err := database.QueryRowContext(ctx,
+		`select count(*) from information_schema.columns
+		 where table_schema = 'public'
+		   and table_name = 'idempotency_keys'
+		   and column_name in ('scope', 'key_hash', 'request_hash', 'status_code', 'response_headers', 'response_body')`,
+	).Scan(&n); err != nil {
+		t.Fatalf("check idempotency migration: %v", err)
+	}
+	if n != 6 {
+		t.Fatalf("expected idempotency replay columns to exist, found %d", n)
+	}
 }

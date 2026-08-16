@@ -74,7 +74,13 @@ func (server *Server) handleCreateReport(w http.ResponseWriter, r *http.Request)
 	if !server.allowModerationWrite(w, r, "report:", "You're sending reports too quickly. Try again later.") {
 		return
 	}
+	server.withIdempotency("report.create", server.guestIdempotencyCaller, server.handleCreateReportMutation)(w, r)
+}
 
+func (server *Server) handleCreateReportMutation(w http.ResponseWriter, r *http.Request) {
+	if !server.verifyBot(w, r, "report_create") {
+		return
+	}
 	var input ReportInput
 	if !decodeJSONBody(w, r, maxModerationBodyBytes, &input, "That report payload is not valid JSON.") {
 		return
@@ -102,14 +108,20 @@ func (server *Server) handleCreateReport(w http.ResponseWriter, r *http.Request)
 }
 
 func (server *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
-	if server.moderation == nil {
+	if server.moderation == nil || server.community == nil {
 		writeError(w, http.StatusServiceUnavailable, "Appeals require a database.")
 		return
 	}
 	if !server.allowModerationWrite(w, r, "appeal:", "You're sending appeals too quickly. Try again later.") {
 		return
 	}
+	server.withIdempotency("appeal.create", server.creatorIdempotencyCaller, server.handleCreateAppealMutation)(w, r)
+}
 
+func (server *Server) handleCreateAppealMutation(w http.ResponseWriter, r *http.Request) {
+	if !server.verifyBot(w, r, "appeal_create") {
+		return
+	}
 	var input AppealInput
 	if !decodeJSONBody(w, r, maxModerationBodyBytes, &input, "That appeal payload is not valid JSON.") {
 		return
@@ -121,8 +133,18 @@ func (server *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if _, err := server.puzzles.PuzzleByID(r.Context(), input.PuzzleID); err != nil {
-		writeError(w, http.StatusNotFound, "Puzzle not found.")
+	claimHash, err := creatorClaimHashFromRequest(r)
+	if err != nil {
+		writeCreatorClaimError(w, err)
+		return
+	}
+	creatorStatus, err := server.community.CreatorStatus(r.Context(), input.PuzzleID, claimHash)
+	if err != nil {
+		writeCreatorClaimError(w, err)
+		return
+	}
+	if creatorStatus.Status != PuzzleStatusArchived || creatorStatus.Withdrawn {
+		writeError(w, http.StatusConflict, "Only an archived creator-owned grid can be appealed.")
 		return
 	}
 

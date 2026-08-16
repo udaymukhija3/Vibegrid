@@ -78,6 +78,7 @@ describe("game UI helpers", () => {
   it("embeds the grid in the share text", () => {
     const text = buildShareText({
       puzzleNumber: 7,
+      mode: "easy",
       mistakes: 1,
       mistakesAllowed: 4,
       solvedCount: 4,
@@ -89,7 +90,7 @@ describe("game UI helpers", () => {
       shareUrl: "https://vibegrid.app/p/example"
     });
     expect(text).toContain("🟩🟩🟩🟩");
-    expect(text).toContain("VibeGrid #7");
+    expect(text).toContain("VibeGrid #7 · Easy");
     expect(text).toContain("https://vibegrid.app/p/example");
   });
 
