@@ -812,7 +812,9 @@ func renderPuzzleOGImage(puzzle Puzzle) string {
 		tileSize = 92
 		tileGap  = 14
 	)
-	colors := []string{"#2ec4b6", "#f9c74f", "#ff6b6b", "#6d5dfc"}
+	// One neutral fill for every tile. A per-group colour would paint the answer
+	// key onto the share card (see the display order note below).
+	const tileFill = "#e2e8f0"
 	title := fmt.Sprintf("VibeGrid #%d", puzzle.PuzzleNumber)
 	subtitle := "Shared grid"
 	if puzzle.PublishDate != "" {
@@ -829,21 +831,19 @@ func renderPuzzleOGImage(puzzle Puzzle) string {
 	builder.WriteString(`<text x="100" y="312" font-family="Inter,Arial,sans-serif" font-size="42" font-weight="900" fill="#171717">Find the four hidden vibes.</text>`)
 	builder.WriteString(`<text x="100" y="368" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700" fill="#4b5563">Four groups of four. No hints, just pattern recognition.</text>`)
 
-	tileIndex := 0
-	for groupIndex, group := range puzzle.Groups {
-		fill := colors[groupIndex%len(colors)]
-		if group.ColorIndex >= 0 {
-			fill = colors[group.ColorIndex%len(colors)]
-		}
-		for _, tile := range group.Tiles {
-			row := tileIndex / 4
-			col := tileIndex % 4
-			x := gridLeft + col*(tileSize+tileGap)
-			y := gridTop + row*(tileSize+tileGap)
-			builder.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" rx="14" fill="%s" stroke="#171717" stroke-width="3"/>`, x, y, tileSize, tileSize, fill))
-			builder.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" dominant-baseline="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="900" fill="#171717">%s</text>`, x+tileSize/2, y+tileSize/2, html.EscapeString(truncateOGText(tile.Text, 11))))
-			tileIndex++
-		}
+	// Render the same unsolved board the player sees. Iterating puzzle.Groups laid
+	// the tiles out one group per row and filled each row with that group's
+	// colour, so the share card — which is the og:image of every /p/{id} link, and
+	// therefore the first thing a link unfurl shows someone who has not played —
+	// was a picture of the solved grid. ToPublicPuzzle applies the same
+	// membership-free display order as the API payload.
+	for tileIndex, tile := range ToPublicPuzzle(puzzle).Tiles {
+		row := tileIndex / 4
+		col := tileIndex % 4
+		x := gridLeft + col*(tileSize+tileGap)
+		y := gridTop + row*(tileSize+tileGap)
+		builder.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" rx="14" fill="%s" stroke="#171717" stroke-width="3"/>`, x, y, tileSize, tileSize, tileFill))
+		builder.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" dominant-baseline="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="900" fill="#171717">%s</text>`, x+tileSize/2, y+tileSize/2, html.EscapeString(truncateOGText(tile.Text, 11))))
 	}
 	builder.WriteString(`</svg>`)
 	return builder.String()

@@ -1,6 +1,10 @@
 package vibegrid
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+)
 
 // PuzzleBank is an evergreen set of editorial puzzles used to keep the daily
 // running indefinitely. When no puzzle is explicitly scheduled for a date,
@@ -150,12 +154,31 @@ func bankPuzzle(id string, difficulty Difficulty, groups ...PuzzleGroup) Puzzle 
 	}
 }
 
-// bankGroup builds a group, deriving stable tile ids from the group id so each
-// bank entry stays terse and the ids never collide within a puzzle.
+// bankGroup builds a group, deriving stable tile ids that are unique within the
+// puzzle and independent of group membership.
 func bankGroup(id, name, explanation string, colorIndex int, tiles ...string) PuzzleGroup {
 	built := make([]Tile, len(tiles))
 	for index, text := range tiles {
-		built[index] = Tile{ID: fmt.Sprintf("%s-t%d", id, index), Text: text}
+		built[index] = Tile{ID: bankTileID(id, index), Text: text}
 	}
 	return PuzzleGroup{ID: id, Name: name, Explanation: explanation, ColorIndex: colorIndex, Tiles: built}
+}
+
+// bankTileID derives an opaque, stable tile id from the group id and index.
+//
+// The id must not encode group membership. Tile ids are public — they ship in
+// every /api/puzzles payload and come back on each guess — and the rest of the
+// system already assumes they reveal nothing: orderTilesForDisplay sorts the
+// board by a hash of the tile id precisely so the layout leaks no grouping, and
+// that argument only holds because "tile ids are assigned independently of
+// grouping" (see puzzles.go).
+//
+// The previous scheme was fmt.Sprintf("%s-t%d", groupID, index), which produced
+// ids like "bank-09-g1-t2". Stripping the "-tN" suffix grouped the sixteen tiles
+// into the four correct answers with a one-line regex, so the daily's solution
+// was readable straight from the network tab. Hashing keeps the ids stable and
+// collision-free without carrying the group along.
+func bankTileID(groupID string, index int) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "vibegrid-bank-tile\x00%s\x00%d", groupID, index))
+	return "t" + hex.EncodeToString(sum[:6])
 }

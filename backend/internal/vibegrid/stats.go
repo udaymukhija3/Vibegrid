@@ -297,10 +297,19 @@ func (store *cachedStatsStore) SessionStreak(ctx context.Context, sessionID, tod
 
 type PostgresStatsStore struct {
 	db *sql.DB
+	// location is the launch timezone. The streak needs it to decide which
+	// calendar day an attempt was completed on.
+	location *time.Location
 }
 
-func NewPostgresStatsStore(database *sql.DB) *PostgresStatsStore {
-	return &PostgresStatsStore{db: database}
+// NewPostgresStatsStore builds the stats store. timeZone is the launch timezone
+// (the same one the daily rollover uses); an unknown name falls back to UTC.
+func NewPostgresStatsStore(database *sql.DB, timeZone string) *PostgresStatsStore {
+	location, err := time.LoadLocation(timeZone)
+	if err != nil {
+		location = time.UTC
+	}
+	return &PostgresStatsStore{db: database, location: location}
 }
 
 func (store *PostgresStatsStore) PuzzleStats(ctx context.Context, puzzleID string) (PuzzleStats, error) {
@@ -383,20 +392,50 @@ func (store *PostgresStatsStore) WrongGuessGroupings(ctx context.Context, puzzle
 	return groupings, rows.Err()
 }
 
-// SessionStreak reads the editorial daily puzzles a session has completed and
-// derives the streak summary. "today" is the current daily date in the launch
-// timezone, supplied by the caller so the store stays clock-agnostic.
+// dailyPuzzleIDDate matches the id the daily is served under, "vibegrid-<date>".
+// Bank-synthesized dailies carry their date only in the id — they are never
+// written to the puzzles table — so it is the authoritative source for them.
+const dailyPuzzleIDDate = `^vibegrid-\d{4}-\d{2}-\d{2}$`
+
+// SessionStreak reads the daily puzzles a session has completed and derives the
+// streak summary. "today" is the current daily date in the launch timezone,
+// supplied by the caller so the store stays clock-agnostic.
+//
+// Two things this query has to get right:
+//
+// It must not require the puzzle to exist in the puzzles table. It used to inner
+// join puzzles, but the daily actually served is synthesized from the evergreen
+// bank and deliberately never persisted (see bank_source.go), so the join
+// discarded every real daily completion and the streak read 0 for everyone. The
+// date is taken from the puzzle id, falling back to the joined publish_date for
+// admin-authored editorial dailies whose ids are not date-shaped.
+//
+// It must also only count a daily that was played on its own day. Any past daily
+// is playable from the archive and the bank will synthesize any date on demand,
+// so counting a completion regardless of when it happened would let anyone farm
+// an arbitrary streak in seconds. A day counts when the attempt was completed on
+// that same calendar day in the launch timezone.
 func (store *PostgresStatsStore) SessionStreak(ctx context.Context, sessionID, today string) (StreakSummary, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
 	rows, err := store.db.QueryContext(ctx,
-		`select p.publish_date
+		`select
+		   coalesce(
+		     substring(a.puzzle_id from '^vibegrid-(\d{4}-\d{2}-\d{2})$'),
+		     to_char(p.publish_date, 'YYYY-MM-DD')
+		   ) as puzzle_date,
+		   a.completed_at
 		 from attempts a
-		 join puzzles p on p.id = a.puzzle_id
-		 where a.session_id = $1 and a.completed = true
-		   and p.origin = 'EDITORIAL' and p.publish_date is not null`,
-		sessionID,
+		 left join puzzles p
+		   on p.id = a.puzzle_id
+		  and p.origin = 'EDITORIAL'
+		  and p.publish_date is not null
+		 where a.session_id = $1
+		   and a.completed = true
+		   and a.completed_at is not null
+		   and (a.puzzle_id ~ $2 or p.id is not null)`,
+		sessionID, dailyPuzzleIDDate,
 	)
 	if err != nil {
 		return StreakSummary{}, fmt.Errorf("session streak: %w", err)
@@ -405,11 +444,21 @@ func (store *PostgresStatsStore) SessionStreak(ctx context.Context, sessionID, t
 
 	dates := []string{}
 	for rows.Next() {
-		var d time.Time
-		if err := rows.Scan(&d); err != nil {
-			return StreakSummary{}, fmt.Errorf("scan publish_date: %w", err)
+		var (
+			puzzleDate  sql.NullString
+			completedAt time.Time
+		)
+		if err := rows.Scan(&puzzleDate, &completedAt); err != nil {
+			return StreakSummary{}, fmt.Errorf("scan streak row: %w", err)
 		}
-		dates = append(dates, d.Format(dateLayout))
+		if !puzzleDate.Valid || puzzleDate.String == "" {
+			continue
+		}
+		// Played on its own day, in the launch timezone.
+		if completedAt.In(store.location).Format(dateLayout) != puzzleDate.String {
+			continue
+		}
+		dates = append(dates, puzzleDate.String)
 	}
 	if err := rows.Err(); err != nil {
 		return StreakSummary{}, err

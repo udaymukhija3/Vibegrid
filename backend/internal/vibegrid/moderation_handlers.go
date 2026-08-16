@@ -133,6 +133,16 @@ func (server *Server) handleCreateAppealMutation(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	// An appeal contests a takedown, so only an archived puzzle is appealable.
+	// Accepting appeals for any puzzle let a submitter appeal their own PENDING
+	// grid — which was never removed — and an admin resolving that appeal with
+	// REINSTATE published it without the community review gate ever running.
+	//
+	// The creator-claim check is the stronger form of the same gate: it also
+	// requires proving ownership, so /api/appeals cannot be used as an existence
+	// oracle for unpublished puzzle ids — an unknown or invalid claim already
+	// returns 404 via writeCreatorClaimError, and reaching the status check at
+	// all means the caller is the creator.
 	claimHash, err := creatorClaimHashFromRequest(r)
 	if err != nil {
 		writeCreatorClaimError(w, err)

@@ -152,7 +152,7 @@ func run(logger *slog.Logger) error {
 		logger.Info("migrations applied on boot")
 	}
 
-	deps, err := buildDeps(ctx, logger, databaseURL, requireDatabase)
+	deps, err := buildDeps(ctx, logger, databaseURL, requireDatabase, timeZone)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ type deps struct {
 // buildDeps wires the durable Postgres stores when DATABASE_URL is set and
 // otherwise falls back to in-memory attempts plus seed puzzles, so local runs
 // and tests work with no database. Admin authoring requires Postgres.
-func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, requireDatabase bool) (deps, error) {
+func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, requireDatabase bool, timeZone string) (deps, error) {
 	if databaseURL == "" {
 		if requireDatabase {
 			return deps{}, errors.New("DATABASE_URL is required when VIBEGRID_REQUIRE_DATABASE=true")
@@ -341,7 +341,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 		community:        cached,
 		adminSessions:    adminSessions,
 		bankSource:       banked,
-		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database), 5*time.Minute),
+		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database, timeZone), 5*time.Minute),
 		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
 		idempotency:      idempotency,
 		moderation:       vibegrid.NewPostgresModerationStore(database),

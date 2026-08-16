@@ -869,7 +869,9 @@ export function VibeGridGame({
         </nav>
       </aside>
 
-      <main className="vg-board-sheet min-w-0">
+      {/* section, not main: every page already renders one <main>, and a second
+          one makes landmark navigation ambiguous for screen reader users. */}
+      <section className="vg-board-sheet min-w-0">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3 sm:pb-4">
           <div>
             {/* The spine already carries the puzzle label below lg. */}
@@ -1071,7 +1073,7 @@ export function VibeGridGame({
             </section>
           )}
         </div>
-      </main>
+      </section>
 
       <aside className="vg-control-rail flex flex-col justify-between gap-4 lg:sticky lg:top-5 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-auto">
         <div>

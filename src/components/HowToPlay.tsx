@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HelpCircle, X } from "lucide-react";
 
 const SEEN_KEY = "vibegrid:seenHowTo";
@@ -16,10 +16,21 @@ const rules = [
 // the idea (and the red-herring twist) without spoiling a live grid.
 const exampleTiles = ["meal prep", "face mask", "clean sheets", "to-do list"];
 
+// Everything a Tab press can land on inside the dialog.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 // HowToPlay is a help button plus a modal. It opens automatically the first time
 // a visitor lands (tracked in localStorage) and on demand after that.
 export function HowToPlay() {
   const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // Where focus was before the dialog opened, so it can be handed back. On the
+  // first-visit auto-open there is no trigger, so this may be the body.
+  const restoreRef = useRef<Element | null>(null);
+
+  const close = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
     if (!window.localStorage.getItem(SEEN_KEY)) {
@@ -28,18 +39,72 @@ export function HowToPlay() {
     }
   }, []);
 
+  // Move focus into the dialog on open and hand it back on close. Without this,
+  // focus stayed on <body> while aria-modal="true" hid the rest of the page from
+  // assistive tech — so a screen reader user tabbed onto background controls that
+  // AT reported as not existing.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    restoreRef.current = document.activeElement;
+    const panel = panelRef.current;
+    const first = panel?.querySelector<HTMLElement>(FOCUSABLE);
+    (first ?? panel)?.focus();
+
+    return () => {
+      const restore = triggerRef.current ?? restoreRef.current;
+      if (restore instanceof HTMLElement && document.contains(restore)) {
+        restore.focus();
+      }
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) {
       return;
     }
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setOpen(false);
+        close();
+        return;
+      }
+      if (event.key !== "Tab") {
+        return;
+      }
+      // Keep Tab inside the dialog: aria-modal="true" claims the rest of the
+      // page is inert, so focus must not leave.
+      const panel = panelRef.current;
+      if (!panel) {
+        return;
+      }
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (item) => item.offsetParent !== null || item === document.activeElement
+      );
+      if (items.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        event.preventDefault();
+        first.focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, close]);
 
   return (
     <>
@@ -48,6 +113,7 @@ export function HowToPlay() {
         aria-label="How to play"
         title="How to play"
         onClick={() => setOpen(true)}
+        ref={triggerRef}
         className="vg-icon-button"
       >
         <HelpCircle aria-hidden size={18} />
@@ -59,12 +125,14 @@ export function HowToPlay() {
           aria-modal="true"
           aria-label="How to play"
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-ink/40 p-4"
-          onClick={() => setOpen(false)}
+          onClick={close}
         >
           <div
             // Explicit text-ink: the dialog can be mounted inside the dark spine
             // rail (text-card), and inherited cream text would vanish on the
             // light panel.
+            ref={panelRef}
+            tabIndex={-1}
             className="vg-panel w-full max-w-md p-5 text-ink"
             onClick={(event) => event.stopPropagation()}
           >
@@ -73,7 +141,7 @@ export function HowToPlay() {
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-card"
               >
                 <X aria-hidden size={18} />
@@ -119,7 +187,7 @@ export function HowToPlay() {
 
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={close}
               className="vg-button-primary mt-5 w-full"
             >
               Got it
