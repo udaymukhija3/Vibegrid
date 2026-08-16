@@ -22,6 +22,11 @@ create index notification_outbox_claim_idx
 create index notification_outbox_status_created_idx
   on notification_outbox (status, created_at);
 
+-- The function body is dollar-quoted and contains ";" of its own. Without these
+-- markers goose cuts the block at the first inner ";" and Postgres sees an
+-- unterminated "$$" string (SQLSTATE 42601), which fails the migration and — with
+-- VIBEGRID_MIGRATE_ON_BOOT and VIBEGRID_REQUIRE_DATABASE both on — the boot.
+-- +goose StatementBegin
 create function enqueue_vibegrid_notification() returns trigger language plpgsql as $$
 begin
   if tg_table_name = 'moderation_reports' then
@@ -53,6 +58,7 @@ begin
   return new;
 end;
 $$;
+-- +goose StatementEnd
 
 create trigger notification_outbox_community_insert
 after insert on puzzles for each row execute function enqueue_vibegrid_notification();
