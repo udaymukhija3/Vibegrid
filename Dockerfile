@@ -13,7 +13,7 @@ COPY src ./src
 RUN npm run build
 
 # --- binary build stage ------------------------------------------------------
-FROM golang:1.25.12 AS build
+FROM golang:1.25.13 AS build
 WORKDIR /src/backend
 
 # Cache module downloads.
