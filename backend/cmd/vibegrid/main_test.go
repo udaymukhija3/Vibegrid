@@ -11,7 +11,7 @@ import (
 func TestBuildDepsRequiresDatabaseWhenConfigured(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	_, err := buildDeps(context.Background(), logger, "", true)
+	_, err := buildDeps(context.Background(), logger, "", true, "UTC")
 	if err == nil {
 		t.Fatal("expected missing database error")
 	}
@@ -23,7 +23,7 @@ func TestBuildDepsRequiresDatabaseWhenConfigured(t *testing.T) {
 func TestBuildDepsKeepsNoDatabaseModeForLocalRuns(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	deps, err := buildDeps(context.Background(), logger, "", false)
+	deps, err := buildDeps(context.Background(), logger, "", false, "UTC")
 	if err != nil {
 		t.Fatalf("buildDeps: %v", err)
 	}

@@ -167,7 +167,7 @@ func newStatsTest(t *testing.T) (*PostgresAttemptStore, *PostgresStatsStore) {
 	if err := NewPostgresPuzzleStore(database).Seed(context.Background(), SeedPuzzles()); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	return NewPostgresAttemptStore(database), NewPostgresStatsStore(database)
+	return NewPostgresAttemptStore(database), NewPostgresStatsStore(database, "UTC")
 }
 
 func guess(clientGuessID string, tileIDs ...string) GuessRequest {
