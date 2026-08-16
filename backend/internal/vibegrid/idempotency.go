@@ -58,11 +58,54 @@ func transactionFromContext(ctx context.Context) *sql.Tx {
 	return tx
 }
 
+// errIdempotencyKeyRaced reports that another writer committed this key first.
+// It never leaves this file: Execute turns it into the winner's response.
+var errIdempotencyKeyRaced = errors.New("idempotency key committed by a concurrent writer")
+
 // Execute serializes matching keys with a transaction-scoped advisory lock and
 // commits the domain write and replay record in the same transaction. Store
 // methods participating in idempotent creation use transactionFromContext, so a
 // crash cannot leave a committed mutation without its replayable response.
 func (store *PostgresIdempotencyStore) Execute(
+	ctx context.Context,
+	scope, keyHash, requestHash string,
+	action func(context.Context) idempotencyResponse,
+) (idempotencyResponse, bool, bool, error) {
+	response, replayed, conflict, err := store.execute(ctx, scope, keyHash, requestHash, action)
+	if !errors.Is(err, errIdempotencyKeyRaced) {
+		return response, replayed, conflict, err
+	}
+	// The primary key, not the advisory lock, is what actually guarantees one
+	// record per key — the lock is only an optimization that spares us running
+	// the domain callback twice, and it cannot serialize writers whose lock and
+	// insert reach different backends. So when the constraint does fire, this
+	// caller simply lost the race: its own mutation rolled back with the failed
+	// transaction, exactly one resource exists, and the honest answer is the
+	// winner's stored response rather than an error for a request that worked.
+	return store.replayWinner(ctx, scope, keyHash, requestHash)
+}
+
+func (store *PostgresIdempotencyStore) replayWinner(
+	ctx context.Context,
+	scope, keyHash, requestHash string,
+) (idempotencyResponse, bool, bool, error) {
+	stored, found, err := loadIdempotencyResponse(ctx, store.db, scope, keyHash, requestHash)
+	if err != nil {
+		return idempotencyResponse{}, false, false, err
+	}
+	if !found {
+		// The row that just rejected our insert is gone. Pruning only removes
+		// records older than the retention window, so this means the table was
+		// truncated mid-request and we have nothing truthful to replay.
+		return idempotencyResponse{}, false, false, errors.New("idempotency winner disappeared before it could be replayed")
+	}
+	if stored.status == http.StatusConflict {
+		return idempotencyResponse{}, false, true, nil
+	}
+	return stored, true, false, nil
+}
+
+func (store *PostgresIdempotencyStore) execute(
 	ctx context.Context,
 	scope, keyHash, requestHash string,
 	action func(context.Context) idempotencyResponse,
@@ -106,12 +149,21 @@ func (store *PostgresIdempotencyStore) Execute(
 	if err != nil {
 		return idempotencyResponse{}, false, false, fmt.Errorf("encode idempotency response headers: %w", err)
 	}
+	// response_headers is jsonb, but the pool talks simple protocol so it stays
+	// compatible with transaction-mode poolers. In that mode pgx has no parameter
+	// OIDs to encode against and renders a []byte as a bytea literal, which
+	// Postgres rejects for a json column (SQLSTATE 22P02) — that turned every
+	// idempotent mutation into a 503. Bind the document as text and let the
+	// explicit cast, not the driver's guess, choose the type.
 	if _, err := tx.ExecContext(ctx,
 		`insert into idempotency_keys
 		 (scope, key_hash, request_hash, status_code, response_headers, response_body)
-		 values ($1, $2, $3, $4, $5, $6)`,
-		scope, keyHash, requestHash, response.status, storedHeaders, response.body,
+		 values ($1, $2, $3, $4, $5::jsonb, $6)`,
+		scope, keyHash, requestHash, response.status, string(storedHeaders), response.body,
 	); err != nil {
+		if isUniqueViolation(err) {
+			return idempotencyResponse{}, false, false, errIdempotencyKeyRaced
+		}
 		return idempotencyResponse{}, false, false, fmt.Errorf("store idempotency response: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -120,15 +172,18 @@ func (store *PostgresIdempotencyStore) Execute(
 	return response, false, false, nil
 }
 
+// loadIdempotencyResponse takes a rowQuerier rather than the transaction so the
+// lost-race path can read the winner's row on the pool, after its own aborted
+// transaction has been rolled back.
 func loadIdempotencyResponse(
 	ctx context.Context,
-	tx *sql.Tx,
+	querier rowQuerier,
 	scope, keyHash, requestHash string,
 ) (idempotencyResponse, bool, error) {
 	var storedRequestHash string
 	var response idempotencyResponse
 	var headersJSON []byte
-	err := tx.QueryRowContext(ctx,
+	err := querier.QueryRowContext(ctx,
 		`select request_hash, status_code, response_headers, response_body
 		 from idempotency_keys
 		 where scope = $1 and key_hash = $2`,

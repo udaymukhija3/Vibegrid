@@ -305,6 +305,110 @@ func TestAdminDraftCreationReplaysIdempotently(t *testing.T) {
 	}
 }
 
+// The tests above all run against memoryIdempotencyStore, which is why a store
+// that could not persist a single record at all still shipped. These two drive
+// the real Postgres store: the first covers an ordinary sequential replay, the
+// second the lost-race path where the durable record already exists.
+func TestPostgresIdempotentCreateReplaysThroughTheDatabase(t *testing.T) {
+	handler, puzzleStore := newAdminTestServer(t)
+	payload, err := json.Marshal(validPuzzleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := postIdempotentJSON(handler, "/api/community/puzzles", payload, "durable-community-create", nil)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first create failed: %d %s", first.Code, first.Body.String())
+	}
+	sessionCookie := responseCookie(first, sessionCookieName)
+	if sessionCookie == nil {
+		t.Fatal("idempotent public mutation did not establish a guest session")
+	}
+
+	second := postIdempotentJSON(handler, "/api/community/puzzles", payload, "durable-community-create", sessionCookie)
+	if second.Code != http.StatusAccepted {
+		t.Fatalf("replayed create failed: %d %s", second.Code, second.Body.String())
+	}
+	if second.Header().Get(idempotencyReplayHeader) != "true" {
+		t.Fatal("replayed response did not identify itself")
+	}
+	if first.Body.String() != second.Body.String() {
+		t.Fatalf("replay changed the original response:\nfirst: %s\nsecond: %s", first.Body.String(), second.Body.String())
+	}
+	// The stored headers live in a jsonb column, so a replay that loses them is
+	// how a driver-level encoding problem would show up short of an outright error.
+	if second.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("replay lost its stored headers: %v", second.Header())
+	}
+
+	var puzzlesCreated int
+	if err := puzzleStore.db.QueryRow(`select count(*) from puzzles where origin = 'COMMUNITY'`).Scan(&puzzlesCreated); err != nil {
+		t.Fatal(err)
+	}
+	if puzzlesCreated != 1 {
+		t.Fatalf("expected one durable community puzzle, got %d", puzzlesCreated)
+	}
+}
+
+func TestPostgresIdempotencyReplaysTheWinnerWhenTheKeyIsRaced(t *testing.T) {
+	_, puzzleStore := newAdminTestServer(t)
+	database := puzzleStore.db
+	store := NewPostgresIdempotencyStore(database)
+
+	scope := "community-puzzle.create:" + digestString("guest:raced")
+	keyHash := digestString("raced-key")
+	requestHash := digestString("raced-body")
+	winnerBody := []byte(`{"ok":true,"id":"winner"}`)
+
+	actionRuns := 0
+	response, replayed, conflict, err := store.Execute(
+		context.Background(), scope, keyHash, requestHash,
+		func(context.Context) idempotencyResponse {
+			actionRuns++
+			// Commit the same key from outside this transaction, which is what a
+			// writer that never took the advisory lock would do. Execute's own
+			// insert must then lose to the primary key.
+			if _, err := database.Exec(
+				`insert into idempotency_keys
+				 (scope, key_hash, request_hash, status_code, response_headers, response_body)
+				 values ($1, $2, $3, $4, $5::jsonb, $6)`,
+				scope, keyHash, requestHash, http.StatusAccepted,
+				`{"Content-Type":["application/json"]}`, winnerBody,
+			); err != nil {
+				t.Errorf("seed the winning record: %v", err)
+			}
+			return idempotencyResponse{
+				status: http.StatusAccepted,
+				header: http.Header{"Content-Type": []string{"application/json"}},
+				body:   []byte(`{"ok":true,"id":"loser"}`),
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("losing a race must not fail the request: %v", err)
+	}
+	if conflict {
+		t.Fatal("a matching request hash is not a conflict")
+	}
+	if !replayed {
+		t.Fatal("the loser served its own response instead of replaying the winner's")
+	}
+	if response.status != http.StatusAccepted || string(response.body) != string(winnerBody) {
+		t.Fatalf("expected the winner's response, got %d %s", response.status, response.body)
+	}
+	if actionRuns != 1 {
+		t.Fatalf("expected the mutation to run once, ran %d times", actionRuns)
+	}
+
+	var keysStored int
+	if err := database.QueryRow(`select count(*) from idempotency_keys`).Scan(&keysStored); err != nil {
+		t.Fatal(err)
+	}
+	if keysStored != 1 {
+		t.Fatalf("expected one idempotency record, got %d", keysStored)
+	}
+}
+
 func postIdempotentJSON(handler http.Handler, path string, payload []byte, key string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
