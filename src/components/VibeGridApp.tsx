@@ -7,6 +7,7 @@ import { ArrowRight, Compass, ShieldCheck, UserRound } from "lucide-react";
 import { VibeGridGame } from "@/components/VibeGridGame";
 import { fetchSessionStatus, fetchTodayPuzzle } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
+import { readStoredValue, writeStoredValue } from "@/lib/storage";
 
 const ENTRY_STORAGE_KEY = "vibegrid_entry";
 
@@ -14,11 +15,13 @@ export function VibeGridApp() {
   const [entry, setEntry] = useState<"checking" | "choose" | "guest">("checking");
 
   useEffect(() => {
-    setEntry(safeStorage()?.getItem(ENTRY_STORAGE_KEY) === "guest" ? "guest" : "choose");
+    setEntry(readStoredValue(ENTRY_STORAGE_KEY) === "guest" ? "guest" : "choose");
   }, []);
 
   function playAsGuest() {
-    safeStorage()?.setItem(ENTRY_STORAGE_KEY, "guest");
+    // If the choice cannot be persisted the visitor still plays now and simply
+    // picks again next visit — worth far less than crashing the entry screen.
+    writeStoredValue(ENTRY_STORAGE_KEY, "guest");
     setEntry("guest");
   }
 
@@ -211,12 +214,4 @@ function StatusCard({ title, message }: { title: string; message: string }) {
       </div>
     </div>
   );
-}
-
-function safeStorage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
 }

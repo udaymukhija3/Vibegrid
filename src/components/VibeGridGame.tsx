@@ -17,6 +17,7 @@ import {
   normalizeGameMode,
   type GameMode
 } from "@/lib/game";
+import { readStoredValue, safeStorage, writeStoredValue } from "@/lib/storage";
 import {
   fetchEasyHint,
   fetchPuzzleStats,
@@ -68,17 +69,6 @@ const emptyAttempt = (puzzleId: string): StoredAttempt => ({
   failed: false,
   completed: false
 });
-
-// safeStorage returns localStorage, or null when it is unavailable (private
-// mode, blocked cookies/storage). Even reading window.localStorage can throw, so
-// every access goes through here and degrades to an in-memory-only session.
-function safeStorage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
 
 const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 const asCount = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
@@ -429,11 +419,13 @@ export function VibeGridGame({
   // Mode is a per-browser preference. Read it after mount (not in initial state)
   // so the server-rendered markup and first client paint agree; default medium.
   useEffect(() => {
-    setMode(normalizeGameMode(safeStorage()?.getItem(MODE_STORAGE_KEY)));
+    setMode(normalizeGameMode(readStoredValue(MODE_STORAGE_KEY)));
   }, []);
 
   useEffect(() => {
-    safeStorage()?.setItem(MODE_STORAGE_KEY, mode);
+    // Best-effort: a rejected write (quota, blocked storage) only costs the
+    // preference on the next visit, so it must not reach the error boundary.
+    writeStoredValue(MODE_STORAGE_KEY, mode);
   }, [mode]);
 
   // Easy/Medium reveal one vibe (group name) at a time. Fetch just the names —

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { HelpCircle, X } from "lucide-react";
+import { readStoredValue, writeStoredValue } from "@/lib/storage";
 
 const SEEN_KEY = "vibegrid:seenHowTo";
 
@@ -22,9 +23,14 @@ export function HowToPlay() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (!window.localStorage.getItem(SEEN_KEY)) {
+    // Storage may be blocked entirely (private mode, cookies off), in which case
+    // reads come back null and the write is a no-op: the explainer then opens on
+    // every load. That is the right side to fail on — a returning player sees a
+    // dialog they can dismiss, whereas suppressing it would leave a first-time
+    // visitor staring at 16 unexplained tiles.
+    if (!readStoredValue(SEEN_KEY)) {
       setOpen(true);
-      window.localStorage.setItem(SEEN_KEY, "1");
+      writeStoredValue(SEEN_KEY, "1");
     }
   }, []);
 
