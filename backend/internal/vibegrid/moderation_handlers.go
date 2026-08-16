@@ -121,7 +121,14 @@ func (server *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if _, err := server.puzzles.PuzzleByID(r.Context(), input.PuzzleID); err != nil {
+	// An appeal contests a takedown, so only an archived puzzle is appealable.
+	// Accepting appeals for any puzzle let a submitter appeal their own PENDING
+	// grid — which was never removed — and an admin resolving that appeal with
+	// REINSTATE published it without the community review gate ever running.
+	// It also stopped /api/appeals doubling as an existence oracle for
+	// unpublished puzzle ids.
+	puzzle, err := server.puzzles.PuzzleByID(r.Context(), input.PuzzleID)
+	if err != nil || puzzle.Status != PuzzleStatusArchived {
 		writeError(w, http.StatusNotFound, "Puzzle not found.")
 		return
 	}
