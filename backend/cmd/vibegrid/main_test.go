@@ -6,7 +6,20 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
+
+type recordingRateLimitPruner struct {
+	called chan struct{}
+}
+
+func (pruner recordingRateLimitPruner) Prune(context.Context) error {
+	select {
+	case pruner.called <- struct{}{}:
+	default:
+	}
+	return nil
+}
 
 func TestBuildDepsRequiresDatabaseWhenConfigured(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -40,6 +53,22 @@ func TestBuildDepsKeepsNoDatabaseModeForLocalRuns(t *testing.T) {
 	}
 }
 
+func TestStartRateLimitPrunerRunsImmediately(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	called := make(chan struct{}, 1)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	startRateLimitPruner(ctx, logger, recordingRateLimitPruner{called: called})
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("rate-limit pruner did not run on startup")
+	}
+
+	cancel()
+}
+
 func TestProductionConfigHelpersRejectUnsafeValues(t *testing.T) {
 	environment, err := runtimeEnvironment("")
 	if err != nil || environment != "production" {
@@ -63,5 +92,17 @@ func TestProductionConfigHelpersRejectUnsafeValues(t *testing.T) {
 	}
 	if err := validateTrustedProxyCIDRs([]string{"10.0.0.0/8", "2001:db8::/32"}); err != nil {
 		t.Fatalf("valid trusted proxy CIDRs rejected: %v", err)
+	}
+}
+
+func TestValidatedWebhookURL(t *testing.T) {
+	if _, err := validatedWebhookURL("http://hooks.example.test/path", true); err == nil {
+		t.Fatal("production webhook must require HTTPS")
+	}
+	if _, err := validatedWebhookURL("https://user:pass@hooks.example.test/path", true); err == nil {
+		t.Fatal("webhook URL must reject credentials")
+	}
+	if got, err := validatedWebhookURL("https://hooks.example.test/path", true); err != nil || got == "" {
+		t.Fatalf("valid webhook rejected: %q, %v", got, err)
 	}
 }

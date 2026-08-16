@@ -2,8 +2,13 @@ package vibegrid
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -11,7 +16,33 @@ import (
 // CommunityPuzzleStore is the write side for user-created puzzles. Only the
 // Postgres store implements it; the feature requires a database.
 type CommunityPuzzleStore interface {
-	CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (Puzzle, error)
+	CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput, claimHash string) (Puzzle, error)
+	CreatorStatus(ctx context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error)
+	WithdrawCommunityPuzzle(ctx context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error)
+}
+
+var ErrCreatorClaimInvalid = errors.New("creator claim not found")
+var ErrCreatorWithdrawalUnavailable = errors.New("community puzzle can no longer be withdrawn")
+
+const creatorClaimHeader = "X-VibeGrid-Creator-Claim"
+
+type CreatorPuzzleStatus struct {
+	ID           string
+	PuzzleNumber int
+	Status       PuzzleStatus
+	UpdatedAt    time.Time
+	Withdrawn    bool
+}
+
+type creatorPuzzleStatusResponse struct {
+	ID           string       `json:"id"`
+	PuzzleNumber int          `json:"puzzleNumber"`
+	Status       PuzzleStatus `json:"status"`
+	UpdatedAt    string       `json:"updatedAt"`
+	Withdrawn    bool         `json:"withdrawn"`
+	CanWithdraw  bool         `json:"canWithdraw"`
+	CanAppeal    bool         `json:"canAppeal"`
+	PlayPath     string       `json:"playPath,omitempty"`
 }
 
 // createdPuzzleResponse confirms receipt of a community submission. Community
@@ -21,13 +52,15 @@ type createdPuzzleResponse struct {
 	ID           string       `json:"id"`
 	PuzzleNumber int          `json:"puzzleNumber"`
 	Status       PuzzleStatus `json:"status"`
+	ClaimSecret  string       `json:"claimSecret"`
+	ClaimPath    string       `json:"claimPath"`
 }
 
 const maxCommunityBodyBytes = 16 << 10 // 16 KiB
 
-// rateLimiter is a small in-memory fixed-window limiter keyed by client. It is
-// enough to blunt casual abuse of the public create endpoint; a multi-instance
-// deployment would move this to Redis.
+// rateLimiter is a bounded in-memory sliding-window limiter keyed by client.
+// Public reads always use it so cached content never causes a database write;
+// mutation endpoints use it when no shared Postgres limiter is configured.
 type rateLimiter struct {
 	mu        sync.Mutex
 	hits      map[string][]time.Time
@@ -120,7 +153,13 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	server.withIdempotency("community-puzzle.create", server.guestIdempotencyCaller, server.handleCommunityCreateMutation)(w, r)
+}
 
+func (server *Server) handleCommunityCreateMutation(w http.ResponseWriter, r *http.Request) {
+	if !server.verifyBot(w, r, "community_create") {
+		return
+	}
 	var input AdminPuzzleInput
 	if !decodeJSONBody(w, r, maxCommunityBodyBytes, &input, "That puzzle payload is not valid JSON.") {
 		return
@@ -139,7 +178,8 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	puzzle, err := server.community.CreateCommunityPuzzle(r.Context(), input)
+	claimSecret := newCreatorClaimSecret()
+	puzzle, err := server.community.CreateCommunityPuzzle(r.Context(), input, hashCreatorClaimSecret(claimSecret))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not save that puzzle.")
 		return
@@ -150,7 +190,124 @@ func (server *Server) handleCommunityCreate(w http.ResponseWriter, r *http.Reque
 		ID:           puzzle.ID,
 		PuzzleNumber: puzzle.PuzzleNumber,
 		Status:       puzzle.Status,
+		ClaimSecret:  claimSecret,
+		ClaimPath:    "/claim?id=" + puzzle.ID,
 	})
+}
+
+func (server *Server) handleCreatorStatus(w http.ResponseWriter, r *http.Request) {
+	if server.community == nil {
+		writeError(w, http.StatusServiceUnavailable, "Creator claims require a database.")
+		return
+	}
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
+
+	status, err := server.loadCreatorStatus(r)
+	if err != nil {
+		writeCreatorClaimError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCreatorStatusResponse(status))
+}
+
+func (server *Server) handleCreatorWithdraw(w http.ResponseWriter, r *http.Request) {
+	if server.community == nil {
+		writeError(w, http.StatusServiceUnavailable, "Creator claims require a database.")
+		return
+	}
+	if !server.allowModerationWrite(w, r, "creator-withdraw:", "You're changing creator submissions too quickly. Try again later.") {
+		return
+	}
+	server.withIdempotency("community-puzzle.withdraw", server.creatorIdempotencyCaller, server.handleCreatorWithdrawMutation)(w, r)
+}
+
+func (server *Server) handleCreatorWithdrawMutation(w http.ResponseWriter, r *http.Request) {
+	puzzleID, claimHash, err := creatorClaimRequest(r)
+	if err != nil {
+		writeCreatorClaimError(w, err)
+		return
+	}
+	status, err := server.community.WithdrawCommunityPuzzle(r.Context(), puzzleID, claimHash)
+	if err != nil {
+		writeCreatorClaimError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCreatorStatusResponse(status))
+}
+
+func (server *Server) loadCreatorStatus(r *http.Request) (CreatorPuzzleStatus, error) {
+	puzzleID, claimHash, err := creatorClaimRequest(r)
+	if err != nil {
+		return CreatorPuzzleStatus{}, err
+	}
+	return server.community.CreatorStatus(r.Context(), puzzleID, claimHash)
+}
+
+func creatorClaimRequest(r *http.Request) (string, string, error) {
+	puzzleID := strings.TrimSpace(r.PathValue("id"))
+	claimHash, err := creatorClaimHashFromRequest(r)
+	if !validPuzzleID(puzzleID) || err != nil {
+		return "", "", ErrCreatorClaimInvalid
+	}
+	return puzzleID, claimHash, nil
+}
+
+func creatorClaimHashFromRequest(r *http.Request) (string, error) {
+	secret := strings.TrimSpace(r.Header.Get(creatorClaimHeader))
+	if !validCreatorClaimSecret(secret) {
+		return "", ErrCreatorClaimInvalid
+	}
+	return hashCreatorClaimSecret(secret), nil
+}
+
+func writeCreatorClaimError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrCreatorClaimInvalid):
+		writeError(w, http.StatusNotFound, "Creator claim not found.")
+	case errors.Is(err, ErrCreatorWithdrawalUnavailable):
+		writeError(w, http.StatusConflict, "Only a pending submission can be withdrawn.")
+	default:
+		writeError(w, http.StatusInternalServerError, "Could not load that creator claim.")
+	}
+}
+
+func toCreatorStatusResponse(status CreatorPuzzleStatus) creatorPuzzleStatusResponse {
+	response := creatorPuzzleStatusResponse{
+		ID:           status.ID,
+		PuzzleNumber: status.PuzzleNumber,
+		Status:       status.Status,
+		UpdatedAt:    status.UpdatedAt.UTC().Format(time.RFC3339),
+		Withdrawn:    status.Withdrawn,
+		CanWithdraw:  status.Status == PuzzleStatusPending && !status.Withdrawn,
+		CanAppeal:    status.Status == PuzzleStatusArchived && !status.Withdrawn,
+	}
+	if status.Status == PuzzleStatusPublished {
+		response.PlayPath = "/p/" + status.ID
+	}
+	return response
+}
+
+func newCreatorClaimSecret() string {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		panic("crypto/rand failed while generating creator claim: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes)
+}
+
+func hashCreatorClaimSecret(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+func validCreatorClaimSecret(secret string) bool {
+	if len(secret) < 32 || len(secret) > 128 {
+		return false
+	}
+	_, err := base64.RawURLEncoding.DecodeString(secret)
+	return err == nil
 }
 
 // handleGetPuzzle serves any single puzzle by id as a public payload (tiles

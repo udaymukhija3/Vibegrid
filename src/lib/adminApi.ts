@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, apiFetch } from "@/lib/http";
+import { ApiError, apiFetch, idempotencyHeaders } from "@/lib/http";
 import type {
   AdminPuzzlePreview,
   AdminQueueHealth,
@@ -149,6 +149,7 @@ export async function createDraftPuzzle(input: DraftPuzzleInput): Promise<AdminP
   return adminPuzzleSchema.parse(
     await adminFetch("/api/admin/puzzles", {
       method: "POST",
+      headers: idempotencyHeaders(),
       body: JSON.stringify(input)
     })
   );

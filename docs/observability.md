@@ -5,7 +5,7 @@ VibeGrid exposes three operational endpoints:
 - `/healthz` - process liveness.
 - `/readyz` - readiness; checks Postgres when `DATABASE_URL` is set.
 - `/metrics` - bearer-protected Prometheus text metrics for request count,
-  status, and latency, plus connection-pool and puzzle-cache series (see below).
+  status, and latency, plus connection-pool, puzzle-cache, and notification-outbox series (see below).
 
 ## Public Uptime Checks
 
@@ -61,6 +61,16 @@ per-guess read-path optimization:
 - `vibegrid_puzzle_cache_hits_total`, `vibegrid_puzzle_cache_misses_total`,
   `vibegrid_puzzle_cache_evictions_total` (counters)
 - `vibegrid_puzzle_cache_entries` (gauge)
+
+Transactional notification outbox (when `DATABASE_URL` is set):
+
+- `vibegrid_notification_outbox_pending`, `vibegrid_notification_outbox_retrying`
+- `vibegrid_notification_outbox_dead`
+- `vibegrid_notification_outbox_oldest_pending_seconds`
+
+Alert when the oldest pending event exceeds the operator response target and
+immediately when a dead event appears. A missing webhook does not roll back a
+product mutation; the event remains durable until delivery is configured.
 
 ## Logs
 

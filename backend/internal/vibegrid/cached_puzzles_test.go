@@ -50,8 +50,19 @@ func (backend *fakePuzzleBackend) TodaysPuzzle(context.Context, string) (Puzzle,
 func (backend *fakePuzzleBackend) CreateDraft(context.Context, AdminPuzzleInput) (Puzzle, error) {
 	return Puzzle{}, nil
 }
-func (backend *fakePuzzleBackend) CreateCommunityPuzzle(context.Context, AdminPuzzleInput) (Puzzle, error) {
+func (backend *fakePuzzleBackend) CreateCommunityPuzzle(context.Context, AdminPuzzleInput, string) (Puzzle, error) {
 	return Puzzle{}, nil
+}
+
+func (backend *fakePuzzleBackend) CreatorStatus(context.Context, string, string) (CreatorPuzzleStatus, error) {
+	return CreatorPuzzleStatus{}, nil
+}
+
+func (backend *fakePuzzleBackend) WithdrawCommunityPuzzle(context.Context, string, string) (CreatorPuzzleStatus, error) {
+	return CreatorPuzzleStatus{}, nil
+}
+func (backend *fakePuzzleBackend) PersistDaily(context.Context, Puzzle) error {
+	return nil
 }
 
 func (backend *fakePuzzleBackend) Publish(_ context.Context, puzzleID, publishDate string) error {

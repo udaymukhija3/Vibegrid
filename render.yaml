@@ -19,7 +19,7 @@ services:
     # create a Deploy Hook (Render dashboard -> Settings), save it as the
     # RENDER_DEPLOY_HOOK_URL repo secret, then set this to false —
     # .github/workflows/deploy.yml takes over and only deploys after CI passes.
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: VIBEGRID_ENV
         value: production
@@ -44,5 +44,11 @@ services:
       # pointing a metrics scraper at /metrics.
       - key: VIBEGRID_METRICS_TOKEN
         generateValue: true
+      - key: VIBEGRID_TURNSTILE_SITE_KEY
+        sync: false
+      - key: VIBEGRID_TURNSTILE_SECRET_KEY
+        sync: false
+      - key: VIBEGRID_OPERATOR_WEBHOOK_URL
+        sync: false
       - key: VIBEGRID_TRUSTED_PROXY_CIDRS
         sync: false

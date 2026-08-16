@@ -201,6 +201,8 @@ and `fly deploy --build-arg NEXT_PUBLIC_APP_URL=https://vibegrid.example.com`.
      (watch the wait series for pool saturation)
    - puzzle cache: `vibegrid_puzzle_cache_hits_total` / `..._misses_total` /
      `..._evictions_total` / `..._entries` (hit rate of the per-request cache)
+   - notification outbox: `vibegrid_notification_outbox_pending`, `..._retrying`,
+     `..._dead`, and `..._oldest_pending_seconds` (delivery backlog and failures)
 4. **Log drain** — ship stdout/stderr to a durable store (Axiom, Datadog, Loki,
    Logtail). The server emits structured `slog` JSON with method, path, status,
    `duration_ms`, `client_ip`, `user_agent`. On Fly: `fly logs` for ad hoc, or a
@@ -217,15 +219,16 @@ Run through this after the first deploy:
 - `https://<domain>/` loads today's puzzle.
 - Play a guess, refresh, confirm the attempt persists (the `vibegrid_session`
   cookie should be present and `Secure`).
-- `https://<domain>/create` submits a community puzzle and shows **Pending
-  review**; its `/p/<id>` API route must return 404 before approval.
+- `https://<domain>/create` completes Turnstile, submits a community puzzle,
+  and returns a private creator claim URL. Save it; confirm status loads and the
+  public `/p/<id>` route returns 404 before approval.
 - In `/admin`, approve that submission and confirm its `/p/<id>` link is now
   playable. Report it from the sidebar, then confirm it appears in the
-  moderation queue; archive it, reopen `/p/<id>`, submit an appeal, and
+  moderation queue; archive it, use the private claim URL to submit an appeal, and
   reinstate it from the queue.
 - `curl -sI https://<domain>/readyz` → 200 (DB reachable).
 - `curl -s -H "Authorization: Bearer $VIBEGRID_METRICS_TOKEN" https://<domain>/metrics | grep vibegrid_`
-  shows the HTTP, pool, and cache series. A scrape without that header must be
+  shows the HTTP, pool, cache, and notification-outbox series. A scrape without that header must be
   rejected with 401.
 - `curl -s https://<domain>/robots.txt` advertises the sitemap; `/sitemap.xml`
   lists `/` and the live puzzle `/p/<id>` URLs (and **not** future-dated ones).
@@ -284,6 +287,9 @@ Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 
 | `VIBEGRID_ADMIN_SESSION_SECRET` | Yes (when browser admin login enabled) | secret | HMAC key binding CSRF tokens to opaque, revocable admin sessions. Required alongside the password. |
 | `VIBEGRID_ADMIN_TOKEN` | Optional | secret | Legacy bearer token for automation/API. |
 | `VIBEGRID_METRICS_TOKEN` | Yes (prod) | secret | Bearer token required to expose `/metrics`; leave empty locally to disable the endpoint. |
+| `VIBEGRID_TURNSTILE_SITE_KEY` | Yes (prod) | env | Public Cloudflare Turnstile widget key returned by `/api/public-config`. |
+| `VIBEGRID_TURNSTILE_SECRET_KEY` | Yes (prod) | secret | Server-only Cloudflare Turnstile verification key. Never expose it to the browser. |
+| `VIBEGRID_OPERATOR_WEBHOOK_URL` | Recommended | secret | Slack-compatible outbound webhook consumed by the transactional notification worker. Without it, events remain pending and product writes still succeed. |
 | `VIBEGRID_PUBLIC_BASE_URL` | Yes (prod) | secret/env | HTTPS origin (no credentials, path, query, or fragment) used for canonical metadata, robots, and sitemap. Never inferred from request headers. |
 | `VIBEGRID_TRUSTED_PROXY_CIDRS` | Only behind a verified proxy | secret/env | Comma-separated proxy source CIDRs allowed to supply client-IP headers. Empty keys limits on the direct peer. |
 | `VIBEGRID_SECURE_COOKIES` | Yes (prod) | `fly.toml` | `true` ⇒ `Secure` cookies. Requires HTTPS. |
@@ -293,6 +299,11 @@ Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 
 | `VIBEGRID_ALLOWED_ORIGINS` | Only cross-origin | secret/env | Comma-separated browser origins for CORS. Not needed same-origin. |
 | `VIBEGRID_BLOCKED_TERMS` | Optional | secret/env | Comma-separated blocked terms for community puzzles. |
 | `NEXT_PUBLIC_APP_URL` | Recommended | **build arg** | Public URL baked into the frontend export. Build-time only. |
+
+Turnstile is deliberately fail closed on community creation, reports, and
+appeals. Rejected or expired tokens return `422`; provider/network failure returns
+`503` and the mutation is not committed. Idempotent replay of an already-completed
+mutation does not reuse the single-use Turnstile token.
 
 ---
 
@@ -318,7 +329,9 @@ Steps:
 2. **Render** — New ➜ **Blueprint**, point it at this repo. Render reads
    `render.yaml` and creates the service. In the dashboard set its `sync: false`
    values: `DATABASE_URL` (from Neon), `VIBEGRID_ADMIN_PASSWORD`,
-   `VIBEGRID_ADMIN_SESSION_SECRET`, a generated `VIBEGRID_METRICS_TOKEN`, and
+   `VIBEGRID_ADMIN_SESSION_SECRET`, a generated `VIBEGRID_METRICS_TOKEN`, the
+   Cloudflare `VIBEGRID_TURNSTILE_SITE_KEY` and `VIBEGRID_TURNSTILE_SECRET_KEY`, and
+   optional `VIBEGRID_OPERATOR_WEBHOOK_URL`, plus
    `VIBEGRID_PUBLIC_BASE_URL` set to the final `https://…onrender.com` (or custom)
    origin. Set `VIBEGRID_TRUSTED_PROXY_CIDRS` only after verifying Render's
    documented proxy source ranges. Deploy.

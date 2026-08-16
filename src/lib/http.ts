@@ -6,6 +6,12 @@ export const API_TIMEOUT_MS = 8000;
 // the player on a dead loading screen.
 export const COLD_START_RETRY_TIMEOUT_MS = 45000;
 
+export function idempotencyHeaders(initial?: HeadersInit): Headers {
+  const headers = new Headers(initial);
+  headers.set("Idempotency-Key", globalThis.crypto.randomUUID());
+  return headers;
+}
+
 export class ApiError extends Error {
   status?: number;
   timedOut: boolean;
@@ -29,15 +35,18 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {},
   }
 }
 
-// Only reads are retried: they are idempotent and safe to reissue. Mutating
-// requests keep single-shot semantics so retry policy stays with their callers
-// (guesses already carry idempotency keys and manage their own retries).
+// Reads are safe to retry. A mutation is retried only when its caller supplied
+// an Idempotency-Key that the server can replay, and the same RequestInit (and
+// therefore the same key) is reused for the second attempt.
 function shouldRetryAfterTimeout(error: unknown, init: RequestInit) {
   if (!(error instanceof ApiError) || !error.timedOut) {
     return false;
   }
   const method = (init.method ?? "GET").toUpperCase();
-  return method === "GET" && !init.signal?.aborted;
+  if (init.signal?.aborted) {
+    return false;
+  }
+  return method === "GET" || new Headers(init.headers).has("Idempotency-Key");
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {

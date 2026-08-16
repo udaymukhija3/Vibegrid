@@ -42,9 +42,12 @@ and monitoring templates are all present in the repo.
   Node+Go `Dockerfile`, `fly.toml`, `render.yaml`, embedded SQL migrations,
   `/healthz`, `/readyz`, bearer-protected `/metrics`, structured logs, alert rules, and a starter
   Grafana dashboard.
-- **Permanent public hosting is not recorded here yet:** treat this as a
-  deploy-ready portfolio project until a real production URL, managed Postgres,
-  backup/restore drill, and external monitoring are verified and documented.
+- **Public demo/beta deployment:** the current Render deployment is available at
+  [vibegrid.onrender.com](https://vibegrid.onrender.com). Treat it as a portfolio
+  demo or controlled beta—not a production-readiness claim—until the canonical
+  daily lifecycle, backup/restore drill, CI-gated deploy, dependency gates, and
+  external monitoring in
+  [the launch-readiness review](docs/production-readiness.md) are complete.
 
 ## What Is Built
 
@@ -53,13 +56,13 @@ and monitoring templates are all present in the repo.
 | Player game | Daily 4x4 grid, Easy/Medium/Hard modes, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
 | Game rules | Go validates guesses server-side. The browser receives tile ids/text and vibe hints, but never receives tile-to-group answer mappings. |
 | Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts for up to 30 days. |
-| Daily content | Explicitly scheduled editorial puzzles win for their publish date. Empty days are filled by a deterministic evergreen generator that composes a date-specific board from curated bank groups, so the daily keeps changing without a cron job or manual authoring every night. |
+| Daily content | Explicitly scheduled editorial puzzles win for their publish date. A background generator proactively persists missing canonical dailies from curated bank groups, preserving archive, streak, date, and numbering semantics. |
 | Archive/share links | Published editorial puzzles appear in `/archive`; any playable puzzle can be opened at `/p/<id>`. |
-| Community puzzles | `/create` accepts a 4x4 puzzle from scratch or starter packs, then holds it for admin review. Only approved submissions receive a playable `/p/<id>` link. Requires Postgres. |
+| Community puzzles | `/create` accepts a 4x4 puzzle from scratch or starter packs, holds it for admin review, and returns a one-time private creator claim link for status, withdrawal, and appeals. Only approved submissions receive a playable `/p/<id>` link. Requires Postgres. |
 | Admin desk | `/admin` supports password-backed admin login, queue-health coverage, draft creation, exact board preview, publish-by-date, archive/reinstate, and per-puzzle analytics. Requires Postgres and admin env vars. |
-| Moderation | Players can report puzzles without logging in; admins can review reports, archive/reinstate content, handle appeals, and inspect an audit log. Requires Postgres. |
+| Moderation | Turnstile protects public creation/report/appeal writes. Admins can review reports, archive/reinstate content, handle creator-claimed appeals, and inspect an audit log. Requires Postgres. |
 | Analytics | Public completion stats are computed from attempts/guesses and shown only after the player finishes and enough players exist; admins also get wrong-guess heatmaps. |
-| Operations | Health/readiness probes, bearer-protected Prometheus metrics, structured request logs, route-aware security headers, rate limits, body caps, retention cleanup, Docker/Fly/Render config, and deploy smoke scripts are checked in. |
+| Operations | Health/readiness probes, bearer-protected Prometheus metrics, structured request logs, route-aware security headers, rate limits, body caps, retention cleanup, a retrying/dead-letter transactional notification outbox, Docker/Fly/Render config, and deploy smoke scripts are checked in. |
 
 ## Architecture
 
@@ -76,6 +79,10 @@ Important implementation points:
 - [AGENTS.md](AGENTS.md) is the short handoff for future Codex/new-chat work:
   current state, verification commands, hardening decisions, and manual deploy
   tasks.
+- [docs/production-readiness.md](docs/production-readiness.md) is the current
+  product, security, runtime, and launch decision; [docs/RECRUITER_EVIDENCE.md](docs/RECRUITER_EVIDENCE.md)
+  maps the strongest engineering claims to code, verification, and deployment
+  evidence.
 - `backend/internal/vibegrid` owns game rules, sessions, attempts, puzzle stores,
   admin routes, moderation, stats, metrics, and SEO helpers.
 - `backend/db/migrations` contains embedded SQL migrations. `vibegrid migrate`
@@ -220,7 +227,8 @@ and OG metadata.
 
 These are the main things not to overstate:
 
-- No permanent production URL is documented in the repo yet.
+- A public Render demo/beta URL exists, but it is not a verified production
+  environment; see [the launch-readiness review](docs/production-readiness.md).
 - Public player accounts, OAuth, leaderboards, cross-device identity, and account
   recovery are intentionally not implemented for v1.
 - Real-time multiplayer, live rooms, matchmaking, presence, and chat are out of

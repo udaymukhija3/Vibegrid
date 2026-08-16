@@ -70,4 +70,32 @@ describe("apiFetch", () => {
     await request;
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("retries an idempotency-keyed mutation with the same key", async () => {
+    vi.useFakeTimers();
+    const keys: string[] = [];
+    let calls = 0;
+    globalThis.fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      keys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      if (calls === 1) {
+        return stalledFetch(init);
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    const request = apiFetch(
+      "/safe-mutation",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "retry-safe-key" }
+      },
+      10
+    );
+    await vi.advanceTimersByTimeAsync(10);
+
+    const response = await request;
+    expect(response.status).toBe(200);
+    expect(keys).toEqual(["retry-safe-key", "retry-safe-key"]);
+  });
 });

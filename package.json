@@ -21,7 +21,7 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
-    "next": "^15.3.3",
+    "next": "^15.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sonner": "^2.0.7",
@@ -40,6 +40,6 @@
     "vitest": "^4.1.8"
   },
   "overrides": {
-    "postcss": "^8.5.15"
+    "postcss": "^8.5.21"
   }
 }

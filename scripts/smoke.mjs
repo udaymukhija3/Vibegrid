@@ -137,7 +137,8 @@ export async function runSmoke({
     const guessBody = {
       puzzleId: puzzle.id,
       selectedTileIds: tileIds,
-      clientGuessId
+      clientGuessId,
+      mode: "medium"
     };
     const guess = await expectJSON("/api/guesses", 200, {
       method: "POST",

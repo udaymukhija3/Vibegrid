@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, Compass, Flag, Flame, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
+import { Archive, Flag, Flame, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   ATTEMPT_STORAGE_PREFIX,
@@ -28,6 +28,7 @@ import {
   type PuzzleStats,
   type StreakSummary
 } from "@/lib/api";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { apiFetch } from "@/lib/http";
 import { HowToPlay } from "@/components/HowToPlay";
 import type {
@@ -42,6 +43,7 @@ import type {
 
 type StoredAttempt = {
   puzzleId: string;
+  mode?: GameMode;
   selectedTileIds: string[];
   solvedGroups: SolvedGroup[];
   revealedGroups: SolvedGroup[];
@@ -87,10 +89,15 @@ const asCount = (value: unknown): number => (typeof value === "number" && Number
 // a valid-JSON-but-wrong-shape blob (e.g. solvedGroups not an array) would crash
 // the board on render, so every field is coerced back to a safe type.
 function normalizeStoredAttempt(puzzleId: string, parsed: Partial<StoredAttempt>): StoredAttempt {
+  const storedMode =
+    parsed.mode === "easy" || parsed.mode === "medium" || parsed.mode === "hard"
+      ? parsed.mode
+      : undefined;
   return {
     ...emptyAttempt(puzzleId),
     ...parsed,
     puzzleId,
+    mode: storedMode,
     selectedTileIds: asArray<string>(parsed.selectedTileIds),
     solvedGroups: asArray<SolvedGroup>(parsed.solvedGroups),
     revealedGroups: asArray<SolvedGroup>(parsed.revealedGroups),
@@ -233,6 +240,8 @@ export function VibeGridGame({
   const [reportDetails, setReportDetails] = useState("");
   const [reportContact, setReportContact] = useState("");
   const [isReporting, setIsReporting] = useState(false);
+  const [reportTurnstileToken, setReportTurnstileToken] = useState("");
+  const [reportTurnstileReset, setReportTurnstileReset] = useState(0);
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "error">("idle");
   const [mode, setMode] = useState<GameMode>("medium");
   const [vibes, setVibes] = useState<VibeHint[] | null>(null);
@@ -436,6 +445,14 @@ export function VibeGridGame({
     safeStorage()?.setItem(MODE_STORAGE_KEY, mode);
   }, [mode]);
 
+  // Once the server has created an attempt, its persisted mode wins over the
+  // browser preference. This also reconciles another tab that submitted first.
+  useEffect(() => {
+    if (attempt.mode) {
+      setMode(attempt.mode);
+    }
+  }, [attempt.mode]);
+
   // Easy/Medium reveal one vibe (group name) at a time. Fetch just the names —
   // never the tile→group mapping — lazily, only when guided play is used.
   useEffect(() => {
@@ -583,6 +600,7 @@ export function VibeGridGame({
     .filter((tile): tile is Tile => tile !== undefined);
   const guessesUntilEasyHint = Math.max(0, EASY_HINT_GUESSES - attempt.guessCount);
   const unlockedEasyHint = mode === "easy" && easyHint?.available ? easyHint.hint ?? null : null;
+  const modeLocked = attempt.guessCount > 0 && attempt.mode !== undefined;
 
   function toggleTile(tileId: string) {
     if (isOver || displayedTileIds.has(tileId)) {
@@ -651,7 +669,8 @@ export function VibeGridGame({
         body: JSON.stringify({
           puzzleId: puzzle.id,
           selectedTileIds: attempt.selectedTileIds,
-          clientGuessId
+          clientGuessId,
+          mode
         })
       });
 
@@ -745,6 +764,7 @@ export function VibeGridGame({
   async function shareResult() {
     const shareText = buildShareText({
       puzzleNumber: puzzle.puzzleNumber,
+      mode,
       mistakes: attempt.mistakes,
       mistakesAllowed: puzzle.mistakesAllowed,
       solvedCount: attempt.solvedGroups.length,
@@ -771,6 +791,10 @@ export function VibeGridGame({
       return;
     }
 
+    if (!reportTurnstileToken) {
+      toast.error("Complete the bot check before sending.");
+      return;
+    }
     setIsReporting(true);
     try {
       await reportPuzzle({
@@ -778,7 +802,7 @@ export function VibeGridGame({
         reason: reportReason,
         details: reportDetails,
         contact: reportContact
-      });
+      }, reportTurnstileToken);
       setReportDetails("");
       setReportContact("");
       setReportReason("OFFENSIVE");
@@ -788,6 +812,8 @@ export function VibeGridGame({
       toast.error(error instanceof Error ? error.message : "Could not send that report.");
     } finally {
       setIsReporting(false);
+      setReportTurnstileToken("");
+      setReportTurnstileReset((value) => value + 1);
     }
   }
 
@@ -798,15 +824,28 @@ export function VibeGridGame({
 
   return (
     <div className="vg-desk">
-      <aside className="vg-spine flex flex-col justify-between gap-4 p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
-        <div className="flex items-center justify-between gap-3 lg:grid lg:justify-items-center">
-          <div className="flex min-w-0 items-center gap-3 lg:grid lg:justify-items-center lg:gap-2">
-            <Image src="/vibegrid-mark.svg" width={48} height={48} alt="" className="rounded-lg bg-card" priority />
+      {/* Below lg the spine is a slim top bar: stacking its two rows costs ~120px of
+          board space on a phone, which pushes the tile grid under the fold. */}
+      <aside className="vg-spine flex flex-row items-center justify-between gap-3 p-2.5 lg:flex-col lg:items-stretch lg:gap-4 lg:p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
+        <div className="flex min-w-0 items-center justify-between gap-3 lg:grid lg:justify-items-center">
+          <Link
+            href="/"
+            aria-label="Play today's grid"
+            className="flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-card lg:grid lg:justify-items-center lg:gap-2"
+          >
+            <Image
+              src="/vibegrid-mark.svg"
+              width={48}
+              height={48}
+              alt=""
+              className="h-9 w-9 rounded-lg bg-card lg:h-12 lg:w-12"
+              priority
+            />
             <div className="min-w-0 lg:text-center">
-              <h1 className="text-2xl font-extrabold leading-none lg:text-base">VibeGrid</h1>
-              <p className="mt-1 text-xs font-semibold text-card/[.65] lg:hidden">{puzzleLabel}</p>
+              <h1 className="text-lg font-extrabold leading-none lg:text-base">VibeGrid</h1>
+              <p className="mt-0.5 truncate text-xs font-semibold text-card/[.65] lg:hidden">{puzzleLabel}</p>
             </div>
-          </div>
+          </Link>
 
           <div className="hidden rounded-lg border border-card/[.15] bg-card/10 px-2 py-3 text-center lg:block">
             <p className="text-[0.68rem] font-semibold text-card/[.65]">Solved</p>
@@ -814,35 +853,23 @@ export function VibeGridGame({
           </div>
         </div>
 
-        <nav className="flex flex-wrap items-center gap-2 lg:grid lg:justify-items-center" aria-label="Game tools">
+        <nav className="flex shrink-0 items-center gap-1.5 lg:grid lg:justify-items-center lg:gap-2" aria-label="Primary navigation">
           <HowToPlay />
-          <Link href="/demo" aria-label="Demo walkthrough" title="Demo walkthrough" className="vg-icon-button">
-            <Compass aria-hidden size={18} />
+          <Link href="/archive" aria-label="Archive" title="Archive" className="vg-icon-button">
+            <Archive aria-hidden size={18} />
           </Link>
           <Link href="/create" aria-label="Make your own" title="Make your own" className="vg-icon-button">
             <Sparkles aria-hidden size={18} />
           </Link>
-          <Link href="/archive" aria-label="Archive" title="Archive" className="vg-icon-button">
-            <Archive aria-hidden size={18} />
-          </Link>
-          <button
-            aria-label="Shuffle tiles"
-            title="Shuffle tiles"
-            className="vg-icon-button"
-            disabled={isOver || remainingTiles.length < 2}
-            type="button"
-            onClick={shuffleRemaining}
-          >
-            <Shuffle aria-hidden size={18} />
-          </button>
         </nav>
       </aside>
 
       <main className="vg-board-sheet min-w-0">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3 sm:pb-4">
           <div>
-            <p className="vg-kicker">{puzzleLabel}</p>
-            <h2 className="mt-1 text-3xl font-extrabold leading-tight sm:text-5xl">
+            {/* The spine already carries the puzzle label below lg. */}
+            <p className="vg-kicker hidden lg:block">{puzzleLabel}</p>
+            <h2 className="text-xl font-extrabold leading-tight sm:text-5xl lg:mt-1">
               {isOver ? "Result grid" : "Find the hidden sets"}
             </h2>
           </div>
@@ -859,6 +886,35 @@ export function VibeGridGame({
             )}
           </div>
         </div>
+
+        {!isOver && (
+          <section className="mt-4 lg:hidden" aria-labelledby="mobile-mode-label">
+            <p id="mobile-mode-label" className="text-sm font-semibold text-neutral-500">
+              Mode
+            </p>
+            <div className="vg-mode-track mt-2">
+              {modeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setMode(option.value)}
+                  disabled={modeLocked || isSubmitting}
+                  aria-pressed={mode === option.value}
+                  title={modeLocked ? "Mode is locked for this attempt" : undefined}
+                  className={clsx(
+                    "vg-mode-tab disabled:cursor-not-allowed disabled:opacity-70",
+                    mode === option.value ? "bg-card text-ink" : "bg-ink text-card/75 hover:bg-card/[.12]"
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs font-medium leading-snug text-neutral-600">
+              {modeDescriptions[mode]}
+            </p>
+          </section>
+        )}
 
         {!isOver && (
           <div
@@ -930,7 +986,7 @@ export function VibeGridGame({
                 <button
                   key={tile.id}
                   className={clsx(
-                    "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1 text-center text-[0.7rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
+                    "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1.5 text-center text-[0.8rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
                     isSelected
                       ? "translate-y-0.5 border-ink bg-ink text-card shadow-none ring-2 ring-pool/70"
                       : "bg-card hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/25 hover:shadow-lift"
@@ -944,23 +1000,90 @@ export function VibeGridGame({
               );
             })}
           </div>
+
+          {/* Pinned to the bottom of the viewport on phones. Unpinned, Submit sits
+              below four rows of tiles, so every guess costs a scroll down to submit
+              and a scroll back up to pick. It settles into place at the board's end. */}
+          {!isOver && (
+            <section
+              className="sticky bottom-2 z-20 mt-3 grid gap-1.5 rounded-lg border border-line bg-card/95 p-2.5 shadow-lift backdrop-blur lg:hidden"
+              aria-label="Guess controls"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="whitespace-nowrap text-sm font-extrabold">
+                  Selected {attempt.selectedTileIds.length}/4
+                  <span className="ml-2 text-xs font-semibold text-neutral-500">
+                    · {attempt.mistakes}/{puzzle.mistakesAllowed} misses
+                  </span>
+                </p>
+                <button
+                  aria-label="Shuffle tiles"
+                  title="Shuffle tiles"
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 text-xs font-semibold shadow-tile disabled:opacity-50"
+                  disabled={remainingTiles.length < 2}
+                  type="button"
+                  onClick={shuffleRemaining}
+                >
+                  <Shuffle aria-hidden size={15} />
+                  Shuffle
+                </button>
+              </div>
+
+              <div className="grid min-h-10 grid-cols-4 gap-1.5" aria-label="Selected tiles">
+                {Array.from({ length: 4 }).map((_, index) => {
+                  const tile = selectedTiles[index];
+                  return (
+                    <div
+                      key={tile?.id ?? `mobile-empty-${index}`}
+                      className={clsx(
+                        "flex min-h-10 items-center justify-center rounded-lg border px-1 text-center text-[0.65rem] font-semibold leading-tight",
+                        tile
+                          ? "border-ink bg-ink text-card"
+                          : "border-neutral-200 bg-neutral-50 text-neutral-400"
+                      )}
+                    >
+                      {tile?.text ?? "Pick tile"}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                className="vg-button-primary h-11 w-full"
+                type="button"
+                disabled={attempt.selectedTileIds.length !== 4 || isSubmitting}
+                onClick={submitGuess}
+              >
+                <Send aria-hidden size={18} />
+                {isSubmitting ? "Checking…" : "Submit guess"}
+              </button>
+              <p
+                className={clsx("text-sm font-semibold leading-snug", message ? "min-h-5" : "sr-only")}
+                aria-live="polite"
+              >
+                {message}
+              </p>
+            </section>
+          )}
         </div>
       </main>
 
       <aside className="vg-control-rail flex flex-col justify-between gap-4 lg:sticky lg:top-5 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-auto">
         <div>
           {!isOver && (
-            <div>
+            <div className="hidden lg:block">
               <p className="text-sm font-semibold text-neutral-500">Mode</p>
               <div className="vg-mode-track mt-2">
                 {modeOptions.map((option) => (
                   <button
                     key={option.value}
-                    type="button"
-                    onClick={() => setMode(option.value)}
-                    aria-pressed={mode === option.value}
-                    className={clsx(
-                      "vg-mode-tab",
+                  type="button"
+                  onClick={() => setMode(option.value)}
+                  disabled={modeLocked || isSubmitting}
+                  aria-pressed={mode === option.value}
+                  title={modeLocked ? "Mode is locked for this attempt" : undefined}
+                  className={clsx(
+                      "vg-mode-tab disabled:cursor-not-allowed disabled:opacity-70",
                       mode === option.value ? "bg-card text-ink" : "bg-ink text-card/75 hover:bg-card/[.12]"
                     )}
                   >
@@ -975,7 +1098,7 @@ export function VibeGridGame({
           )}
 
           {!isOver && (
-            <div className="vg-rule mt-4 pt-4">
+            <div className="vg-rule mt-4 hidden pt-4 lg:block">
               <p className="text-sm font-semibold text-neutral-500">Selection tray</p>
               <div className="mt-2 grid min-h-24 grid-cols-2 gap-1.5">
                 {Array.from({ length: 4 }).map((_, index) => {
@@ -1026,7 +1149,7 @@ export function VibeGridGame({
             </div>
           )}
 
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 hidden grid-cols-2 gap-3 lg:grid">
             <div className="vg-stat-cell">
               <p className="text-xs font-semibold text-neutral-500">Selected</p>
               <p className="mt-1 text-2xl font-extrabold">{attempt.selectedTileIds.length}/4</p>
@@ -1039,7 +1162,7 @@ export function VibeGridGame({
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-4 gap-2" aria-label="Mistake counter">
+          <div className="mt-4 hidden grid-cols-4 gap-2 lg:grid" aria-label="Mistake counter">
             {Array.from({ length: puzzle.mistakesAllowed }).map((_, index) => (
               <div
                 key={index}
@@ -1051,7 +1174,7 @@ export function VibeGridGame({
             ))}
           </div>
 
-          <p className="mt-5 min-h-12 text-lg font-extrabold leading-snug">{message}</p>
+          <p className="mt-5 hidden min-h-12 text-lg font-extrabold leading-snug lg:block">{message}</p>
 
           {syncState === "error" && (
             <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-tomato/60 bg-tomato/10 px-3 py-2 text-sm font-semibold">
@@ -1114,9 +1237,20 @@ export function VibeGridGame({
         </div>
 
         <div className="grid gap-2">
+          {!isOver && (
+            <button
+              className="vg-button-secondary hidden h-10 lg:inline-flex"
+              type="button"
+              disabled={remainingTiles.length < 2}
+              onClick={shuffleRemaining}
+            >
+              <Shuffle aria-hidden size={16} />
+              Shuffle tiles
+            </button>
+          )}
           {!isOver ? (
             <button
-              className="vg-button-primary h-12"
+              className="vg-button-primary hidden h-12 lg:inline-flex"
               type="button"
               disabled={attempt.selectedTileIds.length !== 4 || isSubmitting}
               onClick={submitGuess}
@@ -1188,6 +1322,11 @@ export function VibeGridGame({
                   className="vg-input h-10 text-sm font-medium"
                 />
               </label>
+              <TurnstileWidget
+                action="report_create"
+                onTokenChange={setReportTurnstileToken}
+                resetSignal={reportTurnstileReset}
+              />
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setReportOpen(false)} className="vg-button-secondary h-10">
                   <X aria-hidden size={15} />
@@ -1232,6 +1371,7 @@ function mergeServerAttempt(current: StoredAttempt, serverAttempt: AttemptSnapsh
   return {
     ...current,
     puzzleId: serverAttempt.puzzleId,
+    mode: serverAttempt.mode ?? current.mode,
     selectedTileIds:
       completed || failed
         ? []

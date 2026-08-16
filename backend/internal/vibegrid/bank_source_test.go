@@ -11,7 +11,7 @@ import (
 )
 
 func TestBankFillsDailyWhenNothingScheduled(t *testing.T) {
-	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank())
+	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank(), nil)
 
 	const future = "2026-07-01" // well past the seeded range (ends 2026-06-10)
 	daily, err := source.TodaysPuzzle(context.Background(), future)
@@ -33,7 +33,7 @@ func TestBankFillsDailyWhenNothingScheduled(t *testing.T) {
 }
 
 func TestScheduledPuzzleWinsOverBank(t *testing.T) {
-	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank())
+	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank(), nil)
 
 	daily, err := source.TodaysPuzzle(context.Background(), "2026-06-02")
 	if err != nil {
@@ -45,7 +45,7 @@ func TestScheduledPuzzleWinsOverBank(t *testing.T) {
 }
 
 func TestBankDailyResolvableByID(t *testing.T) {
-	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank())
+	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank(), nil)
 
 	const date = "2026-08-15"
 	byID, err := source.PuzzleByID(context.Background(), "vibegrid-"+date)
@@ -74,7 +74,7 @@ func TestBankDailyNumberContinuesFromSeeds(t *testing.T) {
 		t.Fatalf("first bank day number = %d, want 10", got)
 	}
 
-	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank())
+	source := NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank(), nil)
 	daily, err := source.TodaysPuzzle(context.Background(), "2026-06-11")
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestBankDailyNumberContinuesFromSeeds(t *testing.T) {
 }
 
 func TestBankGenerationIsDeterministicAndFreshForAYear(t *testing.T) {
-	source := NewBankPuzzleSource(StaticPuzzleSource(nil), PuzzleBank()) // empty inner ⇒ always bank
+	source := NewBankPuzzleSource(StaticPuzzleSource(nil), PuzzleBank(), nil) // empty inner ⇒ always bank
 
 	a, err := source.TodaysPuzzle(context.Background(), "2026-09-01")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestBankGenerationIsDeterministicAndFreshForAYear(t *testing.T) {
 
 func TestDailyEndpointNeverEmptyWithBank(t *testing.T) {
 	handler := NewServer(ServerConfig{
-		Puzzles:  NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank()),
+		Puzzles:  NewBankPuzzleSource(StaticPuzzleSource(SeedPuzzles()), PuzzleBank(), nil),
 		Store:    NewMemoryAttemptStore(),
 		Clock:    func() time.Time { return time.Date(2026, 12, 25, 12, 0, 0, 0, time.UTC) },
 		TimeZone: "UTC",

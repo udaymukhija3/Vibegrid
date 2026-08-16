@@ -161,7 +161,7 @@ func newStatsTest(t *testing.T) (*PostgresAttemptStore, *PostgresStatsStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate idempotency_keys, rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	if err := NewPostgresPuzzleStore(database).Seed(context.Background(), SeedPuzzles()); err != nil {
@@ -175,6 +175,7 @@ func guess(clientGuessID string, tileIDs ...string) GuessRequest {
 		PuzzleID:        "vibegrid-2026-06-02",
 		ClientGuessID:   clientGuessID,
 		SelectedTileIDs: tileIDs,
+		Mode:            AttemptModeMedium,
 	}
 }
 
@@ -206,8 +207,10 @@ func TestPuzzleStatsAggregates(t *testing.T) {
 		}
 	}
 
-	// session-3: one wrong guess, identical to session-2's first -> shared grouping.
-	if _, err := attempts.SubmitGuess(ctx, puzzle, "session-3", guess("solo", wrong...), fixedClock()); err != nil {
+	// session-3: the same set in a different selection order must still aggregate
+	// with session-2's first wrong guess.
+	shuffledWrong := []string{wrong[3], wrong[1], wrong[0], wrong[2]}
+	if _, err := attempts.SubmitGuess(ctx, puzzle, "session-3", guess("solo", shuffledWrong...), fixedClock()); err != nil {
 		t.Fatalf("session-3 guess: %v", err)
 	}
 
@@ -236,5 +239,19 @@ func TestPuzzleStatsAggregates(t *testing.T) {
 	// should be the most common, with a count of 2.
 	if groupings[0].Count != 2 {
 		t.Fatalf("expected top wrong grouping count 2, got %d", groupings[0].Count)
+	}
+}
+
+func TestCanonicalTileSetSortsWithoutMutatingInput(t *testing.T) {
+	input := []string{"tile-d", "tile-b", "tile-a", "tile-c"}
+	canonical := canonicalTileSet(input)
+	want := []string{"tile-a", "tile-b", "tile-c", "tile-d"}
+	for index := range want {
+		if canonical[index] != want[index] {
+			t.Fatalf("canonical set = %v, want %v", canonical, want)
+		}
+	}
+	if input[0] != "tile-d" {
+		t.Fatalf("canonicalization mutated caller input: %v", input)
 	}
 }

@@ -58,10 +58,11 @@ type cachedPuzzleStore struct {
 }
 
 type cachedPuzzleEntry struct {
-	puzzle    Puzzle
-	notFound  bool
-	expiresAt time.Time
-	cachedAt  time.Time
+	puzzle     Puzzle
+	notFound   bool
+	expiresAt  time.Time
+	cachedAt   time.Time
+	generation uint64
 }
 
 // NewCachedPuzzleStore wraps a puzzle backend with a per-id content cache.
@@ -86,6 +87,10 @@ func (store *cachedPuzzleStore) PuzzleByID(ctx context.Context, puzzleID string)
 		return puzzle, err
 	}
 
+	store.mu.Lock()
+	gen := store.byID[puzzleID].generation
+	store.mu.Unlock()
+
 	result := store.flights.DoChan(puzzleID, func() (any, error) {
 		if puzzle, err, ok := store.getCached(puzzleID); ok {
 			store.hits.Add(1)
@@ -95,15 +100,11 @@ func (store *cachedPuzzleStore) PuzzleByID(ctx context.Context, puzzleID string)
 		puzzle, err := store.inner.PuzzleByID(ctx, puzzleID)
 		if err != nil {
 			if errors.Is(err, ErrPuzzleNotFound) {
-				// Short, bounded negative caching prevents a random-id flood from
-				// becoming an unbounded sequence of database cache misses. Newly
-				// created puzzles use server-generated IDs, so they cannot collide
-				// with an attacker-controlled negative key.
-				store.setNotFound(puzzleID)
+				store.setNotFound(puzzleID, gen)
 			}
 			return Puzzle{}, err
 		}
-		store.setCached(puzzleID, puzzle)
+		store.setCached(puzzleID, puzzle, gen)
 		return puzzle, nil
 	})
 
@@ -143,8 +144,20 @@ func (store *cachedPuzzleStore) CreateDraft(ctx context.Context, input AdminPuzz
 	return store.inner.CreateDraft(ctx, input)
 }
 
-func (store *cachedPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (Puzzle, error) {
-	return store.inner.CreateCommunityPuzzle(ctx, input)
+func (store *cachedPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput, claimHash string) (Puzzle, error) {
+	return store.inner.CreateCommunityPuzzle(ctx, input, claimHash)
+}
+
+func (store *cachedPuzzleStore) CreatorStatus(ctx context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	return store.inner.CreatorStatus(ctx, puzzleID, claimHash)
+}
+
+func (store *cachedPuzzleStore) WithdrawCommunityPuzzle(ctx context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	status, err := store.inner.WithdrawCommunityPuzzle(ctx, puzzleID, claimHash)
+	if err == nil {
+		store.invalidate(puzzleID)
+	}
+	return status, err
 }
 
 func (store *cachedPuzzleStore) ApproveCommunity(ctx context.Context, puzzleID string) error {
@@ -182,6 +195,17 @@ func (store *cachedPuzzleStore) Reinstate(ctx context.Context, puzzleID string) 
 	return err
 }
 
+func (store *cachedPuzzleStore) PersistDaily(ctx context.Context, puzzle Puzzle) error {
+	// Persisting a daily doesn't invalidate existing caches because it was not in the db yet,
+	// but we can invalidate just in case TodaysPuzzle needs a refresh.
+	if err := store.inner.PersistDaily(ctx, puzzle); err != nil {
+		return err
+	}
+	// Note: We don't have a direct way to invalidate 'today' cache here, but
+	// the background cron ensures this happens proactively before midnight.
+	return nil
+}
+
 func (store *cachedPuzzleStore) getCached(puzzleID string) (Puzzle, error, bool) {
 	now := store.clock()
 
@@ -192,8 +216,8 @@ func (store *cachedPuzzleStore) getCached(puzzleID string) (Puzzle, error, bool)
 	if !ok {
 		return Puzzle{}, nil, false
 	}
-	if now.After(entry.expiresAt) {
-		delete(store.byID, puzzleID)
+	if entry.expiresAt.IsZero() || now.After(entry.expiresAt) {
+		// Do not delete here so we preserve the generation for in-flight reads
 		return Puzzle{}, nil, false
 	}
 	if entry.notFound {
@@ -202,7 +226,7 @@ func (store *cachedPuzzleStore) getCached(puzzleID string) (Puzzle, error, bool)
 	return entry.puzzle, nil, true
 }
 
-func (store *cachedPuzzleStore) setCached(puzzleID string, puzzle Puzzle) {
+func (store *cachedPuzzleStore) setCached(puzzleID string, puzzle Puzzle, gen uint64) {
 	now := store.clock()
 
 	store.mu.Lock()
@@ -210,32 +234,41 @@ func (store *cachedPuzzleStore) setCached(puzzleID string, puzzle Puzzle) {
 
 	if store.maxEntries <= 0 {
 		return
+	}
+	if store.byID[puzzleID].generation != gen {
+		return // stale write from an outdated flight
 	}
 	store.pruneExpiredLocked(now)
 	if _, exists := store.byID[puzzleID]; !exists && len(store.byID) >= store.maxEntries {
 		store.evictOldestLocked()
 	}
-	store.byID[puzzleID] = cachedPuzzleEntry{puzzle: puzzle, expiresAt: now.Add(store.ttl), cachedAt: now}
+	store.byID[puzzleID] = cachedPuzzleEntry{puzzle: puzzle, expiresAt: now.Add(store.ttl), cachedAt: now, generation: gen}
 }
 
-func (store *cachedPuzzleStore) setNotFound(puzzleID string) {
+func (store *cachedPuzzleStore) setNotFound(puzzleID string, gen uint64) {
 	now := store.clock()
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.maxEntries <= 0 {
 		return
+	}
+	if store.byID[puzzleID].generation != gen {
+		return // stale write from an outdated flight
 	}
 	store.pruneExpiredLocked(now)
 	if _, exists := store.byID[puzzleID]; !exists && len(store.byID) >= store.maxEntries {
 		store.evictOldestLocked()
 	}
 	// Negative entries are intentionally much shorter lived than puzzle content.
-	store.byID[puzzleID] = cachedPuzzleEntry{notFound: true, expiresAt: now.Add(30 * time.Second), cachedAt: now}
+	store.byID[puzzleID] = cachedPuzzleEntry{notFound: true, expiresAt: now.Add(30 * time.Second), cachedAt: now, generation: gen}
 }
 
 func (store *cachedPuzzleStore) invalidate(puzzleID string) {
 	store.mu.Lock()
-	delete(store.byID, puzzleID)
+	entry := store.byID[puzzleID]
+	// Leave an expired entry with an incremented generation to ensure in-flight
+	// reads for the old state cannot overwrite the cache upon completion.
+	store.byID[puzzleID] = cachedPuzzleEntry{generation: entry.generation + 1}
 	store.mu.Unlock()
 	// Drop any in-flight load so a guess that raced the write cannot repopulate
 	// the cache with the pre-write row.

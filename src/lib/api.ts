@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, apiFetch } from "@/lib/http";
+import { ApiError, apiFetch, idempotencyHeaders } from "@/lib/http";
 import type { DraftPuzzleInput, EasyHintResponse, PublicPuzzle, PuzzleTemplate, VibeHint } from "@/types/puzzle";
 
 // Runtime schemas for the public API surface. Validating responses at the
@@ -123,6 +123,12 @@ export async function fetchPuzzleTemplates(): Promise<PuzzleTemplate[]> {
   return payload.templates;
 }
 
+const publicConfigSchema = z.object({ turnstileSiteKey: z.string() });
+
+export async function fetchPublicConfig(): Promise<{ turnstileSiteKey: string }> {
+  return publicConfigSchema.parse(await getJSON("/api/public-config"));
+}
+
 const puzzleStatsSchema = z.object({
   players: z.number(),
   solveRate: z.number(),
@@ -153,7 +159,9 @@ const createdPuzzleSchema = z.object({
   ok: z.literal(true),
   id: z.string(),
   puzzleNumber: z.number(),
-  status: z.literal("PENDING")
+  status: z.literal("PENDING"),
+  claimSecret: z.string(),
+  claimPath: z.string()
 });
 
 const errorBodySchema = z.object({ error: z.string() });
@@ -161,11 +169,15 @@ const errorBodySchema = z.object({ error: z.string() });
 // createCommunityPuzzle posts a user-authored puzzle and surfaces the server's
 // validation message (e.g. duplicate tiles) so the create page can show why.
 export async function createCommunityPuzzle(
-  input: DraftPuzzleInput
-): Promise<{ id: string; puzzleNumber: number; status: "PENDING" }> {
+  input: DraftPuzzleInput,
+  turnstileToken: string
+): Promise<{ id: string; puzzleNumber: number; status: "PENDING"; claimSecret: string; claimPath: string }> {
   const response = await apiFetch("/api/community/puzzles", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: idempotencyHeaders({
+      "Content-Type": "application/json",
+      "X-VibeGrid-Turnstile": turnstileToken
+    }),
     body: JSON.stringify(input)
   });
 
@@ -177,7 +189,45 @@ export async function createCommunityPuzzle(
   }
 
   const created = createdPuzzleSchema.parse(payload);
-  return { id: created.id, puzzleNumber: created.puzzleNumber, status: created.status };
+  return created;
+}
+
+const creatorPuzzleStatusSchema = z.object({
+  id: z.string(),
+  puzzleNumber: z.number(),
+  status: z.enum(["DRAFT", "PENDING", "PUBLISHED", "ARCHIVED"]),
+  updatedAt: z.string(),
+  withdrawn: z.boolean(),
+  canWithdraw: z.boolean(),
+  canAppeal: z.boolean(),
+  playPath: z.string().optional()
+});
+
+export type CreatorPuzzleStatus = z.infer<typeof creatorPuzzleStatusSchema>;
+
+export async function fetchCreatorPuzzleStatus(id: string, claimSecret: string): Promise<CreatorPuzzleStatus> {
+  const response = await apiFetch(`/api/community/puzzles/${encodeURIComponent(id)}/claim`, {
+    headers: { "X-VibeGrid-Creator-Claim": claimSecret }
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+  return creatorPuzzleStatusSchema.parse(payload);
+}
+
+export async function withdrawCreatorPuzzle(id: string, claimSecret: string): Promise<CreatorPuzzleStatus> {
+  const response = await apiFetch(`/api/community/puzzles/${encodeURIComponent(id)}/withdraw`, {
+    method: "POST",
+    headers: idempotencyHeaders({ "X-VibeGrid-Creator-Claim": claimSecret })
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+  return creatorPuzzleStatusSchema.parse(payload);
 }
 
 const createdModerationSchema = z.object({
@@ -185,11 +235,14 @@ const createdModerationSchema = z.object({
   id: z.string()
 });
 
-async function postPublicMutation(url: string, input: unknown): Promise<{ id: string }> {
+async function postPublicMutation(url: string, input: unknown, turnstileToken: string): Promise<{ id: string }> {
   const response = await apiFetch(url, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: idempotencyHeaders({
+      "Content-Type": "application/json",
+      "X-VibeGrid-Turnstile": turnstileToken
+    }),
     body: JSON.stringify(input)
   });
   const payload: unknown = await response.json().catch(() => null);
@@ -208,14 +261,30 @@ export async function reportPuzzle(input: {
   reason: string;
   details: string;
   contact: string;
-}): Promise<{ id: string }> {
-  return postPublicMutation("/api/reports", input);
+}, turnstileToken: string): Promise<{ id: string }> {
+  return postPublicMutation("/api/reports", input, turnstileToken);
 }
 
 export async function appealPuzzle(input: {
   puzzleId: string;
   contact: string;
   message: string;
-}): Promise<{ id: string }> {
-  return postPublicMutation("/api/appeals", input);
+}, claimSecret: string, turnstileToken: string): Promise<{ id: string }> {
+  const response = await apiFetch("/api/appeals", {
+    method: "POST",
+    credentials: "include",
+    headers: idempotencyHeaders({
+      "Content-Type": "application/json",
+      "X-VibeGrid-Creator-Claim": claimSecret,
+      "X-VibeGrid-Turnstile": turnstileToken
+    }),
+    body: JSON.stringify(input)
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+  const created = createdModerationSchema.parse(payload);
+  return { id: created.id };
 }

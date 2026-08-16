@@ -144,6 +144,15 @@ type WrongGuessGrouping struct {
 	Count   int      `json:"count"`
 }
 
+// canonicalTileSet makes selection order irrelevant without mutating the
+// caller's slice. New wrong guesses are stored this way, and the analytics query
+// applies the same normalization to historical rows written before this rule.
+func canonicalTileSet(tileIDs []string) []string {
+	canonical := append([]string(nil), tileIDs...)
+	sort.Strings(canonical)
+	return canonical
+}
+
 // StatsStore exposes read-only analytics over attempts and guesses. Only the
 // Postgres implementation exists; without a database the server reports empty
 // stats rather than failing.
@@ -342,11 +351,18 @@ func (store *PostgresStatsStore) WrongGuessGroupings(ctx context.Context, puzzle
 	defer cancel()
 
 	rows, err := store.db.QueryContext(ctx,
-		`select g.selected_tile_ids, count(*) as n
-		 from attempt_guesses g
-		 join attempts a on a.id = g.attempt_id
-		 where a.puzzle_id = $1 and g.is_correct = false
-		 group by g.selected_tile_ids
+		`select normalized.selected_tile_ids, count(*) as n
+		 from (
+		   select array(
+		     select tile_id
+		     from unnest(g.selected_tile_ids) as tile_id
+		     order by tile_id
+		   ) as selected_tile_ids
+		   from attempt_guesses g
+		   join attempts a on a.id = g.attempt_id
+		   where a.puzzle_id = $1 and g.is_correct = false
+		 ) normalized
+		 group by normalized.selected_tile_ids
 		 order by n desc
 		 limit $2`,
 		puzzleID, limit,

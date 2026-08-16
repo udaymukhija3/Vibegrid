@@ -1,42 +1,92 @@
-# VibeGrid Recruiter Evidence
+# VibeGrid Recruiter Evidence Map
+
+**Updated:** August 1, 2026
+
+**Read with:** [`production-readiness.md`](production-readiness.md)
+
+This map shows where VibeGrid's strongest engineering claims are implemented,
+how they are verified, what the deployment currently proves, and which remaining
+gap prevents a stronger claim.
 
 ## Engineering thesis
 
-VibeGrid is strongest as a compact production web-app case: a daily semantic
-puzzle that keeps the browser untrusted, persists anonymous play safely when
-Postgres is enabled, accepts community content only through review, and deploys
-as one same-origin Go service with measurable health, readiness, and runtime
-signals. The project should prove product engineering depth through the smallest
-set of real constraints that matter for this app: game authority, durable
-attempt correctness, moderated publishing, deployability, and operations.
+VibeGrid demonstrates that a small consumer puzzle can require serious backend
+correctness: server-authoritative guesses, retry-safe attempts, secure guest and
+admin boundaries, durable content and moderation workflows, and a compact
+single-binary deployment. Its strongest evidence is in game-state correctness,
+admin session security, Postgres-backed workflows, and the Go/static-Next runtime.
+Its weakest evidence is recovery, canonical daily persistence, release
+governance, external observability, and full-browser production-path testing.
 
-## Primary capabilities
+## Evidence matrix
 
 | Capability | Why product needs it | Existing code evidence | Verification evidence | Deployment/ops evidence | Status | Next action |
-|---|---|---|---|---|---|---|
-| Server-authoritative puzzle play without answer-key leakage | A player can inspect network payloads; the app is only credible if the browser cannot derive tile-to-group answers before guessing. | `backend/internal/vibegrid/puzzles.go` exposes `PublicPuzzle` with tile ids/text only; `backend/internal/vibegrid/server.go` routes guesses through `EvaluateGuess`; `src/lib/api.ts` validates the public contract with Zod. | `backend/internal/vibegrid/hardening_test.go` checks public tile order is a stable permutation, not group-blocked; `scripts/smoke.mjs` now asserts public puzzle payloads expose no groups/answers/extra tile keys. | Same-origin Go binary serves static UI and `/api/*`, so the server remains the authority in the deployed topology. | PROVEN | Keep the smoke assertion in every deploy verification run. |
-| Durable, idempotent anonymous attempts | Refreshes, retries, double-clicks, and two tabs must not corrupt guesses, mistake counts, or the spoiler-safe share grid. | `backend/internal/vibegrid/postgres_store.go` validates before allocation, locks attempt rows in a transaction, and uses `(attempt_id, client_guess_id)` uniqueness for replay safety. | `backend/internal/vibegrid/postgres_store_test.go` covers duplicate replay, concurrent duplicate races, distinct concurrent guesses, terminal failure, and fresh guess-history hydration; `scripts/smoke.mjs` now replays the same deployed guess and verifies counts/history do not advance. | `backend/db/migrations/00001_attempts.sql` defines attempt/guess uniqueness; `/metrics` exposes store operation latency/counters. | PROVEN | Run `TEST_DATABASE_URL=... go test -race ./backend/...` before claiming durable Postgres proof in a new environment. |
-| Reviewed community creation and admin publishing/moderation | Public UGC must not become instantly playable or visible without review; admins need a real workflow to approve, archive, reinstate, and audit. | `backend/internal/vibegrid/community.go`, `admin.go`, `moderation_handlers.go`, and `postgres_puzzles.go` persist submissions as `PENDING`, separate public play from preview, and record moderation actions. | `backend/internal/vibegrid/community_test.go` proves pending submissions are hidden until approval; `backend/internal/vibegrid/admin_test.go` covers create/publish/archive and report/appeal/reinstate flow. | `README.md`, `/policy`, `/terms`, `/privacy`, and the deploy smoke `--create-community` path describe and exercise the review contract. | PROVEN | Production verification still needs one real create -> approve -> report -> reinstate pass against the live database. |
-| Single-container deploy with production guardrails | The portfolio app needs a credible public URL without split-origin cookie/CORS complexity. | `Dockerfile`, `backend/internal/frontend`, and `backend/cmd/vibegrid/main.go` build one Go binary with embedded Next export and enforce production env requirements. | `scripts/e2e.mjs` builds the Next export, embeds it, builds the Go binary, starts it, and runs smoke against the real serving path. | `fly.toml`, `render.yaml`, `docs/deployment.md`, `/healthz`, `/readyz`, and `vibegrid migrate` define the deploy topology and migration ordering. | CREDIBLE_BUT_THIN | Permanent host, managed Postgres, backups/PITR, restore drill, and external uptime/logging are still manual. |
-| Concrete security boundaries for a small public app | Anonymous writes, admin cookies, metrics, SQL access, and proxy headers are the highest-risk surfaces in this product. | `backend/internal/vibegrid/security.go`, `admin_auth.go`, `admin_sessions.go`, `rate_limits.go`, and `server.go` implement body caps, JSON content-type checks, trusted proxy CIDRs, CSRF for cookie admin mutations, opaque revocable admin sessions, and bearer-protected metrics. | `backend/internal/vibegrid/hardening_test.go`, `community_test.go`, `runtime_metrics_test.go`, and `scripts/security-contract.mjs` cover CSRF, logout revocation, public write limiter fail-closed behavior, proxy-header trust, metrics auth, oversized/non-JSON bodies, dynamic SQL builder drift, and broad proxy defaults. | Production startup fails without secure cookies, metrics token, exact HTTPS public URL, database requirement, and safe CORS/proxy settings; CI runs `npm run test:security`. | PROVEN | Keep dependency scanning and branch protections enabled in GitHub/provider settings. |
-| Operational visibility without observability theater | A reviewer/operator should be able to answer whether the app is alive, ready, slow, failing, or saturating a bounded resource. | `backend/internal/vibegrid/metrics.go`, `observed_stores.go`, request logging middleware, DB pool stats, puzzle cache stats, and bounded route labels. | `backend/internal/vibegrid/runtime_metrics_test.go` verifies runtime gauges and route-label cardinality; `scripts/smoke.mjs` verifies protected metric families when a token is supplied. | `monitoring/prometheus.yml`, `monitoring/alert-rules.yml`, `monitoring/grafana-dashboard.json`, and `docs/observability.md` define the first operational view. | CREDIBLE_BUT_THIN | Wire a real scrape target, log drain, and alert route after the permanent host exists. |
+| --- | --- | --- | --- | --- | --- | --- |
+| Server-authoritative guessing | Prevent answer leakage and client cheating | `server.go`, attempt stores, response schemas | Go tests, security smoke, idempotent guess replay | Live API serves spoiler-safe contracts | **PROVEN** | Add real-browser recovery and load tests |
+| Retry-safe attempt state | Networks retry and responses can be lost | Client guess IDs, transactional Postgres guess path | Unit/integration replay and race tests | Durable path exists on managed Postgres | **PROVEN** | Apply idempotency pattern to other mutations |
+| Canonical daily lifecycle | Archive, streaks, links, stats, and numbering require one durable identity | `bank_source.go`, puzzle stores, stats | Deterministic-board tests only | Live archive omits fallback days | **MISSING** | Persist every published daily and constrain date/number |
+| Durable Postgres model | Attempts, admin, moderation, and stats must survive restarts | Embedded migrations, stores, indexes, cleanup | CI runs real-Postgres tests; local tests may skip | Managed DB is connected | **CREDIBLE_BUT_THIN** | Add constraints, restore proof, and production-path E2E |
+| Secure guest boundary | Public play must not require identity or expose answers | Guest cookie/session path, body caps, rate limits | Security contract and HTTP tests | Same-origin Go deployment reduces cookie/CORS complexity | **PROVEN** | Verify proxy-derived client identity and load behavior |
+| Secure admin browser session | Moderation and publishing are privileged | Opaque hash-only sessions, CSRF, revocation, secure cookies | Auth/CSRF/security tests | Production secrets are provider-managed | **CREDIBLE_BUT_THIN** | Add named MFA identity before multiple operators |
+| UGC moderation lifecycle | Anonymous creation requires review and takedown | Pending creation, approval, reports, appeals, audit log | Store/handler tests | Admin desk is deployed | **PARTIAL** | Make transitions atomic; add creator claim and bot protection |
+| Cache correctness | Public reads need low latency without stale takedowns | Bounded cache, negative TTL, singleflight | Cache tests | In-process cache active | **PARTIAL** | Add generation-safe invalidation and deterministic race test |
+| Abuse controls | Public writes and identifiers can be attacked | Body caps, validation, blocklist, DB/in-memory limits | Hardening/security tests | Distributed limiter available with Postgres | **PARTIAL** | Turnstile; remove DB writes from read hot path |
+| Runtime bounds | Small service must avoid leaks and unbounded resource use | HTTP/DB timeouts, pool bounds, graceful shutdown, bounded cache | Go tests/race/vet | `/healthz`, `/readyz`, protected metrics | **CREDIBLE_BUT_THIN** | Load test; add pool/cache/limiter signals |
+| Static single-binary deploy | Simple topology reduces operational surface | Dockerfile, embedded static export, Go entry point | Build and HTTP E2E smoke | Public Render service exists | **PROVEN** | Replace free/demo posture before production claims |
+| Release safety | Production changes must be gated and reversible | CI and deploy workflow files | Main CI has passed | Direct Render auto-deploy remains enabled | **MISSING** | Protect main, require CI, deploy hook, rollback drill |
+| Data recovery | User and moderation data must survive loss | Encrypted backup workflow and restore runbook scaffold | Workflow syntax/runs only | Inspected green run skipped backup | **MISSING** | Configure backup/PITR, heartbeat, restore drill |
+| Observability | Operator must detect failure and latency | Structured logs, metrics, health/readiness, alert templates | Endpoint/security tests | No verified external alert routing | **PARTIAL** | External monitor, Sentry, backup heartbeat, tested notification |
+| Frontend resilience | Players need usable loading/error/recovery behavior | Runtime Zod schemas, local attempt reconciliation, responsive UI | Small Vitest suite and HTTP smoke | Live desktop/mobile flow observed | **CREDIBLE_BUT_THIN** | Playwright, axe, mobile CTA improvement |
+| Product analytics | Team must distinguish use from code completeness | Puzzle outcome stats | Stats tests | No external product funnel | **MISSING** | Privacy-reviewed event taxonomy and funnel dashboard |
+| Editorial puzzle quality | Trust depends on one fair semantic solution | Curated group bank and preview UI | Structural validation only | Fallback guarantees availability, not fairness | **PARTIAL** | Persist candidate, manual board review, ambiguity checklist |
 
-## Why this is more than a CRUD tutorial
+## Verification ladder
 
-The central state transition is not a generic create/update/delete form: a guess
-must be validated against hidden server-only puzzle structure, serialized with
-other guesses for the same anonymous attempt, deduplicated by client guess id,
-and reflected back to any browser tab through a durable ordered guess history.
-The repo also covers a full content lifecycle around that loop: community draft
-creation, admin review, public play gates, reports, appeals, audit logs,
-release-time migrations, runtime probes, protected metrics, and deploy smoke
-that exercises the same binary shape intended for production.
+Run the following before merging significant launch work:
 
-## Evidence gaps not worth solving with extra architecture
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run test:security
+go test ./backend/...
+go vet ./backend/...
+go test -race ./backend/...
+npm run build
+git diff --check
+```
 
-- Do not add Kubernetes, Redis, queues, or microservices for appearance. The
-  current single-container shape is the right scale for the product.
-- Do not add accounts/OAuth before there is a real product need for cross-device
-  identity; guest sessions match the v1 daily puzzle contract.
-- Do not claim production traffic, uptime, backups, or alerting until a real
-  host and provider settings are verified.
+Also run with the required environment and infrastructure:
+
+```bash
+TEST_DATABASE_URL="postgres://..." go test -race ./backend/...
+npm run test:e2e
+npm audit --omit=dev --audit-level=high
+govulncheck ./backend/...
+```
+
+The passing command is only as strong as the path it exercises. Record when a
+database test skipped, a network audit could not run, or an E2E test used the
+in-memory store.
+
+## Deployment status
+
+**Status: BLOCKED for broad production; READY_WITH_MANUAL_STEPS for a controlled beta.**
+
+Exact blockers:
+
+1. Backup and restore are not proven.
+2. Fallback dailies are not canonical persisted puzzles.
+3. Production deployment is not forced through protected CI.
+4. Current dependency findings require upgrades.
+5. External monitoring and alert delivery are not verified.
+
+## Highest-value proof to add
+
+1. Restore drill record with measured recovery time.
+2. Real-Postgres test proving persisted daily → play → archive → streak.
+3. Concurrent moderation/takedown test proving no stale cache visibility.
+4. Duplicate/retry tests for create, report, and appeal.
+5. Playwright flow for player, creator, and moderator journeys.
+6. Production-shaped load test with DB pool, cache, limiter, and latency output.
+7. Post-deploy smoke and rollback evidence tied to a release SHA.

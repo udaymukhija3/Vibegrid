@@ -6,16 +6,82 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type fakeCommunityStore struct{}
 
-func (fakeCommunityStore) CreateCommunityPuzzle(_ context.Context, input AdminPuzzleInput) (Puzzle, error) {
+func (fakeCommunityStore) CreateCommunityPuzzle(_ context.Context, input AdminPuzzleInput, _ string) (Puzzle, error) {
 	puzzle := input.toPuzzle(999)
 	puzzle.Status = PuzzleStatusPending
 	puzzle.Origin = OriginCommunity
 	return puzzle, nil
+}
+
+func (fakeCommunityStore) CreatorStatus(context.Context, string, string) (CreatorPuzzleStatus, error) {
+	return CreatorPuzzleStatus{}, ErrCreatorClaimInvalid
+}
+
+func (fakeCommunityStore) WithdrawCommunityPuzzle(context.Context, string, string) (CreatorPuzzleStatus, error) {
+	return CreatorPuzzleStatus{}, ErrCreatorClaimInvalid
+}
+
+type claimCommunityStore struct {
+	mu        sync.Mutex
+	puzzle    Puzzle
+	claimHash string
+	updatedAt time.Time
+	withdrawn bool
+}
+
+func (store *claimCommunityStore) CreateCommunityPuzzle(_ context.Context, input AdminPuzzleInput, claimHash string) (Puzzle, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.puzzle = input.toPuzzle(777)
+	store.puzzle.Status = PuzzleStatusPending
+	store.puzzle.Origin = OriginCommunity
+	store.claimHash = claimHash
+	store.updatedAt = fixedClock()
+	return store.puzzle, nil
+}
+
+func (store *claimCommunityStore) CreatorStatus(_ context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.puzzle.ID != puzzleID || store.claimHash != claimHash {
+		return CreatorPuzzleStatus{}, ErrCreatorClaimInvalid
+	}
+	return store.statusLocked(), nil
+}
+
+func (store *claimCommunityStore) WithdrawCommunityPuzzle(_ context.Context, puzzleID, claimHash string) (CreatorPuzzleStatus, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.puzzle.ID != puzzleID || store.claimHash != claimHash {
+		return CreatorPuzzleStatus{}, ErrCreatorClaimInvalid
+	}
+	if store.withdrawn {
+		return store.statusLocked(), nil
+	}
+	if store.puzzle.Status != PuzzleStatusPending {
+		return CreatorPuzzleStatus{}, ErrCreatorWithdrawalUnavailable
+	}
+	store.puzzle.Status = PuzzleStatusArchived
+	store.withdrawn = true
+	store.updatedAt = fixedClock().Add(time.Minute)
+	return store.statusLocked(), nil
+}
+
+func (store *claimCommunityStore) statusLocked() CreatorPuzzleStatus {
+	return CreatorPuzzleStatus{
+		ID:           store.puzzle.ID,
+		PuzzleNumber: store.puzzle.PuzzleNumber,
+		Status:       store.puzzle.Status,
+		UpdatedAt:    store.updatedAt,
+		Withdrawn:    store.withdrawn,
+	}
 }
 
 func TestCommunityCreateNeedsNoToken(t *testing.T) {
@@ -25,6 +91,53 @@ func TestCommunityCreateNeedsNoToken(t *testing.T) {
 	response := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("expected 202 for community create without token, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreatorClaimStatusAndWithdrawalLifecycle(t *testing.T) {
+	community := &claimCommunityStore{}
+	handler := NewServer(ServerConfig{
+		Puzzles:     StaticPuzzleSource(SeedPuzzles()),
+		Community:   community,
+		Idempotency: newMemoryIdempotencyStore(),
+		Clock:       fixedClock,
+	})
+
+	created := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("create failed: %d %s", created.Code, created.Body.String())
+	}
+	var creation createdPuzzleResponse
+	if err := json.NewDecoder(created.Body).Decode(&creation); err != nil {
+		t.Fatal(err)
+	}
+	if !validCreatorClaimSecret(creation.ClaimSecret) || creation.ClaimPath != "/claim?id="+creation.ID {
+		t.Fatalf("invalid creator claim response: %#v", creation)
+	}
+	community.mu.Lock()
+	storedHash := community.claimHash
+	community.mu.Unlock()
+	if storedHash == creation.ClaimSecret || storedHash != hashCreatorClaimSecret(creation.ClaimSecret) {
+		t.Fatal("creator store did not retain only the claim hash")
+	}
+
+	wrong := creatorRequest(t, handler, http.MethodGet, "/api/community/puzzles/"+creation.ID+"/claim", newCreatorClaimSecret(), nil)
+	if wrong.Code != http.StatusNotFound {
+		t.Fatalf("wrong claim should be indistinguishable from missing, got %d", wrong.Code)
+	}
+
+	status := creatorRequest(t, handler, http.MethodGet, "/api/community/puzzles/"+creation.ID+"/claim", creation.ClaimSecret, nil)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"canWithdraw":true`) {
+		t.Fatalf("pending claim status failed: %d %s", status.Code, status.Body.String())
+	}
+
+	withdrawn := creatorRequest(t, handler, http.MethodPost, "/api/community/puzzles/"+creation.ID+"/withdraw", creation.ClaimSecret, nil)
+	if withdrawn.Code != http.StatusOK || !strings.Contains(withdrawn.Body.String(), `"withdrawn":true`) {
+		t.Fatalf("withdraw failed: %d %s", withdrawn.Code, withdrawn.Body.String())
+	}
+	replayed := creatorRequest(t, handler, http.MethodPost, "/api/community/puzzles/"+creation.ID+"/withdraw", creation.ClaimSecret, nil)
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("withdrawal should be naturally idempotent, got %d %s", replayed.Code, replayed.Body.String())
 	}
 }
 
@@ -144,6 +257,60 @@ func TestCommunityPuzzleRequiresApprovalBeforeItIsPlayable(t *testing.T) {
 		if puzzle.ID == body.ID {
 			t.Fatalf("community puzzle %s must not appear in the daily/archive list", body.ID)
 		}
+	}
+}
+
+func TestPostgresConcurrentCommunityCreateIsIdempotent(t *testing.T) {
+	handler, puzzleStore := newAdminTestServer(t)
+	payload, err := json.Marshal(validPuzzleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionResponse := adminRequest(t, handler, http.MethodGet, "/api/session", "", nil)
+	sessionCookie := responseCookie(sessionResponse, sessionCookieName)
+	if sessionCookie == nil {
+		t.Fatal("session endpoint did not set guest cookie")
+	}
+
+	const requestCount = 8
+	responses := make(chan *httptest.ResponseRecorder, requestCount)
+	var wait sync.WaitGroup
+	for index := 0; index < requestCount; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- postIdempotentJSON(handler, "/api/community/puzzles", payload, "concurrent-community-create", sessionCookie)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+
+	var originalBody string
+	for response := range responses {
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("concurrent create failed: %d %s", response.Code, response.Body.String())
+		}
+		if originalBody == "" {
+			originalBody = response.Body.String()
+		} else if response.Body.String() != originalBody {
+			t.Fatalf("concurrent replay returned a different response:\nfirst: %s\ngot: %s", originalBody, response.Body.String())
+		}
+	}
+
+	var puzzlesCreated int
+	if err := puzzleStore.db.QueryRow(`select count(*) from puzzles where origin = 'COMMUNITY'`).Scan(&puzzlesCreated); err != nil {
+		t.Fatal(err)
+	}
+	if puzzlesCreated != 1 {
+		t.Fatalf("expected one durable community puzzle, got %d", puzzlesCreated)
+	}
+	var keysStored int
+	if err := puzzleStore.db.QueryRow(`select count(*) from idempotency_keys`).Scan(&keysStored); err != nil {
+		t.Fatal(err)
+	}
+	if keysStored != 1 {
+		t.Fatalf("expected one idempotency record, got %d", keysStored)
 	}
 }
 

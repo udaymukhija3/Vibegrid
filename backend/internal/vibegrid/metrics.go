@@ -1,6 +1,7 @@
 package vibegrid
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -109,9 +110,9 @@ func (metrics *httpMetrics) observeOperation(component, operation string, status
 	}
 }
 
-func (server *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+func (server *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	server.metrics.writePrometheus(w)
-	server.writeRuntimeGauges(w)
+	server.writeRuntimeGauges(w, r.Context())
 	writeProcessGauges(w)
 }
 
@@ -119,7 +120,7 @@ func (server *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 // make the latency/scale machinery observable: pool saturation (wait count and
 // wait time are the classic exhaustion signals) and cache hit rate. Both sources
 // are optional, so this is a no-op without a database.
-func (server *Server) writeRuntimeGauges(w http.ResponseWriter) {
+func (server *Server) writeRuntimeGauges(w http.ResponseWriter, ctx context.Context) {
 	if server.dbStats != nil {
 		stats := server.dbStats()
 		writeGauge(w, "vibegrid_db_open_connections", "Open Postgres connections (in use plus idle).", float64(stats.OpenConnections))
@@ -134,6 +135,15 @@ func (server *Server) writeRuntimeGauges(w http.ResponseWriter) {
 		writeCounter(w, "vibegrid_puzzle_cache_misses_total", "Puzzle content cache misses.", float64(cache.Misses))
 		writeCounter(w, "vibegrid_puzzle_cache_evictions_total", "Puzzle content cache evictions.", float64(cache.Evictions))
 		writeGauge(w, "vibegrid_puzzle_cache_entries", "Puzzles currently held in the content cache.", float64(cache.Entries))
+	}
+	if server.outboxStats != nil {
+		statsCtx, cancel := context.WithTimeout(ctx, time.Second)
+		stats := server.outboxStats(statsCtx)
+		cancel()
+		writeGauge(w, "vibegrid_notification_outbox_pending", "New notification events waiting for delivery.", float64(stats.Pending))
+		writeGauge(w, "vibegrid_notification_outbox_retrying", "Notification events waiting after a failed delivery.", float64(stats.Retrying))
+		writeGauge(w, "vibegrid_notification_outbox_dead", "Notification events that exhausted delivery attempts.", float64(stats.Dead))
+		writeGauge(w, "vibegrid_notification_outbox_oldest_pending_seconds", "Age of the oldest undelivered notification event.", stats.OldestPendingSeconds)
 	}
 }
 
@@ -398,7 +408,7 @@ func routeMetricLabel(r *http.Request) string {
 // paths and unknown HTTP methods.
 func knownRouteMetricLabel(route string) string {
 	switch route {
-	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/puzzles", "/api/puzzle-templates", "/api/session", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/reports", "/api/appeals", "/api/client-errors", "/api/admin/session", "/api/admin/queue-health", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
+	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/puzzles", "/api/puzzle-templates", "/api/public-config", "/api/session", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/reports", "/api/appeals", "/api/client-errors", "/api/admin/session", "/api/admin/queue-health", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
 		return route
 	}
 	if strings.HasPrefix(route, "/api/attempts/") {
@@ -417,6 +427,14 @@ func knownRouteMetricLabel(route string) string {
 			return "/api/puzzles/{id}/easy-hint"
 		default:
 			return "/api/puzzles/{id}"
+		}
+	}
+	if strings.HasPrefix(route, "/api/community/puzzles/") {
+		switch {
+		case strings.HasSuffix(route, "/claim"):
+			return "/api/community/puzzles/{id}/claim"
+		case strings.HasSuffix(route, "/withdraw"):
+			return "/api/community/puzzles/{id}/withdraw"
 		}
 	}
 	if strings.HasPrefix(route, "/api/admin/puzzles/") {

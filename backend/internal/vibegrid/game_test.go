@@ -371,6 +371,9 @@ func TestCORSAllowsExplicitAndDevOrigins(t *testing.T) {
 			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != test.origin {
 				t.Fatalf("expected origin %q, got %q", test.origin, got)
 			}
+			if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, idempotencyHeader) {
+				t.Fatalf("expected preflight to allow %s, got %q", idempotencyHeader, got)
+			}
 		})
 	}
 }
@@ -751,6 +754,39 @@ func TestDuplicateClientGuessIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestAttemptModeConflictReturns409(t *testing.T) {
+	handler := NewServer(ServerConfig{
+		Puzzles: StaticPuzzleSource(SeedPuzzles()),
+		Store:   NewMemoryAttemptStore(),
+		Clock:   fixedClock,
+	})
+	selected := []string{"p1-espresso", "p1-linen", "p1-slack", "p1-balcony"}
+
+	first := postGuess(t, handler, "", GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "mode-easy",
+		SelectedTileIDs: selected,
+		Mode:            AttemptModeEasy,
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first guess: expected 200, got %d: %s", first.Code, first.Body.String())
+	}
+	sessionCookie := first.Result().Cookies()[0].String()
+
+	changed := postGuess(t, handler, sessionCookie, GuessRequest{
+		PuzzleID:        "vibegrid-2026-06-02",
+		ClientGuessID:   "mode-hard",
+		SelectedTileIDs: selected,
+		Mode:            AttemptModeHard,
+	})
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("mode change: expected 409, got %d: %s", changed.Code, changed.Body.String())
+	}
+	if !strings.Contains(changed.Body.String(), "already started") {
+		t.Fatalf("expected actionable mode conflict, got %s", changed.Body.String())
+	}
+}
+
 func TestFourthMistakeRevealsGroups(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles: StaticPuzzleSource(SeedPuzzles()),
@@ -904,6 +940,9 @@ func assertSameTileSet(t *testing.T, label string, got, want []string) {
 
 func postGuess(t *testing.T, handler http.Handler, cookie string, request GuessRequest) *httptest.ResponseRecorder {
 	t.Helper()
+	if request.Mode == "" {
+		request.Mode = AttemptModeMedium
+	}
 
 	payload, err := json.Marshal(request)
 	if err != nil {

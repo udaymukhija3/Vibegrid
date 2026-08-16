@@ -115,6 +115,12 @@ func (store *observedAdminPuzzleStore) Reinstate(ctx context.Context, puzzleID s
 	return store.next.Reinstate(ctx, puzzleID)
 }
 
+func (store *observedAdminPuzzleStore) PersistDaily(ctx context.Context, puzzle Puzzle) (err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "admin_puzzles", "persist_daily", started, err) }()
+	return store.next.PersistDaily(ctx, puzzle)
+}
+
 type observedCommunityPuzzleStore struct {
 	next    CommunityPuzzleStore
 	metrics *httpMetrics
@@ -127,10 +133,22 @@ func observeCommunityPuzzleStore(next CommunityPuzzleStore, metrics *httpMetrics
 	return &observedCommunityPuzzleStore{next: next, metrics: metrics}
 }
 
-func (store *observedCommunityPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput) (puzzle Puzzle, err error) {
+func (store *observedCommunityPuzzleStore) CreateCommunityPuzzle(ctx context.Context, input AdminPuzzleInput, claimHash string) (puzzle Puzzle, err error) {
 	started := time.Now()
 	defer func() { observeStoreOperation(store.metrics, "community_puzzles", "create", started, err) }()
-	return store.next.CreateCommunityPuzzle(ctx, input)
+	return store.next.CreateCommunityPuzzle(ctx, input, claimHash)
+}
+
+func (store *observedCommunityPuzzleStore) CreatorStatus(ctx context.Context, puzzleID, claimHash string) (status CreatorPuzzleStatus, err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "community_puzzles", "creator_status", started, err) }()
+	return store.next.CreatorStatus(ctx, puzzleID, claimHash)
+}
+
+func (store *observedCommunityPuzzleStore) WithdrawCommunityPuzzle(ctx context.Context, puzzleID, claimHash string) (status CreatorPuzzleStatus, err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "community_puzzles", "withdraw", started, err) }()
+	return store.next.WithdrawCommunityPuzzle(ctx, puzzleID, claimHash)
 }
 
 type observedStatsStore struct {
@@ -179,6 +197,40 @@ func (store *observedRateLimitStore) Check(ctx context.Context, key string, limi
 	started := time.Now()
 	defer func() { observeStoreOperation(store.metrics, "rate_limits", "check", started, err) }()
 	return store.next.Check(ctx, key, limit, window, now)
+}
+
+func (store *observedRateLimitStore) Prune(ctx context.Context) (err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "rate_limits", "prune", started, err) }()
+	return store.next.Prune(ctx)
+}
+
+type observedIdempotencyStore struct {
+	next    IdempotencyStore
+	metrics *httpMetrics
+}
+
+func observeIdempotencyStore(next IdempotencyStore, metrics *httpMetrics) IdempotencyStore {
+	if next == nil || metrics == nil {
+		return next
+	}
+	return &observedIdempotencyStore{next: next, metrics: metrics}
+}
+
+func (store *observedIdempotencyStore) Execute(
+	ctx context.Context,
+	scope, keyHash, requestHash string,
+	action func(context.Context) idempotencyResponse,
+) (response idempotencyResponse, replayed, conflict bool, err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "idempotency", "execute", started, err) }()
+	return store.next.Execute(ctx, scope, keyHash, requestHash, action)
+}
+
+func (store *observedIdempotencyStore) PruneExpired(ctx context.Context, before time.Time, limit int) (deleted int64, err error) {
+	started := time.Now()
+	defer func() { observeStoreOperation(store.metrics, "idempotency", "prune", started, err) }()
+	return store.next.PruneExpired(ctx, before, limit)
 }
 
 type observedModerationStore struct {

@@ -7,6 +7,12 @@
       "runtimeArgs": ["run", "dev:web"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "vibegrid-full",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
     }
   ]
 }
