@@ -360,10 +360,15 @@ func (store *PostgresPuzzleStore) Reinstate(ctx context.Context, puzzleID string
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
+	// Reinstating means undoing a takedown, so it only moves ARCHIVED back to
+	// PUBLISHED. Without the status guard this was an unconditional publish, and
+	// a PENDING community puzzle reinstated through the appeal queue went live
+	// without ApproveCommunity — the review gate — ever running. ApproveCommunity
+	// has always carried the equivalent guard.
 	result, err := store.db.ExecContext(ctx,
 		`update puzzles
 		 set status = 'PUBLISHED', updated_at = now()
-		 where id = $1`,
+		 where id = $1 and status = 'ARCHIVED'`,
 		puzzleID,
 	)
 	if err != nil {
