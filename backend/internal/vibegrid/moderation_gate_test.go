@@ -25,7 +25,7 @@ func newTestPuzzleStore(t *testing.T) (*PostgresPuzzleStore, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, crew_members, crews, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return NewPostgresPuzzleStore(database), database

@@ -161,8 +161,11 @@ const createdPuzzleSchema = z.object({
   puzzleNumber: z.number(),
   status: z.literal("PENDING"),
   claimSecret: z.string(),
-  claimPath: z.string()
+  claimPath: z.string(),
+  playPath: z.string()
 });
+
+export type CreatedPuzzle = z.infer<typeof createdPuzzleSchema>;
 
 const errorBodySchema = z.object({ error: z.string() });
 
@@ -171,7 +174,7 @@ const errorBodySchema = z.object({ error: z.string() });
 export async function createCommunityPuzzle(
   input: DraftPuzzleInput,
   turnstileToken: string
-): Promise<{ id: string; puzzleNumber: number; status: "PENDING"; claimSecret: string; claimPath: string }> {
+): Promise<CreatedPuzzle> {
   const response = await apiFetch("/api/community/puzzles", {
     method: "POST",
     headers: idempotencyHeaders({
@@ -228,6 +231,128 @@ export async function withdrawCreatorPuzzle(id: string, claimSecret: string): Pr
     throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
   }
   return creatorPuzzleStatusSchema.parse(payload);
+}
+
+const crewSchema = z.object({
+  // The invite code is the crew's only public handle. The internal id never
+  // leaves the server, so a rotated code cannot be mapped back to the crew.
+  inviteCode: z.string(),
+  name: z.string(),
+  joinPath: z.string(),
+  isOwner: z.boolean()
+});
+
+export type Crew = z.infer<typeof crewSchema>;
+
+const crewBoardEntrySchema = z.object({
+  // Present only in the owner's view — it is the handle for removing someone.
+  memberId: z.string().optional(),
+  displayName: z.string(),
+  isYou: z.boolean(),
+  playing: z.boolean(),
+  solved: z.boolean(),
+  failed: z.boolean(),
+  solvedCount: z.number(),
+  mistakes: z.number(),
+  elapsedSeconds: z.number().optional(),
+  // Absent until the viewer has finished today's grid: the server withholds
+  // every other player's grid rather than trusting the client to hide it.
+  grid: z.array(z.string()).optional()
+});
+
+export type CrewBoardEntry = z.infer<typeof crewBoardEntrySchema>;
+
+const crewBoardSchema = z.object({
+  crew: crewSchema,
+  puzzleId: z.string(),
+  puzzleNumber: z.number(),
+  groupCount: z.number(),
+  isMember: z.boolean(),
+  spoilersUnlocked: z.boolean(),
+  members: z.array(crewBoardEntrySchema)
+});
+
+export type CrewBoard = z.infer<typeof crewBoardSchema>;
+
+// CrewsUnavailableError marks the no-database deployment mode, where crews are
+// switched off entirely. Callers hide the feature instead of showing an error.
+export class CrewsUnavailableError extends Error {}
+
+async function crewMutation(url: string, body: unknown): Promise<Crew> {
+  const response = await apiFetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body)
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    const message = parsed.success ? parsed.data.error : `Request failed (${response.status})`;
+    throw response.status === 503 ? new CrewsUnavailableError(message) : new ApiError(message, response.status);
+  }
+  return crewSchema.parse(payload);
+}
+
+export async function createCrew(name: string, displayName: string): Promise<Crew> {
+  return crewMutation("/api/crews", { name, displayName });
+}
+
+export async function joinCrew(inviteCode: string, displayName: string): Promise<Crew> {
+  return crewMutation(`/api/crews/${encodeURIComponent(inviteCode)}/join`, { displayName });
+}
+
+// Issues a new invite code, killing every link already shared for this crew.
+export async function rotateCrewInvite(inviteCode: string): Promise<Crew> {
+  return crewMutation(`/api/crews/${encodeURIComponent(inviteCode)}/rotate`, {});
+}
+
+async function crewAction(url: string): Promise<void> {
+  const response = await apiFetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    body: "{}"
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(
+      parsed.success ? parsed.data.error : `Request failed (${response.status})`,
+      response.status
+    );
+  }
+}
+
+export async function removeCrewMember(inviteCode: string, memberId: string): Promise<void> {
+  return crewAction(
+    `/api/crews/${encodeURIComponent(inviteCode)}/members/${encodeURIComponent(memberId)}/remove`
+  );
+}
+
+export async function leaveCrew(inviteCode: string): Promise<void> {
+  return crewAction(`/api/crews/${encodeURIComponent(inviteCode)}/leave`);
+}
+
+export async function fetchCrewBoard(crewId: string): Promise<CrewBoard> {
+  const response = await apiFetch(`/api/crews/${encodeURIComponent(crewId)}`, { credentials: "include" });
+  if (!response.ok) {
+    const message = `Request failed (${response.status})`;
+    throw response.status === 503 ? new CrewsUnavailableError(message) : new ApiError(message, response.status);
+  }
+  return crewBoardSchema.parse(await response.json());
+}
+
+export async function fetchMyCrews(): Promise<Crew[]> {
+  const response = await apiFetch("/api/crews", { credentials: "include" });
+  if (response.status === 503) {
+    // No-database mode: report "no crews" rather than an error the UI must explain.
+    return [];
+  }
+  if (!response.ok) {
+    throw new ApiError(`Request failed (${response.status})`, response.status);
+  }
+  return z.array(crewSchema).parse(await response.json());
 }
 
 const createdModerationSchema = z.object({

@@ -45,8 +45,9 @@ type creatorPuzzleStatusResponse struct {
 	PlayPath     string       `json:"playPath,omitempty"`
 }
 
-// createdPuzzleResponse confirms receipt of a community submission. Community
-// content is deliberately not public until an admin approves it.
+// createdPuzzleResponse confirms receipt of a community submission. The grid is
+// immediately playable at PlayPath so the creator can send it to friends;
+// editor review only decides whether it also enters public listings.
 type createdPuzzleResponse struct {
 	OK           bool         `json:"ok"`
 	ID           string       `json:"id"`
@@ -54,6 +55,7 @@ type createdPuzzleResponse struct {
 	Status       PuzzleStatus `json:"status"`
 	ClaimSecret  string       `json:"claimSecret"`
 	ClaimPath    string       `json:"claimPath"`
+	PlayPath     string       `json:"playPath"`
 }
 
 const maxCommunityBodyBytes = 16 << 10 // 16 KiB
@@ -192,6 +194,7 @@ func (server *Server) handleCommunityCreateMutation(w http.ResponseWriter, r *ht
 		Status:       puzzle.Status,
 		ClaimSecret:  claimSecret,
 		ClaimPath:    "/claim?id=" + puzzle.ID,
+		PlayPath:     "/p/" + puzzle.ID,
 	})
 }
 
@@ -283,7 +286,9 @@ func toCreatorStatusResponse(status CreatorPuzzleStatus) creatorPuzzleStatusResp
 		CanWithdraw:  status.Status == PuzzleStatusPending && !status.Withdrawn,
 		CanAppeal:    status.Status == PuzzleStatusArchived && !status.Withdrawn,
 	}
-	if status.Status == PuzzleStatusPublished {
+	// PENDING is playable-by-link too (see PubliclyPlayable): review only gates
+	// public listing, so a creator gets a link to send the moment they submit.
+	if status.Status == PuzzleStatusPublished || (status.Status == PuzzleStatusPending && !status.Withdrawn) {
 		response.PlayPath = "/p/" + status.ID
 	}
 	return response

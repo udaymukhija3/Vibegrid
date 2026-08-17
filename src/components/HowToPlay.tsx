@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HelpCircle, X } from "lucide-react";
-import { readStoredValue, writeStoredValue } from "@/lib/storage";
+import { readSessionValue, writeSessionValue } from "@/lib/storage";
 
-const SEEN_KEY = "vibegrid:seenHowTo";
+// Dismissal is remembered for this visit only. Whether the dialog opens on the
+// *next* visit is answered by the server ("have you ever finished a grid?"),
+// not by this key — see the auto-open effect.
+const DISMISSED_KEY = "vibegrid:howToDismissed";
 
 const rules = [
   "Pick four tiles you think share a vibe, then hit Submit.",
@@ -21,9 +24,16 @@ const exampleTiles = ["meal prep", "face mask", "clean sheets", "to-do list"];
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// HowToPlay is a help button plus a modal. It opens automatically the first time
-// a visitor lands (tracked in localStorage) and on demand after that.
-export function HowToPlay() {
+// HowToPlay is a help button plus a modal. It opens automatically for anyone who
+// has not yet finished a grid, and on demand from the button after that.
+//
+// hasFinishedAGrid comes from the server (completed dailies for this session):
+// null while unknown, so the dialog never flashes past a returning player before
+// the answer arrives. A browser-local "seen" flag used to decide this, which was
+// wrong in both directions — incognito, a cache clear, or Safari capping
+// script-writable storage re-prompted regulars, while a first-timer who cleared
+// the dialog once never got it back even mid-learning.
+export function HowToPlay({ hasFinishedAGrid }: { hasFinishedAGrid: boolean | null }) {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -31,19 +41,24 @@ export function HowToPlay() {
   // first-visit auto-open there is no trigger, so this may be the body.
   const restoreRef = useRef<Element | null>(null);
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => {
+    setOpen(false);
+    // Best-effort: if session storage is blocked the dialog can reopen on a
+    // route change, which is a smaller failure than never explaining the game.
+    writeSessionValue(DISMISSED_KEY, "1");
+  }, []);
 
   useEffect(() => {
-    // Storage may be blocked entirely (private mode, cookies off), in which case
-    // reads come back null and the write is a no-op: the explainer then opens on
-    // every load. That is the right side to fail on — a returning player sees a
-    // dialog they can dismiss, whereas suppressing it would leave a first-time
-    // visitor staring at 16 unexplained tiles.
-    if (!readStoredValue(SEEN_KEY)) {
-      setOpen(true);
-      writeStoredValue(SEEN_KEY, "1");
+    // Wait for the answer. Opening while it is null would flash the dialog at
+    // every returning player on every load.
+    if (hasFinishedAGrid !== false) {
+      return;
     }
-  }, []);
+    if (readSessionValue(DISMISSED_KEY)) {
+      return;
+    }
+    setOpen(true);
+  }, [hasFinishedAGrid]);
 
   // Move focus into the dialog on open and hand it back on close. Without this,
   // focus stayed on <body> while aria-modal="true" hid the rest of the page from

@@ -31,7 +31,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 
-	if _, err := database.Exec(`truncate idempotency_keys, rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+	if _, err := database.Exec(`truncate idempotency_keys, rate_limit_hits, admin_sessions, moderation_actions, moderation_reports, moderation_appeals, crew_members, crews, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -42,6 +42,7 @@ func newAdminTestServer(t *testing.T) (http.Handler, *PostgresPuzzleStore) {
 		AdminPuzzles:       puzzleStore,
 		AdminSessions:      NewPostgresAdminSessionStore(database),
 		Community:          puzzleStore,
+		Crews:              NewPostgresCrewStore(database),
 		RateLimits:         NewPostgresRateLimitStore(database),
 		Idempotency:        NewPostgresIdempotencyStore(database),
 		Moderation:         NewPostgresModerationStore(database),

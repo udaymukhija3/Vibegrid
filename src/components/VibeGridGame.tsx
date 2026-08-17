@@ -4,7 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
-import { Archive, Flag, Flame, Send, Share2, Shuffle, Sparkles, X } from "lucide-react";
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  Flag,
+  Flame,
+  Send,
+  Share2,
+  Shuffle,
+  Sparkles,
+  Users,
+  X
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   ATTEMPT_STORAGE_PREFIX,
@@ -114,6 +126,17 @@ const modeOptions: Array<{ value: GameMode; label: string }> = [
   { value: "medium", label: "Medium" },
   { value: "hard", label: "Hard" }
 ];
+
+// Selection feedback is decoration, so it is skipped for anyone who has asked
+// the OS for less motion. The selected state and the order badge still carry
+// the information.
+function prefersReducedMotion() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
 
 const modeDescriptions: Record<GameMode, string> = {
   easy: "Guided plus selected tiles and a hint after two guesses.",
@@ -225,6 +248,8 @@ export function VibeGridGame({
   const [tileOrder, setTileOrder] = useState(() => puzzle.tiles.map((tile) => tile.id));
   const [stats, setStats] = useState<PuzzleStats | null>(null);
   const [streak, setStreak] = useState<StreakSummary | null>(null);
+  // null while the server has not answered yet; see the streak effect.
+  const [hasFinishedAGrid, setHasFinishedAGrid] = useState<boolean | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState<ReportReason>("OFFENSIVE");
   const [reportDetails, setReportDetails] = useState("");
@@ -239,6 +264,21 @@ export function VibeGridGame({
   const [easyHintStatus, setEasyHintStatus] = useState<"idle" | "loading" | "error">("idle");
   const [timerNow, setTimerNow] = useState<string | null>(null);
   const [resolvedSession, setResolvedSession] = useState<SessionStatus | null>(sessionStatus ?? null);
+  // hasChosenMode is "this browser has picked a mode before", not "mode has a
+  // value" — mode always has one (medium). It gates the first-run mode step so
+  // returning players go straight to the board instead of paying a daily tax.
+  //
+  // null means "not read yet". A plain boolean cannot express that: the effect
+  // that reads the preference and the effect that writes it run in the same
+  // commit, so a `true` default made the writer persist "medium" before the
+  // reader's update landed, and the step could then never appear. A `false`
+  // default would flash the step at returning players instead.
+  const [hasChosenMode, setHasChosenMode] = useState<boolean | null>(null);
+  const [modeStepOpen, setModeStepOpen] = useState(false);
+
+  // Live tile nodes, so a tap can animate the current selection without
+  // remounting buttons (see pulseTiles).
+  const tileNodes = useRef(new Map<string, HTMLButtonElement>());
 
   // attemptRef mirrors the latest attempt so event handlers (storage/visibility)
   // can read current state without being re-bound on every change.
@@ -428,20 +468,31 @@ export function VibeGridGame({
   // Mode is a per-browser preference. Read it after mount (not in initial state)
   // so the server-rendered markup and first client paint agree; default medium.
   useEffect(() => {
-    setMode(normalizeGameMode(readStoredValue(MODE_STORAGE_KEY)));
+    const stored = readStoredValue(MODE_STORAGE_KEY);
+    setMode(normalizeGameMode(stored));
+    setHasChosenMode(stored !== null);
   }, []);
 
   useEffect(() => {
+    // Only persist once the player has actually picked. Writing the default on
+    // first paint would mark this browser as "chosen" and the first-run mode
+    // step would never appear.
+    if (hasChosenMode !== true) {
+      return;
+    }
     // Best-effort: a rejected write (quota, blocked storage) only costs the
     // preference on the next visit, so it must not reach the error boundary.
     writeStoredValue(MODE_STORAGE_KEY, mode);
-  }, [mode]);
+  }, [mode, hasChosenMode]);
 
   // Once the server has created an attempt, its persisted mode wins over the
   // browser preference. This also reconciles another tab that submitted first.
   useEffect(() => {
     if (attempt.mode) {
       setMode(attempt.mode);
+      // An attempt already underway means the choice is made and locked, so the
+      // first-run step must not interrupt a game resumed on a new device.
+      setHasChosenMode(true);
     }
   }, [attempt.mode]);
 
@@ -559,28 +610,33 @@ export function VibeGridGame({
     };
   }, [isOver, puzzle.id]);
 
-  // Streaks apply to the daily puzzle only (community puzzles are dateless).
+  // Fetched for every puzzle, not just the daily: besides the streak chip this
+  // answers "has this player ever finished a grid?", which decides whether the
+  // How-to-play dialog opens — and someone arriving on a shared community link
+  // is exactly who most needs the explainer. The chip itself stays daily-only.
   // Re-fetch when the puzzle is completed so the count bumps immediately.
   useEffect(() => {
-    if (!puzzle.publishDate) {
-      return;
-    }
-
     let cancelled = false;
     fetchStreak()
       .then((loaded) => {
         if (!cancelled) {
           setStreak(loaded);
+          setHasFinishedAGrid(loaded.totalCompleted > 0);
         }
       })
       .catch(() => {
-        // Streak is a nice-to-have; never block the board on it.
+        // Streak is a nice-to-have; never block the board on it. But an unknown
+        // answer must fail toward showing the explainer: a first-time visitor
+        // staring at 16 unexplained tiles is worse than a dismissible dialog.
+        if (!cancelled) {
+          setHasFinishedAGrid(false);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [puzzle.publishDate, isComplete]);
+  }, [isComplete]);
 
   const tilesById = useMemo(() => new Map(puzzle.tiles.map((tile) => [tile.id, tile])), [puzzle.tiles]);
   const remainingTiles = tileOrder
@@ -593,6 +649,40 @@ export function VibeGridGame({
   const guessesUntilEasyHint = Math.max(0, EASY_HINT_GUESSES - attempt.guessCount);
   const unlockedEasyHint = mode === "easy" && easyHint?.available ? easyHint.hint ?? null : null;
   const modeLocked = attempt.guessCount > 0 && attempt.mode !== undefined;
+  // The step shows for a first-time player, or when someone reopens it from the
+  // chip — never once the first guess has locked the mode in. While the stored
+  // preference is still unread (null) neither the step nor the chip renders, so
+  // a returning player never sees the step flash past.
+  const showModeStep = (hasChosenMode === false || modeStepOpen) && !modeLocked;
+  const showModeChip = hasChosenMode !== null && !showModeStep;
+
+  function chooseMode(next: GameMode) {
+    setMode(next);
+    setHasChosenMode(true);
+    setModeStepOpen(false);
+  }
+
+  // pulseTiles briefly pops every tile in the current selection, so a tap both
+  // confirms itself and re-shows the whole set you have built so far. On a phone
+  // the selected tiles are scattered across four rows and the dark "selected"
+  // state alone is easy to miss mid-scroll.
+  //
+  // Driven imperatively rather than by a CSS class toggle: re-triggering a CSS
+  // animation needs a remount or a reflow hack, and remounting the buttons on
+  // every tap would throw away focus. It is deliberately short — this fires on
+  // every one of the ~40 taps a full game takes, so anything longer becomes a
+  // wait rather than feedback.
+  function pulseTiles(tileIds: string[]) {
+    if (prefersReducedMotion()) {
+      return;
+    }
+    for (const tileId of tileIds) {
+      tileNodes.current.get(tileId)?.animate(
+        [{ transform: "scale(1)" }, { transform: "scale(1.06)" }, { transform: "scale(1)" }],
+        { duration: 180, easing: "ease-out" }
+      );
+    }
+  }
 
   function toggleTile(tileId: string) {
     if (isOver || displayedTileIds.has(tileId)) {
@@ -607,9 +697,11 @@ export function VibeGridGame({
       const isSelected = current.selectedTileIds.includes(tileId);
 
       if (isSelected) {
+        const remaining = current.selectedTileIds.filter((selectedTileId) => selectedTileId !== tileId);
+        pulseTiles(remaining);
         return {
           ...current,
-          selectedTileIds: current.selectedTileIds.filter((selectedTileId) => selectedTileId !== tileId)
+          selectedTileIds: remaining
         };
       }
 
@@ -617,6 +709,7 @@ export function VibeGridGame({
         return current;
       }
 
+      pulseTiles([...current.selectedTileIds, tileId]);
       return {
         ...current,
         selectedTileIds: [...current.selectedTileIds, tileId]
@@ -851,7 +944,10 @@ export function VibeGridGame({
         </div>
 
         <nav className="flex shrink-0 items-center gap-1.5 lg:grid lg:justify-items-center lg:gap-2" aria-label="Primary navigation">
-          <HowToPlay />
+          <HowToPlay hasFinishedAGrid={hasFinishedAGrid} />
+          <Link href="/crews" aria-label="Your crews" title="Play with friends" className="vg-icon-button">
+            <Users aria-hidden size={18} />
+          </Link>
           <Link href="/archive" aria-label="Archive" title="Archive" className="vg-icon-button">
             <Archive aria-hidden size={18} />
           </Link>
@@ -874,7 +970,7 @@ export function VibeGridGame({
           </div>
           <div className="grid justify-items-start gap-1 text-sm font-semibold text-neutral-600 sm:justify-items-end">
             {puzzleDate && <p>{puzzleDate}</p>}
-            {streak && streak.currentStreak > 0 && (
+            {puzzleDate && streak && streak.currentStreak > 0 && (
               <span
                 title={`Longest streak: ${streak.longestStreak} · Solved: ${streak.totalCompleted}`}
                 className="inline-flex items-center gap-1 rounded-lg border border-yolk/80 bg-yolk/30 px-2 py-1 text-xs text-ink"
@@ -886,39 +982,68 @@ export function VibeGridGame({
           </div>
         </div>
 
-        {!isOver && (
+        {/* Mode is a once-per-attempt decision that locks on the first guess, so
+            on a phone it is a step rather than a permanent control competing
+            with the board for space. First-time players choose; everyone else
+            gets a chip and goes straight to the grid. */}
+        {!isOver && showModeStep && (
           <section className="mt-4 lg:hidden" aria-labelledby="mobile-mode-label">
-            <p id="mobile-mode-label" className="text-sm font-semibold text-neutral-500">
-              Mode
+            <h3 id="mobile-mode-label" className="text-lg font-extrabold leading-tight">
+              How do you want to play?
+            </h3>
+            <p className="mt-1 text-sm font-medium text-neutral-600">
+              You can change this until your first guess.
             </p>
-            <div className="vg-mode-track mt-2">
+            <div className="mt-3 grid gap-2">
               {modeOptions.map((option) => (
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setMode(option.value)}
-                  disabled={modeLocked || isSubmitting}
-                  aria-pressed={mode === option.value}
-                  title={modeLocked ? "Mode is locked for this attempt" : undefined}
+                  onClick={() => chooseMode(option.value)}
                   className={clsx(
-                    "vg-mode-tab disabled:cursor-not-allowed disabled:opacity-70",
-                    mode === option.value ? "bg-card text-ink" : "bg-ink text-card/75 hover:bg-card/[.12]"
+                    "flex min-h-14 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left shadow-tile transition",
+                    mode === option.value
+                      ? "border-ink bg-mint/30"
+                      : "border-line bg-card hover:border-ink"
                   )}
                 >
-                  {option.label}
+                  <span>
+                    <span className="block text-base font-extrabold">{option.label}</span>
+                    <span className="block text-xs font-medium leading-snug text-neutral-600">
+                      {modeDescriptions[option.value]}
+                    </span>
+                  </span>
+                  <ChevronRight aria-hidden size={18} className="shrink-0 text-neutral-400" />
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-xs font-medium leading-snug text-neutral-600">
-              {modeDescriptions[mode]}
-            </p>
           </section>
+        )}
+
+        {!isOver && showModeChip && (
+          <div className="mt-4 flex items-center gap-2 lg:hidden">
+            <span className="text-xs font-semibold text-neutral-500">Mode</span>
+            <button
+              type="button"
+              onClick={() => setModeStepOpen(true)}
+              disabled={modeLocked || isSubmitting}
+              title={modeLocked ? "Mode is locked for this attempt" : "Change mode"}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 text-xs font-extrabold shadow-tile disabled:opacity-60"
+            >
+              {modeOptions.find((option) => option.value === mode)?.label ?? "Medium"}
+              {!modeLocked && <ChevronDown aria-hidden size={14} />}
+            </button>
+          </div>
         )}
 
         {!isOver && (
           <div
             className={clsx(
               "mt-4 rounded-lg border p-4 shadow-tile",
+              // While the mode step is up on a phone it is the only thing on
+              // screen: a "step" with the board still under it is just a card.
+              // Desktop keeps its rail toggle and never hides the board.
+              showModeStep && "hidden lg:block",
               currentVibe
                 ? groupColors[currentVibe.colorIndex % groupColors.length]
                 : "border-line bg-white/[.72] text-ink"
@@ -940,7 +1065,12 @@ export function VibeGridGame({
           </div>
         )}
 
-        <div className="mt-4 rounded-lg border border-line bg-white/[.65] p-2 shadow-tile sm:p-3">
+        <div
+          className={clsx(
+            "mt-4 rounded-lg border border-line bg-white/[.65] p-2 shadow-tile sm:p-3",
+            showModeStep && "hidden lg:block"
+          )}
+        >
           <div className="grid gap-3">
             {displayedGroups.map((group) => {
               const isSolved = attempt.solvedGroups.some((solvedGroup) => solvedGroup.id === group.id);
@@ -980,12 +1110,20 @@ export function VibeGridGame({
           <div className="mt-3 grid grid-cols-4 gap-1.5 sm:gap-3">
             {remainingTiles.map((tile) => {
               const isSelected = selectedTileIds.has(tile.id);
+              const pickOrder = attempt.selectedTileIds.indexOf(tile.id);
 
               return (
                 <button
                   key={tile.id}
+                  ref={(node) => {
+                    if (node) {
+                      tileNodes.current.set(tile.id, node);
+                    } else {
+                      tileNodes.current.delete(tile.id);
+                    }
+                  }}
                   className={clsx(
-                    "flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1.5 text-center text-[0.8rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
+                    "relative flex aspect-square min-h-16 items-center justify-center rounded-lg border border-line px-1.5 text-center text-[0.8rem] font-semibold shadow-tile transition [touch-action:manipulation] sm:aspect-[1.45] sm:min-h-20 sm:px-2 sm:text-lg",
                     isSelected
                       ? "translate-y-0.5 border-ink bg-ink text-card shadow-none ring-2 ring-pool/70"
                       : "bg-card hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/25 hover:shadow-lift"
@@ -995,6 +1133,17 @@ export function VibeGridGame({
                   onClick={() => toggleTile(tile.id)}
                 >
                   <span className="break-words leading-tight">{tile.text}</span>
+                  {/* The order badge is what makes the selection readable at a
+                      glance on a phone, where the four picks are spread across
+                      rows and the tray that used to mirror them is gone. */}
+                  {pickOrder >= 0 && (
+                    <span
+                      aria-hidden
+                      className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-card text-[0.6rem] font-extrabold text-ink"
+                    >
+                      {pickOrder + 1}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1028,25 +1177,9 @@ export function VibeGridGame({
                 </button>
               </div>
 
-              <div className="grid min-h-10 grid-cols-4 gap-1.5" aria-label="Selected tiles">
-                {Array.from({ length: 4 }).map((_, index) => {
-                  const tile = selectedTiles[index];
-                  return (
-                    <div
-                      key={tile?.id ?? `mobile-empty-${index}`}
-                      className={clsx(
-                        "flex min-h-10 items-center justify-center rounded-lg border px-1 text-center text-[0.65rem] font-semibold leading-tight",
-                        tile
-                          ? "border-ink bg-ink text-card"
-                          : "border-neutral-200 bg-neutral-50 text-neutral-400"
-                      )}
-                    >
-                      {tile?.text ?? "Pick tile"}
-                    </div>
-                  );
-                })}
-              </div>
-
+              {/* The mirrored "Pick tile" tray used to live here. The numbered
+                  badges on the tiles themselves say the same thing without
+                  spending a row of the smallest screen. */}
               <button
                 className="vg-button-primary h-11 w-full"
                 type="button"
@@ -1077,7 +1210,7 @@ export function VibeGridGame({
                   <button
                     key={option.value}
                   type="button"
-                  onClick={() => setMode(option.value)}
+                  onClick={() => chooseMode(option.value)}
                   disabled={modeLocked || isSubmitting}
                   aria-pressed={mode === option.value}
                   title={modeLocked ? "Mode is locked for this attempt" : undefined}

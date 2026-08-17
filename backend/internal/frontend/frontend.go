@@ -52,17 +52,25 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler.serveFile(w, r, target)
 }
 
-func (handler *Handler) resolve(cleanPath string) string {
-	if isSharedPuzzlePath(cleanPath) {
-		for _, candidate := range []string{"p/__share__/index.html", "p/__share__.html", "p/index.html"} {
-			if handler.exists(candidate) {
-				return candidate
-			}
-		}
-	}
+// dynamicRoutes maps each client-side dynamic route onto the static shell Next
+// exported for it. Production is a static export, so /p/abc, /demo/xyz and
+// /crew/123 have no file of their own: each falls back to one placeholder
+// document that reads the real id out of the URL at runtime.
+var dynamicRoutes = []struct {
+	prefix     string
+	candidates []string
+}{
+	{"/p/", []string{"p/__share__/index.html", "p/__share__.html", "p/index.html"}},
+	{"/demo/", []string{"demo/__room__/index.html", "demo/__room__.html", "demo/index.html"}},
+	{"/crew/", []string{"crew/__crew__/index.html", "crew/__crew__.html", "crew/index.html"}},
+}
 
-	if isDemoRoomPath(cleanPath) {
-		for _, candidate := range []string{"demo/__room__/index.html", "demo/__room__.html", "demo/index.html"} {
+func (handler *Handler) resolve(cleanPath string) string {
+	for _, route := range dynamicRoutes {
+		if !isDynamicRoutePath(cleanPath, route.prefix) {
+			continue
+		}
+		for _, candidate := range route.candidates {
 			if handler.exists(candidate) {
 				return candidate
 			}
@@ -127,12 +135,10 @@ func (handler *Handler) exists(name string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func isSharedPuzzlePath(cleanPath string) bool {
-	return strings.HasPrefix(cleanPath, "/p/") && cleanPath != "/p/"
-}
-
-func isDemoRoomPath(cleanPath string) bool {
-	return strings.HasPrefix(cleanPath, "/demo/") && cleanPath != "/demo/"
+// isDynamicRoutePath matches "/prefix/<id>" but not the bare "/prefix/", which
+// carries no id and should fall through to a real file or the 404 page.
+func isDynamicRoutePath(cleanPath, prefix string) bool {
+	return strings.HasPrefix(cleanPath, prefix) && cleanPath != prefix
 }
 
 func cacheControlFor(name string) string {

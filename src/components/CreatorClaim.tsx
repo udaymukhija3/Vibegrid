@@ -121,8 +121,10 @@ export function CreatorClaim() {
 
           {status.canWithdraw && confirmingWithdrawal && (
             <div className="rounded-lg border border-tomato/60 bg-tomato/10 p-4">
-              <p className="font-extrabold">Withdraw this pending grid?</p>
-              <p className="mt-1 text-sm font-medium text-neutral-600">It will leave the review queue and cannot be published.</p>
+              <p className="font-extrabold">Withdraw this grid?</p>
+              <p className="mt-1 text-sm font-medium text-neutral-600">
+                Any link you already shared will stop working, and it cannot be published later.
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" disabled={busy} onClick={() => void withdraw()} className="vg-button-primary bg-tomato">
                   Confirm withdrawal
@@ -175,8 +177,10 @@ export function CreatorClaim() {
 
 function statusLabel(status: CreatorPuzzleStatus["status"]) {
   switch (status) {
-    case "PENDING": return "Waiting for review";
-    case "PUBLISHED": return "Approved";
+    // PENDING is live-by-link, just not listed publicly yet, so "waiting for
+    // review" would understate it — the creator's link already works.
+    case "PENDING": return "Live · unlisted";
+    case "PUBLISHED": return "Live · listed";
     case "ARCHIVED": return "Archived";
     default: return "Draft";
   }

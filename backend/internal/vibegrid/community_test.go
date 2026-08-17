@@ -208,7 +208,12 @@ func TestClientIPOnlyUsesHeadersFromTrustedProxy(t *testing.T) {
 	}
 }
 
-func TestCommunityPuzzleRequiresApprovalBeforeItIsPlayable(t *testing.T) {
+// TestCommunityPuzzleIsPlayableByLinkBeforeReview covers the unlisted-by-link
+// contract end to end through the HTTP surface: a freshly created grid is
+// immediately playable by its link so the creator can send it to friends, it
+// never leaks into the daily/archive listing, and review only promotes it from
+// unlisted to listed.
+func TestCommunityPuzzleIsPlayableByLinkBeforeReview(t *testing.T) {
 	handler, _ := newAdminTestServer(t)
 
 	created := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
@@ -223,21 +228,14 @@ func TestCommunityPuzzleRequiresApprovalBeforeItIsPlayable(t *testing.T) {
 	if body.Status != PuzzleStatusPending {
 		t.Fatalf("expected pending submission, got %q", body.Status)
 	}
+	if body.PlayPath != "/p/"+body.ID {
+		t.Fatalf("create response must hand back a share link, got %q", body.PlayPath)
+	}
 
-	// A pending submission must not be public, even when its opaque id is known.
+	// The whole point: playable straight away, before any editor touches it.
 	play := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+body.ID, "", nil)
-	if play.Code != http.StatusNotFound {
-		t.Fatalf("expected pending puzzle to be hidden, got %d", play.Code)
-	}
-
-	approved := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+body.ID+"/approve", testAdminToken, nil)
-	if approved.Code != http.StatusOK {
-		t.Fatalf("approve failed: %d %s", approved.Code, approved.Body.String())
-	}
-
-	play = adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+body.ID, "", nil)
 	if play.Code != http.StatusOK {
-		t.Fatalf("expected approved community puzzle to be public, got %d", play.Code)
+		t.Fatalf("expected unreviewed puzzle to be playable by link, got %d: %s", play.Code, play.Body.String())
 	}
 	var public PublicPuzzle
 	if err := json.NewDecoder(play.Body).Decode(&public); err != nil {
@@ -247,15 +245,56 @@ func TestCommunityPuzzleRequiresApprovalBeforeItIsPlayable(t *testing.T) {
 		t.Fatalf("expected %d tiles, got %d", PuzzleGroupCount*GroupSize, len(public.Tiles))
 	}
 
-	// Absent from the public published (daily/archive) list.
+	// Unlisted means unlisted, both before and after approval.
+	assertAbsentFromPublicList(t, handler, body.ID)
+
+	approved := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+body.ID+"/approve", testAdminToken, nil)
+	if approved.Code != http.StatusOK {
+		t.Fatalf("approve failed: %d %s", approved.Code, approved.Body.String())
+	}
+
+	play = adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+body.ID, "", nil)
+	if play.Code != http.StatusOK {
+		t.Fatalf("expected approved community puzzle to stay playable, got %d", play.Code)
+	}
+	assertAbsentFromPublicList(t, handler, body.ID)
+}
+
+// TestCommunityPuzzleLinkDiesOnTakedown is the other half of the contract:
+// opening the link early must not make moderation toothless.
+func TestCommunityPuzzleLinkDiesOnTakedown(t *testing.T) {
+	handler, _ := newAdminTestServer(t)
+
+	created := adminRequest(t, handler, http.MethodPost, "/api/community/puzzles", "", validPuzzleInput())
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("create failed: %d %s", created.Code, created.Body.String())
+	}
+	var body createdPuzzleResponse
+	if err := json.NewDecoder(created.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	archived := adminRequest(t, handler, http.MethodPost, "/api/admin/puzzles/"+body.ID+"/archive", testAdminToken, nil)
+	if archived.Code != http.StatusOK {
+		t.Fatalf("archive failed: %d %s", archived.Code, archived.Body.String())
+	}
+
+	play := adminRequest(t, handler, http.MethodGet, "/api/puzzles/"+body.ID, "", nil)
+	if play.Code != http.StatusNotFound {
+		t.Fatalf("a taken-down grid must stop being playable, got %d: %s", play.Code, play.Body.String())
+	}
+}
+
+func assertAbsentFromPublicList(t *testing.T, handler http.Handler, puzzleID string) {
+	t.Helper()
 	list := adminRequest(t, handler, http.MethodGet, "/api/puzzles", "", nil)
 	var published []PublicPuzzle
 	if err := json.NewDecoder(list.Body).Decode(&published); err != nil {
 		t.Fatal(err)
 	}
 	for _, puzzle := range published {
-		if puzzle.ID == body.ID {
-			t.Fatalf("community puzzle %s must not appear in the daily/archive list", body.ID)
+		if puzzle.ID == puzzleID {
+			t.Fatalf("community puzzle %s must not appear in the daily/archive list", puzzleID)
 		}
 	}
 }

@@ -9,7 +9,7 @@ import { PuzzleDraftForm } from "@/components/PuzzleDraftForm";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import type { DraftPuzzleInput, PuzzleTemplate } from "@/types/puzzle";
 
-type Submission = { number: number; claimUrl: string };
+type Submission = { number: number; claimUrl: string; playUrl: string };
 
 const difficultyStyles: Record<string, string> = {
   EASY: "bg-mint/45",
@@ -63,7 +63,11 @@ export function CreatePuzzle() {
       const created = await createCommunityPuzzle(input, turnstileToken);
       const claimUrl = new URL(created.claimPath, window.location.origin);
       claimUrl.hash = created.claimSecret;
-      setSubmission({ number: created.puzzleNumber, claimUrl: claimUrl.toString() });
+      setSubmission({
+        number: created.puzzleNumber,
+        claimUrl: claimUrl.toString(),
+        playUrl: new URL(created.playPath, window.location.origin).toString()
+      });
     } finally {
       setTurnstileToken("");
       setTurnstileReset((value) => value + 1);
@@ -82,6 +86,18 @@ export function CreatePuzzle() {
     }
   }
 
+  async function copyPlayUrl() {
+    if (!submission) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(submission.playUrl);
+      toast.success("Share link copied. Send it to your friends.");
+    } catch {
+      toast.error("Could not copy the share link.");
+    }
+  }
+
   async function playTemplate(template: PuzzleTemplate) {
     if (playingId) {
       return;
@@ -89,7 +105,7 @@ export function CreatePuzzle() {
     setPlayingId(template.id);
     try {
       await publishDraft(toDraft(template));
-      toast.success("Your grid was sent for review.");
+      toast.success("Your grid is live. Copy the link and send it.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create that grid.");
     } finally {
@@ -109,12 +125,33 @@ export function CreatePuzzle() {
     <div className="mt-6 grid gap-6">
       {submission && (
         <section className="rounded-lg border border-mint/70 bg-mint/25 p-4 shadow-soft">
-          <h2 className="text-lg font-extrabold">Your grid is in review</h2>
+          <h2 className="text-lg font-extrabold">Your grid is ready to share</h2>
           <p className="mt-1 text-sm font-medium">
-            VibeGrid #{submission.number} is waiting for an editor check. It will become shareable only after approval.
+            VibeGrid #{submission.number} is live right now for anyone with this link. Send it to your friends.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <input
+              readOnly
+              aria-label="Share link for this grid"
+              value={submission.playUrl}
+              className="vg-input h-10 min-w-0 text-xs font-medium"
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <button type="button" onClick={() => void copyPlayUrl()} className="vg-button-primary h-10 bg-yolk">
+              <Copy aria-hidden size={15} />
+              Copy link
+            </button>
+            <Link href={submission.playUrl} className="vg-button-secondary h-10">
+              <Play aria-hidden size={15} />
+              Play it
+            </Link>
+          </div>
+          <p className="mt-3 text-xs font-medium leading-5 text-neutral-600">
+            It stays unlisted: it will not appear in the daily, the archive, or search. An editor
+            check is only needed for it to show up in public listings.
           </p>
           <p className="mt-3 text-xs font-semibold leading-5 text-neutral-600">
-            Save this private link now. It is the only way to check status, withdraw, or appeal this grid.
+            Save this private link too. It is the only way to check status, withdraw, or appeal this grid.
           </p>
           <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
             <input
@@ -140,7 +177,7 @@ export function CreatePuzzle() {
         <section className="vg-panel p-4">
           <h2 className="text-lg font-extrabold">Start from a pack</h2>
           <p className="mt-1 text-sm font-medium text-neutral-600">
-            No blank-page panic. Submit one as-is for review, or load it below to make it yours.
+            No blank-page panic. Publish one as-is to get a link, or load it below to make it yours.
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {templates.map((template) => (
@@ -166,7 +203,7 @@ export function CreatePuzzle() {
                     className="vg-button-primary h-9 min-h-9 px-2 text-sm"
                   >
                     <Play aria-hidden size={15} />
-                    {playingId === template.id ? "Submitting…" : "Submit this"}
+                    {playingId === template.id ? "Publishing…" : "Get a link"}
                   </button>
                   <button
                     type="button"
@@ -186,7 +223,7 @@ export function CreatePuzzle() {
       <section ref={formRef} className="vg-panel p-4">
         {loadedTitle && (
           <p className="mb-3 rounded-lg border border-yolk/80 bg-yolk/30 px-3 py-2 text-xs font-semibold">
-            Prefilled from “{loadedTitle}”. Edit anything, then submit it for review.
+            Prefilled from “{loadedTitle}”. Edit anything, then publish it to get a link.
           </p>
         )}
         <div className="mb-4">
@@ -199,10 +236,10 @@ export function CreatePuzzle() {
         <PuzzleDraftForm
           key={formKey}
           initialDraft={initialDraft}
-          submitLabel="Submit for review"
+          submitLabel="Publish and get a link"
           onSubmit={async (input) => {
             await publishDraft(input);
-            toast.success("Your grid was sent for review.");
+            toast.success("Your grid is live. Copy the link and send it.");
           }}
         />
         <p className="mt-4 text-xs font-semibold leading-5 text-neutral-500">
