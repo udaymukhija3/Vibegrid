@@ -82,6 +82,17 @@ func NewCachedPuzzleStore(inner puzzleBackend, ttl time.Duration) puzzleBackend 
 }
 
 func (store *cachedPuzzleStore) PuzzleByID(ctx context.Context, puzzleID string) (Puzzle, error) {
+	// A read inside a transaction goes straight to the backend, which runs it on
+	// that transaction's own connection. Routing it through singleflight instead
+	// would be wrong twice over: the shared flight would hand a value read inside
+	// an uncommitted transaction to callers outside it, and it would park every
+	// other reader of this id behind a leader that is holding one pooled
+	// connection while waiting for a second. The cache is left untouched for the
+	// same reason — an uncommitted read must not outlive its transaction.
+	if transactionFromContext(ctx) != nil {
+		return store.inner.PuzzleByID(ctx, puzzleID)
+	}
+
 	if puzzle, err, ok := store.getCached(puzzleID); ok {
 		store.hits.Add(1)
 		return puzzle, err
