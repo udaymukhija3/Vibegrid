@@ -195,6 +195,7 @@ func run(logger *slog.Logger) error {
 		AdminPuzzles:       deps.adminPuzzles,
 		AdminSessions:      deps.adminSessions,
 		Community:          deps.community,
+		Crews:              deps.crews,
 		Stats:              deps.stats,
 		RateLimits:         deps.rateLimits,
 		Idempotency:        deps.idempotency,
@@ -278,6 +279,7 @@ type deps struct {
 	puzzles          vibegrid.PuzzleSource
 	adminPuzzles     vibegrid.AdminPuzzleStore
 	community        vibegrid.CommunityPuzzleStore
+	crews            vibegrid.CrewStore
 	adminSessions    vibegrid.AdminSessionStore
 	stats            vibegrid.StatsStore
 	rateLimits       vibegrid.RateLimitStore
@@ -350,6 +352,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 		puzzles:          publicPuzzles,
 		adminPuzzles:     cached,
 		community:        cached,
+		crews:            vibegrid.NewPostgresCrewStore(database),
 		adminSessions:    adminSessions,
 		bankSource:       banked,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database, timeZone), 5*time.Minute),

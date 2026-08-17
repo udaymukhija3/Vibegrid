@@ -53,6 +53,7 @@ type ServerConfig struct {
 	AdminPuzzles       AdminPuzzleStore
 	AdminSessions      AdminSessionStore
 	Community          CommunityPuzzleStore
+	Crews              CrewStore
 	Stats              StatsStore
 	RateLimits         RateLimitStore
 	Idempotency        IdempotencyStore
@@ -86,6 +87,7 @@ type Server struct {
 	adminPuzzles       AdminPuzzleStore
 	adminSessions      AdminSessionStore
 	community          CommunityPuzzleStore
+	crews              CrewStore
 	stats              StatsStore
 	rateLimits         RateLimitStore
 	idempotency        IdempotencyStore
@@ -131,6 +133,7 @@ func NewServer(config ServerConfig) http.Handler {
 		store:              config.Store,
 		adminPuzzles:       config.AdminPuzzles,
 		community:          config.Community,
+		crews:              config.Crews,
 		stats:              config.Stats,
 		rateLimits:         config.RateLimits,
 		idempotency:        config.Idempotency,
@@ -202,6 +205,13 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("POST /api/community/puzzles", server.handleCommunityCreate)
 	mux.HandleFunc("GET /api/community/puzzles/{id}/claim", server.handleCreatorStatus)
 	mux.HandleFunc("POST /api/community/puzzles/{id}/withdraw", server.handleCreatorWithdraw)
+	mux.HandleFunc("GET /api/crews", server.handleMyCrews)
+	mux.HandleFunc("POST /api/crews", server.handleCreateCrew)
+	mux.HandleFunc("GET /api/crews/{id}", server.handleCrewBoard)
+	mux.HandleFunc("POST /api/crews/{id}/join", server.handleJoinCrew)
+	mux.HandleFunc("POST /api/crews/{id}/rotate", server.handleRotateCrewInvite)
+	mux.HandleFunc("POST /api/crews/{id}/leave", server.handleLeaveCrew)
+	mux.HandleFunc("POST /api/crews/{id}/members/{memberId}/remove", server.handleRemoveCrewMember)
 	mux.HandleFunc("POST /api/reports", server.handleCreateReport)
 	mux.HandleFunc("POST /api/appeals", server.handleCreateAppeal)
 	mux.HandleFunc("POST /api/client-errors", server.handleClientError)

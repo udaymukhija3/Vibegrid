@@ -43,6 +43,20 @@ func (blocklist *wordBlocklist) review(input AdminPuzzleInput) error {
 	return nil
 }
 
+// reviewText screens free-text fields that are shown to other people — crew and
+// display names — against the same blocklist that guards puzzle content.
+func (blocklist *wordBlocklist) reviewText(values ...string) error {
+	if blocklist == nil {
+		return nil
+	}
+	for _, value := range values {
+		if blocklist.contains(value) {
+			return ErrBlockedTerm
+		}
+	}
+	return nil
+}
+
 func (blocklist *wordBlocklist) contains(value string) bool {
 	normalized := strings.ToLower(value)
 	for _, term := range blocklist.terms {

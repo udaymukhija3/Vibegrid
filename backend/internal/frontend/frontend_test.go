@@ -44,6 +44,42 @@ func TestHandlerServesDemoRoomFallback(t *testing.T) {
 	}
 }
 
+// TestHandlerServesCrewFallback covers the invite link in production: crew ids
+// are minted at runtime, so /crew/<id> has no exported file of its own and must
+// fall back to the placeholder shell. Without this an invite link 404s.
+func TestHandlerServesCrewFallback(t *testing.T) {
+	handler := NewHandler(fstest.MapFS{
+		"crew/__crew__/index.html": {Data: []byte("<html>crew shell</html>")},
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/crew/uG_yKHB_W0ufmAZg", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if response.Body.String() != "<html>crew shell</html>" {
+		t.Fatalf("unexpected body: %q", response.Body.String())
+	}
+}
+
+// The bare prefix carries no id, so it must not hijack a real page or the 404.
+func TestHandlerDoesNotHijackBareDynamicPrefix(t *testing.T) {
+	handler := NewHandler(fstest.MapFS{
+		"crew/__crew__/index.html": {Data: []byte("<html>crew shell</html>")},
+		"404.html":                 {Data: []byte("<html>not found</html>")},
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/crew/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a bare /crew/, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestHandlerServesStaticAssetWithImmutableCache(t *testing.T) {
 	handler := NewHandler(fstest.MapFS{
 		"_next/static/chunks/app.js": {Data: []byte("console.log('ok')")},

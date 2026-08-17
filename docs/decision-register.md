@@ -11,7 +11,13 @@
 | Persistence | Postgres attempts (transaction-safe), in-memory fallback | Durable, idempotent, concurrency-safe attempt state; in-memory store keeps tests and no-DB runs fast. |
 | Stack | Go API, Next.js, TypeScript, Tailwind, Postgres | Keeps backend rules independent and frontend iteration fast. |
 | Launch timezone | Asia/Kolkata in the scaffold | Matches the current workspace context; should be revisited before public launch. |
-| Multiplayer | Async sharing and community puzzle links only for v1 | Preserves the shared-daily ritual without real-time rooms, presence, matchmaking, or chat moderation. |
+| Multiplayer | Crews: invite-link groups playing the same daily, with a shared board (2026-08-17) | Reverses the earlier async-only call. Keeps the shared-daily ritual — everyone still plays the same grid alone — while making "how did you do?" native instead of a copy-paste into a group chat. No shared board mutation, so no conflict rules, presence, or matchmaking. |
+| Crew identity | Per-crew display name on top of the anonymous session cookie | A leaderboard needs a name; accounts are still not worth the friction. The name is scoped to one crew, so there is no global namespace to moderate. |
+| Crew invites | Rotatable `invite_code`, separate from the crew's internal id (2026-08-17) | The id used to be the invite secret, which made a leaked link permanent and unrevocable. Rotating kills every shared link; members are unaffected because membership is by session and they re-enter from My crews. |
+| Crew ownership | Founder owns it; leaving transfers to the longest-standing member, last one out deletes the crew | An ownerless crew could never be rotated or moderated again. Owner-only writes are enforced inside the mutating statement, so there is no check-then-act gap. |
+| How-to-play | Auto-opens until the session has finished a grid, not once per browser (2026-08-17) | The old localStorage flag was wiped by incognito, cache clears, and Safari's cap on script-writable storage, so it re-prompted regulars while never returning for a first-timer who dismissed it. Completion is durable and cross-device. |
+| Crew spoilers | Result grids are withheld server-side until the viewer finishes today's grid | A crew board that shows a friend's grid early hands out the answers. The grids are not loaded at all until unlocked, so there is nothing to read out of the payload. |
+| Community sharing | Created puzzles are playable by link immediately; review gates public listing only (2026-08-17) | "Make a grid for your friends" cannot have a manual approval step in the middle. Unlisted grids never enter the daily, archive, or sitemap, and a takedown or withdrawal still kills the link. |
 
 ## Product Decisions Waiting To Be Made
 
@@ -45,4 +51,5 @@
 | Area | Revisit When | Default Until Then |
 | --- | --- | --- |
 | Player login | Anonymous retention, streak usage, or cross-device support becomes a real product problem. | Keep public play as guest-first; do not block launch on accounts, OAuth, leaderboards, or account recovery. |
-| Real-time multiplayer | There is evidence that live rooms are worth the infra, moderation, and scheduling cost. | Treat share text and community puzzle links as the multiplayer loop. |
+| Live crew race (SSE) | Crews are used enough that a 15s board refresh feels slow. | Crew boards poll every 15s while the tab is visible. Streaming needs the shared `http.TimeoutHandler` (which buffers responses) and the server's 15s `WriteTimeout` exempted for the stream path. |
+| Shared-board co-op | There is evidence people want to solve one grid together, not race separate ones. | Crews race the same daily independently — no shared mistake budget, no conflict rules, no presence. |

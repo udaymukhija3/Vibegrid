@@ -20,8 +20,9 @@ const (
 	PuzzleStatusArchived  PuzzleStatus = "ARCHIVED"
 
 	// OriginEditorial puzzles are the curated daily/archive set. OriginCommunity
-	// puzzles are user-created, held for review, and playable only by direct link
-	// after approval.
+	// puzzles are user-created and unlisted: playable by direct link as soon as
+	// they are created, never in the daily/archive/sitemap, and only entering
+	// public listings once an editor approves them.
 	OriginEditorial PuzzleOrigin = "EDITORIAL"
 	OriginCommunity PuzzleOrigin = "COMMUNITY"
 

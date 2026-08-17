@@ -45,3 +45,36 @@ export function writeStoredValue(key: string, value: string): boolean {
     return false;
   }
 }
+
+// sessionStorage, guarded the same way. Used for state that should survive a
+// client-side route change but deliberately not the visit: "I dismissed this
+// dialog" belongs here, because whether it should open *next* time is decided
+// by durable server state, not by what this browser remembers.
+function safeSessionStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readSessionValue(key: string): string | null {
+  try {
+    return safeSessionStorage()?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSessionValue(key: string, value: string): boolean {
+  const storage = safeSessionStorage();
+  if (!storage) {
+    return false;
+  }
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}

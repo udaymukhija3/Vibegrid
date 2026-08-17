@@ -110,6 +110,46 @@ func TestFutureAndDraftPuzzlesAreNotPubliclyPlayable(t *testing.T) {
 	}
 }
 
+// TestPubliclyPlayableMatrix pins the unlisted-by-link rule: a community puzzle
+// is playable as soon as it is created so the creator can send the link to
+// friends, while review still decides public listing and a takedown or creator
+// withdrawal (both ARCHIVED) kills the link. Editorial content is unaffected.
+func TestPubliclyPlayableMatrix(t *testing.T) {
+	const today = "2026-06-10"
+
+	for _, testCase := range []struct {
+		name        string
+		status      PuzzleStatus
+		origin      PuzzleOrigin
+		publishDate string
+		want        bool
+	}{
+		{"community pending is playable by link", PuzzleStatusPending, OriginCommunity, "", true},
+		{"community published is playable", PuzzleStatusPublished, OriginCommunity, "", true},
+		{"community archived is a takedown", PuzzleStatusArchived, OriginCommunity, "", false},
+		{"community draft is not playable", PuzzleStatusDraft, OriginCommunity, "", false},
+		{"editorial draft stays hidden", PuzzleStatusDraft, OriginEditorial, today, false},
+		{"editorial pending stays hidden", PuzzleStatusPending, OriginEditorial, today, false},
+		{"editorial archived stays hidden", PuzzleStatusArchived, OriginEditorial, today, false},
+		{"editorial published today is playable", PuzzleStatusPublished, OriginEditorial, today, true},
+		{"editorial published in the future is not", PuzzleStatusPublished, OriginEditorial, "2026-06-11", false},
+		{"editorial published without a date is not", PuzzleStatusPublished, OriginEditorial, "", false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			puzzle := Puzzle{
+				ID:          "pzl_matrix",
+				Status:      testCase.status,
+				Origin:      testCase.origin,
+				PublishDate: testCase.publishDate,
+			}
+			if got := PubliclyPlayable(puzzle, today); got != testCase.want {
+				t.Errorf("PubliclyPlayable(%s/%s, date=%q) = %v, want %v",
+					testCase.origin, testCase.status, testCase.publishDate, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestDemoRoomPuzzleIsPubliclyPlayable(t *testing.T) {
 	handler := NewServer(ServerConfig{
 		Puzzles: NewDemoPuzzleSource(StaticPuzzleSource(SeedPuzzles())),

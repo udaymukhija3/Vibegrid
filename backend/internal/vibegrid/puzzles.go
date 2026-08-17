@@ -84,11 +84,20 @@ func pagePuzzles(puzzles []Puzzle, limit, offset int) []Puzzle {
 }
 
 func PubliclyPlayable(puzzle Puzzle, today string) bool {
+	// Community puzzles are unlisted-by-link: playable the moment they are
+	// created, so someone can build a grid and send it to friends without
+	// waiting on an editor. Review is the gate for entering public listings,
+	// not for the link itself — PublishedPuzzles already excludes COMMUNITY,
+	// so an unreviewed grid never reaches the daily, the archive, or the
+	// sitemap. ARCHIVED still blocks: that is a takedown or a creator
+	// withdrawal, and both must kill the link.
+	if puzzle.Origin == OriginCommunity {
+		return puzzle.Status == PuzzleStatusPending || puzzle.Status == PuzzleStatusPublished
+	}
+	// Editorial drafts stay hidden until they are published and their date
+	// arrives, so an unpublished daily can't be read ahead of time by id.
 	if puzzle.Status != PuzzleStatusPublished {
 		return false
-	}
-	if puzzle.Origin == OriginCommunity {
-		return true
 	}
 	return puzzle.PublishDate != "" && puzzle.PublishDate <= today
 }
