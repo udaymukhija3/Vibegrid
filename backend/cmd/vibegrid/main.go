@@ -109,8 +109,19 @@ func run(logger *slog.Logger) error {
 		if devCORS {
 			return errors.New("VIBEGRID_DEV_CORS must be false in production")
 		}
+		// Turnstile belongs in the degrade list below for exactly the reason that
+		// list documents. As a fatal check it bricked every deploy after it
+		// shipped: the platform env never carried the new secrets, so each new
+		// binary died at boot and the old release kept serving — the failure is
+		// invisible unless you read the deploy log, because the site stays up.
+		//
+		// Booting without it is not a new exposure. verifyBot already fails open
+		// when botVerifier is nil, so an unconfigured deploy is exactly as
+		// protected as every release before Turnstile existed, and the endpoints
+		// behind it are still rate limited per IP. A silently un-deployed fix is
+		// the worse outcome.
 		if turnstileSiteKey == "" {
-			return errors.New("VIBEGRID_TURNSTILE_SITE_KEY and VIBEGRID_TURNSTILE_SECRET_KEY are required in production")
+			logger.Warn("VIBEGRID_TURNSTILE_SITE_KEY/SECRET_KEY are not set: bot verification stays disabled until they are")
 		}
 		// Missing observability/metadata config degrades with a warning instead
 		// of refusing to boot: a disabled /metrics or wrong OG URLs beat a
