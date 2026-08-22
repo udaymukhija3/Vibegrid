@@ -2,7 +2,7 @@ import { PolicyPage } from "@/components/PolicyPage";
 
 export const metadata = {
   title: "VibeGrid privacy",
-  description: "What VibeGrid stores for gameplay, reports, moderation, and reliability."
+  description: "What VibeGrid stores for private crew play and reliability."
 };
 
 export default function PrivacyPage() {
@@ -10,42 +10,34 @@ export default function PrivacyPage() {
     <PolicyPage
       eyebrow="Privacy"
       title="VibeGrid privacy"
-      intro="VibeGrid stores the minimum data needed to run gameplay, community sharing, moderation, and production reliability."
+      intro="VibeGrid uses guest browser identities. It stores only what is needed to run private crew rounds, preserve their history, and keep the service reliable."
       sections={[
         {
-          title: "Gameplay data",
+          title: "Browser identity",
           body: [
-            "Public play is guest play. The app uses a browser session cookie to keep your attempt state, streak, guesses, completion status, and puzzle statistics connected across requests.",
-            "Your browser may also store local attempt data so a board can recover after refresh."
+            "VibeGrid does not require a public account. An HttpOnly guest session cookie identifies one browser so it can create or join crews and return to its own cards and votes.",
+            "The public practice round runs in the browser and is not submitted to the server."
           ]
         },
         {
-          title: "Community puzzles",
+          title: "Crew rounds",
           body: [
-            "When you create a community grid, VibeGrid stores the puzzle words, group names, explanations, difficulty, status, and share id.",
-            "Community grids are held for review before a direct link becomes playable. They do not enter the daily puzzle or public archive unless the product changes in the future."
+            "For each crew, VibeGrid stores the crew name, invite code, member display names, daily card titles, the four selected fragment ids, blind votes, and timestamps.",
+            "A card keeps a snapshot of its author display name so an old result remains understandable after membership changes. Crew content is returned only to current members; invite links should be treated as private capability links."
           ]
         },
         {
-          title: "Reports and appeals",
+          title: "Control and retention",
           body: [
-            "Reports store the puzzle id, reason code, optional details, optional contact field, browser session id, status, and resolution note.",
-            "Appeals store the puzzle id, optional contact field, appeal message, status, and resolution note.",
-            "Admin moderation actions are stored in an audit log with actor, action, reason, note, puzzle id, and timestamp."
+            "A crew owner can rotate a leaked invite and remove a member. A member can leave. When the last member leaves, the crew and its card and vote history are deleted through database cascades.",
+            "Otherwise crew history is retained so members can revisit results. There is no claim here that a provider backup or restore schedule exists until that external configuration is verified."
           ]
         },
         {
           title: "Reliability and safety",
           body: [
             "The service may process IP address, request path, status code, latency, user agent, and rate-limit counters in logs or monitoring systems.",
-            "Admin access uses an HttpOnly session cookie. Public gameplay does not require a login."
-          ]
-        },
-        {
-          title: "Retention",
-          body: [
-            "Guest attempt data and its session cookie expire after up to 30 days. Puzzle, report, appeal, audit, and rate-limit data is kept while needed to operate the product, investigate abuse, or preserve service integrity.",
-            "Contact information entered in a report or appeal is optional and should only be included if you want a moderator to be able to respond."
+            "Admin access uses a separate revocable HttpOnly session and CSRF protection. Public practice does not require a login, email address, or phone number."
           ]
         }
       ]}

@@ -1,40 +1,67 @@
-# VibeGrid Tech Stack
+# VibeGrid technical stack
 
-## Stack Pick
+The stack follows the product’s risk: small responsive interaction in the
+browser, social and privacy rules in one server, and durable relational
+constraints in Postgres.
 
-| Layer | Choice | Rationale |
-| --- | --- | --- |
-| Frontend | Next.js App Router | Keeps the UI fast to iterate and easy to deploy. |
-| Backend | Go stdlib HTTP service | Owns game rules, sessions, attempts, and API contracts without JS backend churn. |
-| Frontend language | TypeScript | Keeps puzzle, attempt, and admin contracts explicit in the UI. |
-| Styling | Tailwind CSS | Fast iteration with a small custom visual system. |
-| Backend data path | Go structs now, Postgres next | In-memory store ships the first slice; `backend/db/schema.sql` defines the durable target. |
-| Database | Postgres | Reliable relational fit for puzzles, groups, tiles, attempts, guesses, and stats. |
-| Identity | Guest cookie sessions; admin login for operations | Best v1 UX; public accounts can be layered in later only if retention proves they matter. |
-| Validation | Go request validation at API edge | The backend is the source of truth for legal guesses and attempt state. |
-| Icons | Lucide React | Familiar controls without custom icon work. |
-| Deployment | Vercel frontend + Fly/Render/Railway Go API | Keeps frontend and backend deployable as independent services. |
+## Frontend
 
-## Why This Stack
+- Next.js 15 App Router, exported as static files.
+- React 19 and TypeScript with strict type checking.
+- Zod runtime parsing for every active public/crew/admin response.
+- Tailwind CSS plus a small semantic component layer in `globals.css`.
+- Bricolage Grotesque and IBM Plex Mono vendored locally; no build-time font
+  network dependency.
+- Lucide icons and Sonner feedback.
+- Vitest for pure client/storage/network behavior.
 
-This is a small product with real state, not a complex platform. Next.js keeps the public game UI quick to iterate. Go owns the backend because attempts, idempotency, session cookies, publishing, archive, and stats should not depend on framework-specific frontend internals.
+The public practice loop is client-local. Durable crew state is always loaded
+from the same-origin Go API with credentials included.
 
-The key technical decision is server-side validation. The player UI receives tile text and ids, but not group membership. The Go API validates selected ids and only reveals a group after a correct guess.
+## Backend
 
-## What Is Built vs Stubbed Today
+- Go standard `net/http` mux and middleware.
+- `database/sql` with the Postgres driver and explicit timeouts/pool bounds.
+- Embedded goose-style SQL migrations.
+- Server-side stage projection and authorization.
+- Transactional card/vote writes with database uniqueness constraints.
+- Opaque cookie sessions, admin CSRF/revocation, rate limits, request/body caps,
+  structured `slog`, Prometheus-text metrics, health/readiness, and graceful
+  shutdown.
 
-- Attempts, guesses, idempotency, mistakes, completion, and failure state are
-  durable in Postgres via a transaction-safe store (`PostgresAttemptStore`), with
-  an in-memory store as the no-database fallback. Migrations live in
-  `backend/db/migrations/` and apply on startup.
-- Puzzle *content* is still static and served from the seed package. DB-backed
-  puzzles and admin authoring are the next step (P1: Editor Desk); until then
-  `attempts.puzzle_id` is a plain reference rather than a foreign key.
-- The client keeps selected-tile UI state locally, but the server is the source
-  of truth for attempt state.
+## Persistence model
 
-## Testing Direction
+Active product tables:
 
-- Unit test the Go puzzle engine first.
-- Add repository tests after DB-backed attempts land.
-- Add Playwright coverage for select, submit, lock group, fail, complete, and share flows.
+- `vibe_daily_boards`: immutable dated prompt and 12-tile JSON snapshot.
+- `vibe_submissions`: crew/board/member, author-name snapshot, title, four tile
+  ids, client replay id.
+- `vibe_votes`: crew/board/voter/target, client replay id.
+- `crews` and `crew_members`: rotatable capability invite plus session-scoped
+  membership and owner lifecycle.
+
+Legacy puzzle, attempt, moderation, and community tables remain for old `/p`
+links. They are not the active product model.
+
+## Runtime
+
+```text
+Next static export ─┐
+SQL migrations ─────┼─ go:embed → one Go binary → Postgres
+Go API/server ──────┘
+```
+
+The production image is multi-stage and distroless/non-root. Same-origin serving
+keeps guest/admin cookie and CORS behavior simple.
+
+## Why not a larger stack
+
+- No WebSocket/SSE until an async polling delay is measured as a problem.
+- No Redis while Postgres and bounded in-process caches meet the topology.
+- No message broker for the core loop; phase changes derive from date.
+- No auth provider until cross-device recovery is a proven need.
+- No AI service because editorial taste and safe ambiguity are not an inference
+  throughput problem.
+
+Each deferred dependency would add runtime, security, cost, and portfolio claims
+that the current product does not yet earn.

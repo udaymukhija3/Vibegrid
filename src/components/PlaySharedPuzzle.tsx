@@ -12,7 +12,17 @@ export function PlaySharedPuzzle({ puzzleId: explicitPuzzleId }: { puzzleId?: st
   const state = useResource(loader, "This shared grid is not available.");
 
   if (state.status === "ready") {
-    return <VibeGridGame puzzle={state.data} />;
+    return (
+      <div>
+        <aside className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-amber bg-amber/[.12] px-4 py-3 text-sm font-bold text-cream">
+          <span>Legacy grid · this link is preserved, but hidden-category puzzles are no longer the main VibeGrid product.</span>
+          <Link href="/" className="underline decoration-2 underline-offset-4 hover:text-lime">
+            Try the current VibeGrid
+          </Link>
+        </aside>
+        <VibeGridGame puzzle={state.data} />
+      </div>
+    );
   }
 
   return (
@@ -28,10 +38,10 @@ export function PlaySharedPuzzle({ puzzleId: explicitPuzzleId }: { puzzleId?: st
               href="/"
               className="vg-button-primary mt-4"
             >
-              Play today&apos;s puzzle
+              Try today&apos;s practice
             </Link>
             <p className="mx-auto mt-5 max-w-xl border-t border-neutral-200 pt-5 text-sm font-medium text-neutral-600">
-              Grid creators can request a review from the private claim link issued at submission.
+              Legacy grid creators can request a review from the private claim link issued at submission.
             </p>
           </>
         )}

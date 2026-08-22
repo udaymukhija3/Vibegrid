@@ -69,12 +69,14 @@ export function HowToPlay({ hasFinishedAGrid }: { hasFinishedAGrid: boolean | nu
       return;
     }
     restoreRef.current = document.activeElement;
+    const trigger = triggerRef.current;
+    const restoreTarget = restoreRef.current;
     const panel = panelRef.current;
     const first = panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
 
     return () => {
-      const restore = triggerRef.current ?? restoreRef.current;
+      const restore = trigger ?? restoreTarget;
       if (restore instanceof HTMLElement && document.contains(restore)) {
         restore.focus();
       }

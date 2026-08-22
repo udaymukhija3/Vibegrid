@@ -42,7 +42,7 @@ import {
   type StreakSummary
 } from "@/lib/api";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
-import { apiFetch } from "@/lib/http";
+import { API_TIMEOUT_MS, apiFetch } from "@/lib/http";
 import { HowToPlay } from "@/components/HowToPlay";
 import type {
   AttemptSnapshot,
@@ -745,19 +745,28 @@ export function VibeGridGame({
     pendingGuessIdRef.current = clientGuessId;
 
     try {
-      const response = await apiFetch("/api/guesses", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json"
+      // clientGuessId makes this POST replayable: the server returns the stored
+      // result for a guess id it has already recorded. That earns the cold-start
+      // retry, so a submit that lands while the free-tier instance is waking up
+      // waits for it instead of dying at the normal 8s budget.
+      const response = await apiFetch(
+        "/api/guesses",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            puzzleId: puzzle.id,
+            selectedTileIds: attempt.selectedTileIds,
+            clientGuessId,
+            mode
+          })
         },
-        body: JSON.stringify({
-          puzzleId: puzzle.id,
-          selectedTileIds: attempt.selectedTileIds,
-          clientGuessId,
-          mode
-        })
-      });
+        API_TIMEOUT_MS,
+        { replayable: true }
+      );
 
       const result = (await response.json()) as GuessResponse;
       // We got a server response, so this guess id is settled — the next submit

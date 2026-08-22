@@ -5,19 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 )
-
-// sitemapMaxURLs caps how many puzzle URLs the sitemap lists. The sitemap spec
-// allows up to 50k per file; a daily puzzle will not approach that for years,
-// and the cap keeps the build bounded.
-const sitemapMaxURLs = 5000
 
 func (server *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	fmt.Fprintf(w,
-		"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nSitemap: %s/sitemap.xml\n",
+		"User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api/\nDisallow: /crew/\nDisallow: /p/\nDisallow: /claim\nDisallow: /demo\nSitemap: %s/sitemap.xml\n",
 		server.publicBaseURL,
 	)
 }
@@ -33,30 +27,17 @@ type sitemapURLSet struct {
 	URLs    []sitemapURL `xml:"url"`
 }
 
-// handleSitemap builds the sitemap from the live data model: the static pages
-// plus every editorial puzzle that is published on or before today. Community
-// puzzles are link-only by design and deliberately stay out of search indexes,
-// and future-dated puzzles are excluded because PublishedPuzzles filters them.
+// handleSitemap contains only product-level public pages. Crew rooms are
+// capability links and classic /p links are a compatibility surface, so neither
+// belongs in search results.
 func (server *Server) handleSitemap(w http.ResponseWriter, r *http.Request) {
 	if !server.allowPuzzleRead(w, r) {
 		return
 	}
 	base := server.publicBaseURL
 	set := sitemapURLSet{Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9"}
-	for _, path := range []string{"/", "/archive", "/create", "/privacy", "/terms", "/policy"} {
+	for _, path := range []string{"/", "/crews", "/privacy", "/terms", "/policy"} {
 		set.URLs = append(set.URLs, sitemapURL{Loc: base + path})
-	}
-
-	puzzles, err := server.puzzles.PublishedPuzzles(r.Context(), server.todayString(), sitemapMaxURLs, 0)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not build the sitemap.")
-		return
-	}
-	for _, puzzle := range puzzles {
-		set.URLs = append(set.URLs, sitemapURL{
-			Loc:     base + "/p/" + url.PathEscape(puzzle.ID),
-			LastMod: puzzle.PublishDate,
-		})
 	}
 
 	body, err := xml.Marshal(set)

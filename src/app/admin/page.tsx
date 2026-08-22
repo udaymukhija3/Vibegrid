@@ -1,25 +1,30 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { AdminDesk } from "@/components/AdminDesk";
+import { VibeBoardDesk } from "@/components/VibeBoardDesk";
+
+export const metadata = {
+  title: "Board room · VibeGrid",
+  robots: { index: false, follow: false }
+};
 
 export default function AdminPage() {
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-5xl">
+    <main className="vg-shell">
+      <div className="mx-auto max-w-6xl">
         <Link
           href="/"
-          className="inline-flex h-10 items-center gap-2 rounded border border-ink bg-white px-3 text-sm font-semibold shadow-[0_4px_0_#171717]"
+          className="vg-button vg-button-quiet"
         >
           <ArrowLeft aria-hidden size={16} />
           Today
         </Link>
 
-        <header className="mt-8 border-b-4 border-ink pb-5">
-          <p className="text-sm font-bold text-plum">Editor Desk</p>
-          <h1 className="mt-2 text-4xl font-black sm:text-5xl">Puzzle pipeline</h1>
+        <header className="mt-10 max-w-4xl">
+          <p className="vg-meta text-lime">VibeGrid / board room</p>
+          <h1 className="mt-4 text-5xl font-black tracking-[-0.06em] sm:text-7xl">Set the constraint.<br />Leave room for people.</h1>
         </header>
 
-        <AdminDesk />
+        <VibeBoardDesk />
       </div>
     </main>
   );

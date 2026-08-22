@@ -8,14 +8,10 @@ class CookieJar {
 
   store(response) {
     const raw = response.headers.get("set-cookie");
-    if (!raw) {
-      return;
-    }
+    if (!raw) return;
     const first = raw.split(";")[0];
     const separator = first.indexOf("=");
-    if (separator > 0) {
-      this.#cookies.set(first.slice(0, separator), first.slice(separator + 1));
-    }
+    if (separator > 0) this.#cookies.set(first.slice(0, separator), first.slice(separator + 1));
   }
 
   header() {
@@ -30,7 +26,6 @@ class CookieJar {
 export async function runSmoke({
   baseUrl = process.env.VIBEGRID_BASE_URL ?? "http://127.0.0.1:3000",
   mutate = false,
-  createCommunity = false,
   metricsToken = process.env.VIBEGRID_METRICS_TOKEN ?? "",
   log = console.log
 } = {}) {
@@ -40,14 +35,8 @@ export async function runSmoke({
   async function request(path, init = {}) {
     const headers = new Headers(init.headers ?? {});
     const cookie = jar.header();
-    if (cookie) {
-      headers.set("Cookie", cookie);
-    }
-
-    const response = await fetch(new URL(path, base), {
-      ...init,
-      headers
-    });
+    if (cookie) headers.set("Cookie", cookie);
+    const response = await fetch(new URL(path, base), { ...init, headers });
     jar.store(response);
     return response;
   }
@@ -55,8 +44,7 @@ export async function runSmoke({
   async function expectJSON(path, status = 200, init = {}) {
     const response = await request(path, init);
     assert(response.status === status, `${path} returned ${response.status}, expected ${status}`);
-    const payload = await response.json();
-    return { response, payload };
+    return { response, payload: await response.json() };
   }
 
   async function expectText(path, status = 200, init = {}) {
@@ -67,150 +55,116 @@ export async function runSmoke({
 
   const health = await expectJSON("/healthz");
   assert(health.payload.ok === true, "/healthz did not return ok=true");
-  log("ok healthz");
-
   const ready = await expectJSON("/readyz");
   assert(ready.payload.ready === true, "/readyz did not return ready=true");
-  log("ok readyz");
+  log("ok health/readiness");
 
   const root = await expectText("/");
   assert(isHTML(root.response), "/ did not return HTML");
-  log("ok frontend shell");
+  for (const route of ["/crews", "/archive", "/create", "/demo", "/policy", "/terms", "/privacy"]) {
+    const page = await expectText(route);
+    assert(isHTML(page.response), `${route} did not return HTML`);
+  }
+  log("ok public product pages");
 
-  const today = await expectJSON("/api/puzzles/today");
-  const puzzle = today.payload;
-  assert(typeof puzzle.id === "string" && puzzle.id.length > 0, "today puzzle has no id");
-  assert(Number.isInteger(puzzle.puzzleNumber), "today puzzle has no puzzle number");
-  assert(Array.isArray(puzzle.tiles) && puzzle.tiles.length === 16, "today puzzle does not expose 16 tiles");
-  assertPublicPuzzleDoesNotLeakAnswers(puzzle, "today puzzle");
-  log(`ok today puzzle #${puzzle.puzzleNumber}`);
-
-  const attempt = await expectJSON(`/api/attempts/${encodeURIComponent(puzzle.id)}`);
-  assert(attempt.payload.puzzleId === puzzle.id, "attempt payload references the wrong puzzle");
-  assert(jar.has("vibegrid_session"), "attempt did not set a vibegrid_session cookie");
-  log("ok attempt session");
+  const today = await expectJSON("/api/vibes/today");
+  const board = today.payload;
+  assertVibeBoard(board, "today board");
+  assert(today.response.headers.get("cache-control"), "today board had no cache policy");
+  log(`ok board ${String(board.boardNumber).padStart(3, "0")} (${board.publishDate})`);
 
   const session = await expectJSON("/api/session");
   assert(session.payload.mode === "guest", "session did not report guest mode");
   assert(session.payload.guest?.active === true, "guest session was not active");
-  assert(session.payload.guest?.cookieName === "vibegrid_session", "guest session named the wrong cookie");
-  assert(session.payload.admin?.authenticated === false, "public smoke should not be admin-authenticated");
-  log(`ok guest session (${session.payload.guest.label})`);
+  assert(jar.has("vibegrid_session"), "guest session cookie was not set");
+  log("ok guest browser identity");
 
-  const archive = await expectJSON("/api/puzzles");
-  assert(Array.isArray(archive.payload), "archive did not return an array");
-  log(`ok archive (${archive.payload.length} puzzle${archive.payload.length === 1 ? "" : "s"})`);
-
-  const direct = await expectJSON(`/api/puzzles/${encodeURIComponent(puzzle.id)}`);
-  assert(direct.payload.id === puzzle.id, "direct puzzle lookup returned a different puzzle");
-  assertPublicPuzzleDoesNotLeakAnswers(direct.payload, "direct puzzle lookup");
-  log("ok direct puzzle api");
-
-  const og = await expectText(`/api/og/puzzles/${encodeURIComponent(puzzle.id)}.svg`);
-  assert(og.response.headers.get("content-type")?.includes("image/svg+xml"), "OG image was not SVG");
-  assert(og.text.includes("<svg"), "OG image body was not SVG");
-  log("ok og image");
-
-  const shared = await expectText(`/p/${encodeURIComponent(puzzle.id)}`);
-  assert(isHTML(shared.response), "shared puzzle route did not return HTML");
-  log("ok shared puzzle page");
-
-  const demoRoom = "smoke-room";
-  const demo = await expectText(`/demo/${demoRoom}`);
-  assert(isHTML(demo.response), "demo room route did not return HTML");
-  const demoPuzzle = await expectJSON(`/api/puzzles/demo-${demoRoom}`);
-  assert(demoPuzzle.payload.id === `demo-${demoRoom}`, "demo puzzle returned a different id");
-  assert(Array.isArray(demoPuzzle.payload.tiles) && demoPuzzle.payload.tiles.length === 16, "demo puzzle does not expose 16 tiles");
-  assertPublicPuzzleDoesNotLeakAnswers(demoPuzzle.payload, "demo puzzle");
-  await expectJSON(`/api/attempts/demo-${demoRoom}`);
-  log("ok demo room");
-
-  for (const route of ["/policy", "/terms", "/privacy"]) {
-    const policy = await expectText(route);
-    assert(isHTML(policy.response), `${route} did not return HTML`);
-  }
-  log("ok policy pages");
+  const robots = await expectText("/robots.txt");
+  assert(robots.text.includes("Disallow: /admin"), "robots.txt did not protect admin");
+  const sitemap = await expectText("/sitemap.xml");
+  assert(sitemap.text.includes("/crews"), "sitemap did not include the crew entry point");
+  assert(!sitemap.text.includes("/p/"), "sitemap advertised compatibility puzzle links");
+  assert(!sitemap.text.includes("/crew/"), "sitemap advertised private crew rooms");
+  log("ok search boundaries");
 
   if (mutate) {
-    const tileIds = puzzle.tiles.slice(0, 4).map((tile) => tile.id);
-    const clientGuessId = `smoke-${randomUUID()}`;
-    const guessBody = {
-      puzzleId: puzzle.id,
-      selectedTileIds: tileIds,
-      clientGuessId,
-      mode: "medium"
-    };
-    const guess = await expectJSON("/api/guesses", 200, {
+    const create = await request("/api/crews", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(guessBody)
+      headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+      body: JSON.stringify({ name: `Smoke ${Date.now()}`, displayName: "Smoke" })
     });
-    assert(guess.payload.ok === true, "guess response was not ok");
-    assert(guess.payload.attempt?.puzzleId === puzzle.id, "guess did not update the expected attempt");
+    if (create.status === 503) {
+      log("skip durable crew mutation (database unavailable)");
+    } else {
+      assert(create.status === 201, `/api/crews returned ${create.status}, expected 201`);
+      const crew = await create.json();
+      assert(typeof crew.inviteCode === "string" && crew.inviteCode.length > 8, "created crew had no invite code");
 
-    const replay = await expectJSON("/api/guesses", 200, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(guessBody)
-    });
-    assert(replay.payload.ok === true, "idempotent replay response was not ok");
-    assertReplayDidNotAdvanceAttempt(guess.payload, replay.payload);
+      const daily = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/daily`);
+      assert(daily.payload.isMember === true, "crew creator was not a member");
+      assertVibeBoard(daily.payload.today?.board, "crew today board");
 
-    const reloaded = await expectJSON(`/api/attempts/${encodeURIComponent(puzzle.id)}`);
-    assert(
-      reloaded.payload.guessCount === guess.payload.attempt.guessCount,
-      `fresh attempt read changed guess count after replay (${reloaded.payload.guessCount} vs ${guess.payload.attempt.guessCount})`
-    );
-    assert(
-      Array.isArray(reloaded.payload.guessHistory) &&
-        reloaded.payload.guessHistory.length === guess.payload.attempt.guessHistory.length,
-      "fresh attempt read did not preserve the idempotent guess history"
-    );
-    log("ok guess write path and idempotent replay");
+      const clientSubmissionId = `smoke_${randomUUID().replaceAll("-", "_")}`;
+      const body = {
+        boardId: board.id,
+        title: "Smoke signal",
+        selectedTileIds: board.tiles.slice(0, 4).map((tile) => tile.id),
+        clientSubmissionId
+      };
+      const first = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/submissions`, 201, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        body: JSON.stringify(body)
+      });
+      const replay = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/submissions`, 201, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        body: JSON.stringify(body)
+      });
+      assert(first.payload.id === replay.payload.id, "submission replay created a second card");
 
-    const clientError = await expectJSON("/api/client-errors", 202, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "smoke: synthetic client error", url: `${base}smoke` })
-    });
-    assert(clientError.payload.ok === true, "client error report was not accepted");
-    log("ok client error reporting");
-  }
-
-  if (createCommunity) {
-    const created = await expectJSON("/api/community/puzzles", 202, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sampleCommunityPuzzle())
-    });
-    assert(created.payload.ok === true && created.payload.id, "community create did not return a puzzle id");
-    assert(created.payload.status === "PENDING", "community puzzle was not held for review");
-    await expectJSON(`/api/puzzles/${encodeURIComponent(created.payload.id)}`, 404);
-    log(`ok community submission #${created.payload.puzzleNumber} is pending review`);
+      const reloaded = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/daily`);
+      assert(reloaded.payload.today?.submission?.id === first.payload.id, "crew daily did not preserve the submitted card");
+      log("ok durable crew create/submit/replay");
+    }
   }
 
   if (metricsToken) {
-    const metrics = await expectText("/metrics", 200, {
-      headers: { Authorization: `Bearer ${metricsToken}` }
-    });
-    assert(metrics.text.includes("vibegrid_up 1"), "metrics did not expose vibegrid_up");
-    assert(metrics.text.includes("vibegrid_http_requests_total"), "metrics did not expose request counters");
-    assert(metrics.text.includes("vibegrid_http_response_bytes_total"), "metrics did not expose response byte counters");
-    assert(metrics.text.includes("vibegrid_process_heap_alloc_bytes"), "metrics did not expose process memory gauges");
-    assert(metrics.text.includes("vibegrid_store_operations_total"), "metrics did not expose storage operation counters");
+    const denied = await request("/metrics", { headers: { Authorization: "Bearer wrong-token" } });
+    assert(denied.status === 401, `/metrics accepted a wrong token (${denied.status})`);
+    const metrics = await expectText("/metrics", 200, { headers: { Authorization: `Bearer ${metricsToken}` } });
+    assert(metrics.text.includes("vibegrid_up 1"), "metrics body missed vibegrid_up");
+    assert(metrics.text.includes('route="/api/vibes/today"'), "metrics did not label the new board route");
     log("ok protected metrics");
-  } else {
-    log("skipped protected metrics (VIBEGRID_METRICS_TOKEN is not set)");
   }
 
-  return { baseUrl: base.toString(), puzzleId: puzzle.id, puzzleNumber: puzzle.puzzleNumber };
+  return { baseUrl: base.toString().replace(/\/$/, ""), boardNumber: board.boardNumber };
+}
+
+function assertVibeBoard(board, label) {
+  assert(board && typeof board === "object", `${label} was missing`);
+  assert(typeof board.id === "string" && board.id.length > 0, `${label} had no id`);
+  assert(Number.isInteger(board.boardNumber), `${label} had no board number`);
+  assert(/^\d{4}-\d{2}-\d{2}$/.test(board.publishDate), `${label} had an invalid date`);
+  assert(typeof board.prompt === "string" && board.prompt.length > 5, `${label} had no prompt`);
+  assert(Array.isArray(board.tiles) && board.tiles.length === 12, `${label} did not expose exactly 12 fragments`);
+  for (const forbiddenKey of ["groups", "answers", "answerKey", "difficulty", "mistakesAllowed"]) {
+    assert(!(forbiddenKey in board), `${label} leaked obsolete field ${forbiddenKey}`);
+  }
+  const ids = new Set();
+  const texts = new Set();
+  for (const [index, tile] of board.tiles.entries()) {
+    assert(Object.keys(tile).sort().join(",") === "id,text", `${label} fragment ${index} exposed unexpected fields`);
+    ids.add(tile.id);
+    texts.add(tile.text.toLocaleLowerCase());
+  }
+  assert(ids.size === 12 && texts.size === 12, `${label} contained duplicate fragments`);
 }
 
 function normalizeBaseURL(value) {
   const url = new URL(value);
-  if (!url.pathname.endsWith("/")) {
-    url.pathname += "/";
-  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("base URL must use http or https");
+  url.pathname = url.pathname.replace(/\/$/, "") + "/";
   return url;
 }
 
@@ -218,69 +172,8 @@ function isHTML(response) {
   return response.headers.get("content-type")?.includes("text/html");
 }
 
-function assertPublicPuzzleDoesNotLeakAnswers(puzzle, label) {
-  for (const forbiddenKey of ["groups", "answers", "answerKey", "solvedGroups", "revealedGroups"]) {
-    assert(!(forbiddenKey in puzzle), `${label} leaked ${forbiddenKey}`);
-  }
-  for (const [index, tile] of puzzle.tiles.entries()) {
-    const keys = Object.keys(tile).sort();
-    assert(keys.join(",") === "id,text", `${label} tile ${index} exposed unexpected keys: ${keys.join(",")}`);
-  }
-}
-
-function assertReplayDidNotAdvanceAttempt(first, replay) {
-  assert(replay.isCorrect === first.isCorrect, "idempotent replay changed correctness");
-  assert(replay.attempt?.puzzleId === first.attempt?.puzzleId, "idempotent replay changed puzzle id");
-  assert(
-    replay.attempt?.guessCount === first.attempt?.guessCount,
-    `idempotent replay changed guess count (${replay.attempt?.guessCount} vs ${first.attempt?.guessCount})`
-  );
-  assert(
-    replay.attempt?.mistakes === first.attempt?.mistakes,
-    `idempotent replay changed mistake count (${replay.attempt?.mistakes} vs ${first.attempt?.mistakes})`
-  );
-  assert(
-    replay.attempt?.solvedGroups?.length === first.attempt?.solvedGroups?.length,
-    "idempotent replay changed solved group count"
-  );
-  assert(
-    replay.attempt?.guessHistory?.length === first.attempt?.guessHistory?.length,
-    "idempotent replay appended duplicate guess history"
-  );
-}
-
 function assert(condition, message) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function sampleCommunityPuzzle() {
-  return {
-    difficulty: "MEDIUM",
-    groups: [
-      {
-        name: "Launch snacks",
-        explanation: "Things eaten while watching deploy logs.",
-        tiles: ["chips", "tea", "banana", "trail mix"]
-      },
-      {
-        name: "Desk weather",
-        explanation: "Tiny forecasts from a working setup.",
-        tiles: ["warm laptop", "cold coffee", "window glare", "fan hum"]
-      },
-      {
-        name: "Commit feelings",
-        explanation: "Moods that arrive right before pushing.",
-        tiles: ["relief", "doubt", "focus", "nerve"]
-      },
-      {
-        name: "Browser rituals",
-        explanation: "Things checked before sharing a link.",
-        tiles: ["reload", "copy URL", "open tab", "check mobile"]
-      }
-    ]
-  };
+  if (!condition) throw new Error(message);
 }
 
 function cliOptions(argv) {
@@ -288,32 +181,21 @@ function cliOptions(argv) {
   const options = {
     baseUrl: process.env.VIBEGRID_BASE_URL ?? "http://127.0.0.1:3000",
     mutate: process.env.VIBEGRID_SMOKE_MUTATE === "true",
-    createCommunity: process.env.VIBEGRID_SMOKE_CREATE_COMMUNITY === "true",
     metricsToken: process.env.VIBEGRID_METRICS_TOKEN ?? ""
   };
-
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === "--mutate") {
-      options.mutate = true;
-    } else if (arg === "--create-community") {
-      options.createCommunity = true;
-    } else if (arg === "--base-url") {
-      options.baseUrl = args[++index];
-    } else if (arg === "--metrics-token") {
-      options.metricsToken = args[++index] ?? "";
-    } else if (!arg.startsWith("--")) {
-      options.baseUrl = arg;
-    }
+    if (arg === "--mutate") options.mutate = true;
+    else if (arg === "--base-url") options.baseUrl = args[++index];
+    else if (arg === "--metrics-token") options.metricsToken = args[++index] ?? "";
+    else if (!arg.startsWith("--")) options.baseUrl = arg;
   }
   return options;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   runSmoke(cliOptions(process.argv.slice(2)))
-    .then(({ baseUrl, puzzleNumber }) => {
-      console.log(`smoke passed for ${baseUrl} (VibeGrid #${puzzleNumber})`);
-    })
+    .then(({ baseUrl, boardNumber }) => console.log(`smoke passed for ${baseUrl} (board ${boardNumber})`))
     .catch((error) => {
       console.error(error instanceof Error ? error.message : error);
       process.exit(1);

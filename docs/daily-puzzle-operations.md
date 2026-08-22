@@ -1,90 +1,78 @@
-# Daily Puzzle Operations
+# Daily board operations
 
-VibeGrid needs a content habit, not a content miracle. The goal is to keep a
-published queue long enough that deployment, travel, or one bad writing day does
-not break the daily ritual.
+The filename is retained for old links. The active object is a **daily board**,
+not a hidden-answer puzzle.
 
-## Launch Queue
+## Board contract
 
-The seed queue currently covers June 2, 2026 through June 10, 2026. Keep at
-least seven future editorial puzzles published or scheduled before sending the
-link widely.
+- one UTC publish date;
+- one prompt, 1–140 runes;
+- exactly twelve distinct fragments, each 1–28 runes;
+- no groups, intended quartet, difficulty, answer, timer, or mistake budget;
+- immutable after the first row for that date is stored.
 
-## Weekly Cadence
+## Normal workflow
 
-1. Write ten puzzle candidates in one batch.
-2. Cut the weakest three before they reach the app.
-3. Test-solve the remaining seven without looking at group names.
-4. Rewrite any category that feels arbitrary after reveal.
-5. Publish one puzzle per date from the admin desk.
-6. Check wrong-guess analytics after each puzzle has enough plays.
+1. Sign in at `/admin`.
+2. Choose today or a future UTC date.
+3. Write the prompt and twelve fragments.
+4. Complete the editorial QA in `product-vision.md`.
+5. Freeze the board. A duplicate date returns conflict by design.
+6. Verify `GET /api/vibes/today` when that UTC date becomes active.
 
-This gives one week of daily content plus a small buffer. If a puzzle feels
-clever but unfair, it stays out. The daily game survives only if players trust
-the reveal.
+The board room lists the latest 90 stored boards. A missing scheduled date is
+filled by the deterministic curated bank in `vibe_boards.go`; the first request
+persists that snapshot when Postgres is available.
 
-## Puzzle Recipe
+## Before freezing
 
-Each puzzle should have four different kinds of groups:
+- Make six meaningfully different titled cards.
+- Check that no obvious intended quartet dominates.
+- Check duplicate/case-folded fragment text.
+- Read prompt and fragments aloud.
+- Check the smallest mobile width.
+- Review private-person, harassment, protected-class, sexual, and IP risk.
+- Confirm the date in UTC, especially near local midnight.
 
-- One clean semantic group that lets new players get moving.
-- One cultural or internet-native group with a specific voice.
-- One red-herring group where two or three tiles plausibly cross over.
-- One funny-but-fair group that makes the share feel worth sending.
+## Mistake or unsafe board
 
-Good category names sound authored:
+### Before it has been persisted
 
-- Airport personality collapse
-- Group chat currently on fire
-- Premium mediocrity
-- Corporate seance
+Edit the draft in your working notes and freeze the corrected version.
 
-Weak category names sound generated:
+### After the date is frozen but before anyone plays
 
-- Common office things
-- Travel items
-- Social media concepts
-- Relaxing activities
+The application has no edit endpoint. That is intentional. If an exceptional
+operator correction is required, use an audited migration or carefully reviewed
+SQL only after confirming there are zero submissions for the board. Record the
+change and rerun smoke. Do not add a casual “edit” button.
 
-## Fairness Checks
+### After any card exists
 
-Before publishing, ask:
+Do not mutate the board. A card’s selected ids and every member’s interpretation
+refer to that exact palette. If content is unsafe, take the service/crew path out
+of circulation while deciding a forward fix; never silently rewrite history.
 
-- Can a player explain the group after seeing the answer?
-- Does every tile belong more strongly to its intended group than any other?
-- Is the hard part association, not trivia?
-- Is the joke aimed at behavior or objects, not protected identities?
-- Are all tiles short enough to fit on mobile?
+## Rollover checks
 
-If two groups can trade tiles and still feel reasonable, rewrite them.
+At UTC midnight:
 
-## Assisted Drafting Rule
+- `/api/vibes/today` returns the new id/date/number/prompt and twelve fragments;
+- a crew daily response moves prior today → judge and prior judge → result;
+- an already-open composer is not forcibly swapped mid-action; refresh/fetch
+  reconciles it;
+- stored prior boards remain byte-for-byte stable;
+- cache headers do not serve yesterday past the bounded rollover window.
 
-AI can be used for raw lists, red-herring brainstorming, or alternate-solution
-checks. It should not write final category names, final explanations, or publish
-decisions. Final copy should sound like VibeGrid, not like a generic puzzle
-template.
+## Editorial fallback incident
 
-## Admin Flow
+If an unexpected curated fallback ships:
 
-Use `/admin` for the queue:
+1. verify the active UTC date and configured timezone;
+2. query `vibe_daily_boards` for that date;
+3. determine whether the editor attempted a duplicate/frozen date;
+4. do not overwrite if any `vibe_submissions` rows exist;
+5. record the miss and improve the publishing checklist.
 
-1. Save each candidate as a draft.
-2. Check queue health for the next launch window.
-3. Preview the exact board and answer key before publishing.
-4. Publish only after a manual solve.
-5. Assign dates in order.
-6. Keep community puzzles out of the daily queue.
-7. Review reports before reusing a theme or tile pattern.
-
-## Daily Review
-
-After launch, check:
-
-- Did people finish?
-- Did one wrong guess dominate?
-- Did reports mention offensive or confusing content?
-- Did the share format bring people back through the URL?
-
-Use that feedback to tune the next batch. The product should get sharper each
-week without becoming busier.
+Fallback availability is a reliability feature. It is not a substitute for a
+human editorial queue.

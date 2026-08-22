@@ -1,368 +1,205 @@
 # Deploying VibeGrid
 
-This is the complete runbook to take VibeGrid from the repo to a live URL.
+VibeGrid deploys as one long-running Go binary serving the embedded static
+Next.js export and same-origin `/api/*` routes, backed by managed Postgres.
 
-## What you are deploying
-
-VibeGrid is **one Go binary** that serves both the web app and the API from a
-single origin. The Docker build compiles the Next.js app to a static export,
-embeds it into the Go binary via `go:embed` (along with the SQL migrations), and
-produces a tiny distroless image that listens on `:8081` and runs as a non-root
-user.
-
-```
-Browser ── HTTPS ──▶ container (Go binary: embedded Next export + /api/*) ──▶ Postgres
+```text
+browser ──HTTPS──▶ Go container (embedded web + API + migrations) ──▶ Postgres
 ```
 
-Because it is a normal long-running server process, it deploys to a **container
-host**, not to a static/edge platform.
+It is not a static Pages/Workers application. Cloudflare can proxy/DNS in front
+of the container, but its static/edge runtimes do not replace the Go process.
 
-> ### Read this if you came from Cloudflare
-> Cloudflare **Pages** (static) and **Workers** (V8/WASM isolates) cannot run an
-> arbitrary Go binary, and this app is single-origin (the Go process serves the
-> frontend itself — there is no separate static site to host). So a Cloudflare
-> *compute* deployment of this architecture was never going to work; that is the
-> most likely reason the old one died.
->
-> You can still use Cloudflare, but only as **DNS + CDN/proxy in front of the
-> container origin**. Two important caveats if you do:
-> 1. The app ignores all forwarding headers unless the connected peer is in the
->    explicit `VIBEGRID_TRUSTED_PROXY_CIDRS` allowlist. This prevents a visitor
->    from bypassing rate limits with `X-Real-IP`. Before enabling any proxy, get
->    its documented source CIDRs, configure only those CIDRs, then verify from
->    logs that requests are separated by real client IP. Do not use `0.0.0.0/0`
->    or `::/0`; that would reintroduce header spoofing. If the provider cannot
->    give stable source CIDRs, leave the setting empty and enforce per-client
->    limits at the edge instead.
-> 2. The app already sets HSTS and forces HTTPS at the host; keep Cloudflare SSL
->    mode on **Full (strict)**, not Flexible, to avoid redirect loops.
+## Readiness boundary
 
-The repo ships the production pieces: multi-stage `Dockerfile`, `fly.toml`,
-`/healthz` + `/readyz` + `/metrics`, route-aware CSP, embedded migrations, and a
-`vibegrid migrate` subcommand used as the release step.
-
----
-
-## 0. Prerequisites
-
-- A container host account. **Fly.io** is pre-configured here; Render or Railway
-  work too (see "Other hosts" at the end).
-- A **managed Postgres** provider: Neon, Supabase, Fly Postgres, or Railway.
-- CLIs: `flyctl` (`brew install flyctl`), `psql` (to verify the DB), `openssl`
-  (to generate secrets).
-- The repo checked out, CI green on `main`.
-
----
+The checked-in Docker/Fly/Render configuration is deployment scaffolding. Do
+not claim a production launch until the final domain, provider backups/PITR,
+restore drill, external checks, alert delivery, and deployed SHA are verified.
 
 ## 1. Provision Postgres
 
-1. Create a managed Postgres database.
-2. Copy the **pooled** connection string if the provider offers one (Neon and
-   Supabase do). Keep the direct/session string handy too — see the pooler note.
-3. Note the connection cap. The app sets `SetMaxOpenConns(10)` **per machine**
-   (`backend/internal/vibegrid/postgres_store.go`), so:
-   `10 × (machine count) ≤ pooler/instance connection limit`.
-4. Enable **daily backups and point-in-time recovery now**, before any real
-   traffic. Record retention, RPO, and RTO.
+Use a managed provider such as Neon, Supabase, Fly Postgres, or Railway.
 
-> **Pooler gotcha (pgx + PgBouncer).** The app uses the `pgx` driver. If your
-> connection string points at a **transaction-mode** pooler (Supabase's `6543`
-> pgbouncer port, some Neon setups), prepared-statement caching can throw
-> `prepared statement "..." already exists`. Fix by appending
-> `?default_query_exec_mode=simple_protocol` to `DATABASE_URL`, or use the
-> **session-mode / direct** connection string. This is a classic "it worked then
-> randomly 500s" failure — set it correctly up front.
-
-No manual schema step is needed: migrations run automatically as the release
-command (step 3), and starter puzzles are seeded idempotently on every boot.
-
----
+1. Create a database and note its connection cap.
+2. Prefer a provider-supported pooled URL if compatible. The app caps open
+   connections per instance; total instance pools must stay below the provider
+   limit.
+3. For transaction-mode PgBouncer, add the driver’s simple-protocol option if
+   the provider requires it; otherwise use a session/direct connection.
+4. Enable backups and PITR before inviting a crew.
+5. Run a scratch restore and record actual RPO/RTO. The runbook is
+   `docs/runbooks/database-restore.md`.
 
 ## 2. Generate secrets
 
 ```bash
-# Admin browser login (pick a strong password) and the CSRF/session secret:
 VIBEGRID_ADMIN_PASSWORD="$(openssl rand -base64 24)"
 VIBEGRID_ADMIN_SESSION_SECRET="$(openssl rand -hex 32)"
-# Optional automation/API token (the web UI uses the password + cookie instead):
 VIBEGRID_ADMIN_TOKEN="$(openssl rand -hex 32)"
 VIBEGRID_METRICS_TOKEN="$(openssl rand -hex 32)"
-echo "ADMIN_PASSWORD=$VIBEGRID_ADMIN_PASSWORD"   # save these in your password manager
-echo "SESSION_SECRET=$VIBEGRID_ADMIN_SESSION_SECRET"
-echo "ADMIN_TOKEN=$VIBEGRID_ADMIN_TOKEN"
-echo "METRICS_TOKEN=$VIBEGRID_METRICS_TOKEN"
 ```
 
-If `VIBEGRID_ADMIN_PASSWORD` is set but `VIBEGRID_ADMIN_SESSION_SECRET` is not,
-browser admin login is disabled (the app logs a warning). Set both.
+Store them in the provider/password manager, never the repository. Browser
+admin login needs both password and session secret. The token is optional for
+automation; metrics token is required in production.
 
----
+## 3. Required production environment
 
-## 3. Deploy to Fly.io
+| Variable | Requirement |
+| --- | --- |
+| `DATABASE_URL` | Managed Postgres URL. |
+| `VIBEGRID_REQUIRE_DATABASE` | `true`; crew service must not silently degrade. |
+| `VIBEGRID_SECURE_COOKIES` | `true` behind HTTPS. |
+| `VIBEGRID_ADMIN_PASSWORD` | Strong secret for the single-operator board room. |
+| `VIBEGRID_ADMIN_SESSION_SECRET` | Independent random secret. |
+| `VIBEGRID_METRICS_TOKEN` | Bearer secret protecting `/metrics`. |
+| `VIBEGRID_PUBLIC_BASE_URL` | Exact final HTTPS origin, no path/query. |
+| `VIBEGRID_TIMEZONE` | `UTC`; this is the ratified global phase rollover. |
+| `VIBEGRID_TRUSTED_PROXY_CIDRS` | Only documented platform proxy source ranges, or empty. Never `0.0.0.0/0`/`::/0`. |
 
-`fly.toml` is already configured: it builds the `Dockerfile`, runs
-`/vibegrid migrate` as the release command (migrations land once, before any new
-machine serves traffic), checks `/readyz`, forces HTTPS, sets
-`VIBEGRID_SECURE_COOKIES=true` and `VIBEGRID_TIMEZONE=UTC`, and keeps one machine
-warm.
+Optional:
+
+- `VIBEGRID_ADMIN_TOKEN` for non-browser administration.
+- `VIBEGRID_BLOCKED_TERMS` for prompt/fragment/title safety screening.
+- `VIBEGRID_ALLOWED_ORIGINS` only for an intentional non-same-origin client.
+- `VIBEGRID_OPERATOR_WEBHOOK_URL` and bot-verification keys only if those legacy
+  operational/community paths are still in use.
+- `VIBEGRID_MIGRATE_ON_BOOT=true` only on a single-instance host without a
+  release hook. Prefer a release migration.
+
+`NEXT_PUBLIC_APP_URL` affects build-time frontend metadata. The Go server’s
+canonical, robots, sitemap, and injected metadata use
+`VIBEGRID_PUBLIC_BASE_URL`, which is the runtime authority.
+
+## 4. Migrations
+
+Run once per release before new instances serve traffic:
 
 ```bash
-# 1. Rename the app (edit `app = "..."` in fly.toml, or):
-fly launch --copy-config --no-deploy        # creates the app, keeps fly.toml
+DATABASE_URL="postgres://..." npm run migrate:backend
+```
 
-# 2. Set secrets (never commit these):
+Fly uses the release command in `fly.toml`. Render free can use
+`VIBEGRID_MIGRATE_ON_BOOT=true` only while exactly one instance boots. Migration
+18 adds immutable daily boards, submissions, and votes; it is additive and
+leaves legacy tables for old `/p` links.
+
+## 5. Build and run the production artifact
+
+```bash
+docker build -t vibegrid:local .
+docker run --rm -p 8081:8081 \
+  -e DATABASE_URL="postgres://..." \
+  -e VIBEGRID_REQUIRE_DATABASE=true \
+  -e VIBEGRID_SECURE_COOKIES=true \
+  -e VIBEGRID_PUBLIC_BASE_URL="https://vibegrid.example.com" \
+  -e VIBEGRID_TIMEZONE=UTC \
+  -e VIBEGRID_ADMIN_PASSWORD="$VIBEGRID_ADMIN_PASSWORD" \
+  -e VIBEGRID_ADMIN_SESSION_SECRET="$VIBEGRID_ADMIN_SESSION_SECRET" \
+  -e VIBEGRID_METRICS_TOKEN="$VIBEGRID_METRICS_TOKEN" \
+  vibegrid:local
+```
+
+The final image is distroless and non-root. The binary listens on `:8081` by
+default and serves both app and API.
+
+## 6. Fly
+
+`fly.toml` builds the Dockerfile, runs `/vibegrid migrate` as a release command,
+forces HTTPS, sets UTC, and checks `/readyz`.
+
+```bash
+fly launch --copy-config --no-deploy
 fly secrets set \
-  DATABASE_URL="postgres://USER:PASS@HOST:PORT/db?sslmode=require" \
+  DATABASE_URL="postgres://..." \
+  VIBEGRID_REQUIRE_DATABASE="true" \
   VIBEGRID_ADMIN_PASSWORD="$VIBEGRID_ADMIN_PASSWORD" \
   VIBEGRID_ADMIN_SESSION_SECRET="$VIBEGRID_ADMIN_SESSION_SECRET" \
   VIBEGRID_ADMIN_TOKEN="$VIBEGRID_ADMIN_TOKEN" \
   VIBEGRID_METRICS_TOKEN="$VIBEGRID_METRICS_TOKEN" \
-  VIBEGRID_PUBLIC_BASE_URL="https://vibegrid.example.com" \
-  VIBEGRID_BLOCKED_TERMS="slur-one,slur-two"
-
-# 3. Deploy:
+  VIBEGRID_PUBLIC_BASE_URL="https://vibegrid.example.com"
 fly deploy
-
-# 4. Confirm:
 fly status
 fly logs
 ```
 
-`fly deploy` runs the release command first; if `vibegrid migrate` fails (e.g.
-bad `DATABASE_URL`), the release aborts and old machines keep serving. Watch
-`fly logs` for `migrations applied` then `vibegrid listening`.
+## 7. Render
 
-Set these only when needed:
-- `VIBEGRID_ALLOWED_ORIGINS` — only if another origin must call the API directly.
-  The normal single-container deploy is same-origin and needs no CORS.
-- `VIBEGRID_TIMEZONE` — `fly.toml` sets `UTC`. This defines when "today" rolls
-  over. **Pick one canonical zone and keep it stable** (changing it later shifts
-  every daily puzzle's boundary). Note: the code default if unset is
-  `Asia/Kolkata`, so always set it explicitly in production (`fly.toml` does).
-  No cron is required for daily rollover: `/api/puzzles/today` computes the
-  current date on request. If no editorial puzzle is published exactly for that
-  date, the evergreen generator composes a deterministic date-specific board from
-  the curated bank.
+`render.yaml` describes the web service and expected environment. On plans with
+a release hook, use it for migrations. On a single free instance without one,
+boot migration is the pragmatic fallback. Do not scale multiple boot-migrating
+instances concurrently.
 
----
+## 8. DNS, TLS, and proxies
 
-## 4. Domain + TLS
+- Point the final domain at the container host and require HTTPS.
+- Set `VIBEGRID_PUBLIC_BASE_URL` to that exact origin before launch.
+- With Cloudflare, use Full (strict), not Flexible.
+- Trust forwarding headers only from verified source CIDRs. If stable ranges are
+  unavailable, leave the allowlist empty and enforce client limits at the edge.
+- Verify rate-limit identity in logs with two actual client networks.
 
-On Fly:
+## 9. Production verification
+
+Automated:
 
 ```bash
-fly certs add vibegrid.example.com
-fly certs show vibegrid.example.com     # prints the A/AAAA/CNAME records to create
+npm run smoke:deploy -- --base-url https://<domain>
+npm run smoke:deploy -- --base-url https://<domain> --mutate \
+  --metrics-token "$VIBEGRID_METRICS_TOKEN"
 ```
 
-Create those DNS records at your DNS provider (Cloudflare is fine **as DNS**).
-If you use Cloudflare, re-read the grey-cloud / `CF-Connecting-IP` /
-SSL-Full-strict caveats in the box at the top.
+The mutating smoke creates a temporary crew, submits a card twice with the same
+client replay id, and proves only one card exists. It skips durable mutation
+only when the environment explicitly has no database; production must not skip.
 
-Set the public URL as a **runtime secret** before serving production traffic;
-the server refuses to boot in production without it. It is the only source for
-canonical, robots, sitemap, and injected social-preview URLs, so it cannot be
-spoofed by a `Host` or forwarding header:
+Manual checklist:
+
+- `/` completes make → house judge → practice reveal on 320px and desktop.
+- `/api/vibes/today` returns one prompt, 12 unique `{id,text}` fragments, UTC
+  date, and no groups/answers/difficulty/mistake fields.
+- Create a crew, join from two isolated browser profiles, and submit three cards.
+- Use backdated fixtures or a test clock to verify blind authors on judge and
+  named authors/ties/quiet labels on reveal.
+- Rotate invite: old link fails for a newcomer; existing member access remains.
+- `/admin` authenticates over HTTPS, creates a future board, and rejects a
+  duplicate frozen date.
+- `/robots.txt` disallows admin; `/sitemap.xml` includes `/crews` but no `/crew/`
+  or `/p/` links.
+- `/metrics` rejects a wrong token and works with the configured token.
+- Secure cookies persist after refresh on the final same-origin domain.
+
+## 10. Monitoring and alerts
+
+External checks:
+
+- `/healthz` every minute for process liveness.
+- `/readyz` every minute for database reachability.
+- `/` and `/api/vibes/today` every five minutes for product availability.
+
+Scrape `/metrics` with the bearer token and alert on 5xx, latency, DB pool wait,
+and readiness. Existing cache/outbox metrics still cover compatibility systems;
+add product-funnel metrics only after a privacy review. Ship structured logs to
+a durable destination and test one routed alert.
+
+## 11. Rollback
+
+1. Stop promotion if the release migration fails; old instances should continue.
+2. Re-promote the prior immutable image tag/SHA.
+3. Migration 18 is additive, so the prior binary can ignore its tables.
+4. Do not run a destructive down migration against crew data during incident
+   rollback.
+5. Rerun health/readiness and non-mutating smoke, then inspect logs/metrics.
+
+Record the rollback rehearsal before broad launch.
+
+## 12. Local no-database demonstration
 
 ```bash
-fly secrets set VIBEGRID_PUBLIC_BASE_URL="https://vibegrid.example.com"
+npm install
+npm run dev
 ```
 
-`NEXT_PUBLIC_APP_URL` is optional frontend build metadata. If you want it to
-match too, bake it during the image build, e.g. add to the Dockerfile web stage:
-
-```dockerfile
-ARG NEXT_PUBLIC_APP_URL
-ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
-```
-
-and `fly deploy --build-arg NEXT_PUBLIC_APP_URL=https://vibegrid.example.com`.
-
----
-
-## 5. Backups, monitoring, alerting
-
-1. **Backups/PITR** — enable on the managed Postgres (step 1). Run **one restore
-   drill** into a scratch DB before sharing the link widely, and confirm the
-   restore passes `vibegrid migrate` and `/readyz`.
-2. **Uptime checks** (Better Stack / UptimeRobot / Pingdom / provider):
-   - `GET /healthz` every 60s, alert after 2 failures (process liveness)
-   - `GET /readyz` every 60s, alert after 2 failures (DB reachable)
-   - `GET /` and `GET /api/puzzles/today` every 5m, alert on non-2xx
-3. **Metrics** — scrape `GET /metrics` with
-   `Authorization: Bearer <VIBEGRID_METRICS_TOKEN>` (Prometheus text). Import the
-   templates in `monitoring/` (`prometheus.yml`, `alert-rules.yml`,
-   `grafana-dashboard.json`) after replacing the placeholder domain and mounting
-   the same token at `/etc/prometheus/secrets/vibegrid_metrics_token` in the
-   Prometheus container. Beyond HTTP request/latency series,
-   `/metrics` also exposes (see `docs/observability.md`):
-   - connection pool: `vibegrid_db_open_connections`, `..._in_use_connections`,
-     `..._idle_connections`, `..._wait_count_total`, `..._wait_seconds_total`
-     (watch the wait series for pool saturation)
-   - puzzle cache: `vibegrid_puzzle_cache_hits_total` / `..._misses_total` /
-     `..._evictions_total` / `..._entries` (hit rate of the per-request cache)
-   - notification outbox: `vibegrid_notification_outbox_pending`, `..._retrying`,
-     `..._dead`, and `..._oldest_pending_seconds` (delivery backlog and failures)
-4. **Log drain** — ship stdout/stderr to a durable store (Axiom, Datadog, Loki,
-   Logtail). The server emits structured `slog` JSON with method, path, status,
-   `duration_ms`, `client_ip`, `user_agent`. On Fly: `fly logs` for ad hoc, or a
-   log-shipper for retention.
-5. **Error tracking** — add Sentry (or similar) when you have credentials. Until
-   then, alert from `/metrics` on 5xx rate and from logs on `panic`/`error`.
-
----
-
-## 6. Verify production
-
-Run through this after the first deploy:
-
-- `https://<domain>/` loads today's puzzle.
-- Play a guess, refresh, confirm the attempt persists (the `vibegrid_session`
-  cookie should be present and `Secure`).
-- `https://<domain>/create` completes Turnstile, submits a community puzzle,
-  and returns a private creator claim URL. Save it; confirm status loads and the
-  public `/p/<id>` route returns 404 before approval.
-- In `/admin`, approve that submission and confirm its `/p/<id>` link is now
-  playable. Report it from the sidebar, then confirm it appears in the
-  moderation queue; archive it, use the private claim URL to submit an appeal, and
-  reinstate it from the queue.
-- `curl -sI https://<domain>/readyz` → 200 (DB reachable).
-- `curl -s -H "Authorization: Bearer $VIBEGRID_METRICS_TOKEN" https://<domain>/metrics | grep vibegrid_`
-  shows the HTTP, pool, cache, and notification-outbox series. A scrape without that header must be
-  rejected with 401.
-- `curl -s https://<domain>/robots.txt` advertises the sitemap; `/sitemap.xml`
-  lists `/` and the live puzzle `/p/<id>` URLs (and **not** future-dated ones).
-- `curl -sI https://<domain>/api/og/puzzles/<id>.svg` returns an image.
-- Publish one editorial puzzle for today from `/admin` and confirm `/` serves it.
-
----
-
-## 7. Rollback
-
-```bash
-fly releases                      # find the previous good release/image
-fly deploy --image <previous-image>
-```
-
-Migrations are forward-only operationally — review every migration before deploy
-and prefer additive, backward-compatible schema changes so a rollback of the
-binary stays compatible with the migrated schema.
-
----
-
-## 8. Local production smoke (optional, before deploying)
-
-Reproduce the container build path locally:
-
-```bash
-npm ci && npm run build
-mkdir -p backend/internal/frontend/out && cp -R out/. backend/internal/frontend/out
-( cd backend && CGO_ENABLED=0 go build -o ../dist/vibegrid ./cmd/vibegrid )
-
-# With a local Postgres (durable production-shaped path):
-DATABASE_URL="postgres://localhost/vibegrid?sslmode=disable" \
-VIBEGRID_ADMIN_PASSWORD=dev VIBEGRID_ADMIN_SESSION_SECRET=devsecret \
-VIBEGRID_ENV=development VIBEGRID_PUBLIC_BASE_URL=http://localhost:8081 \
-VIBEGRID_METRICS_TOKEN=local-metrics VIBEGRID_ADDR=:8081 ./dist/vibegrid
-# migrations: ./dist/vibegrid migrate  (run once; or rely on it via DATABASE_URL)
-
-# Without a database (in-memory, non-durable, seed puzzles only):
-VIBEGRID_ENV=development VIBEGRID_ADDR=:8081 ./dist/vibegrid
-```
-
-Then open `http://localhost:8081/`, `/p/vibegrid-2026-06-02`, `/robots.txt`,
-`/sitemap.xml`; for metrics use
-`curl -H 'Authorization: Bearer local-metrics' http://localhost:8081/metrics`.
-
-Or just build the image: `docker build -t vibegrid . && docker run -p 8081:8081 vibegrid`.
-
----
-
-## Environment variable reference
-
-| Variable | Required | Where | Purpose |
-|---|---|---|---|
-| `DATABASE_URL` | Yes (prod) | secret | Postgres DSN. Unset ⇒ in-memory, non-durable. Mind the pooler gotcha (step 1). |
-| `VIBEGRID_ADMIN_PASSWORD` | Yes (prod) | secret | Admin browser login. |
-| `VIBEGRID_ADMIN_SESSION_SECRET` | Yes (when browser admin login enabled) | secret | HMAC key binding CSRF tokens to opaque, revocable admin sessions. Required alongside the password. |
-| `VIBEGRID_ADMIN_TOKEN` | Optional | secret | Legacy bearer token for automation/API. |
-| `VIBEGRID_METRICS_TOKEN` | Yes (prod) | secret | Bearer token required to expose `/metrics`; leave empty locally to disable the endpoint. |
-| `VIBEGRID_TURNSTILE_SITE_KEY` | Yes (prod) | env | Public Cloudflare Turnstile widget key returned by `/api/public-config`. |
-| `VIBEGRID_TURNSTILE_SECRET_KEY` | Yes (prod) | secret | Server-only Cloudflare Turnstile verification key. Never expose it to the browser. |
-| `VIBEGRID_OPERATOR_WEBHOOK_URL` | Recommended | secret | Slack-compatible outbound webhook consumed by the transactional notification worker. Without it, events remain pending and product writes still succeed. |
-| `VIBEGRID_PUBLIC_BASE_URL` | Yes (prod) | secret/env | HTTPS origin (no credentials, path, query, or fragment) used for canonical metadata, robots, and sitemap. Never inferred from request headers. |
-| `VIBEGRID_TRUSTED_PROXY_CIDRS` | Only behind a verified proxy | secret/env | Comma-separated proxy source CIDRs allowed to supply client-IP headers. Empty keys limits on the direct peer. |
-| `VIBEGRID_SECURE_COOKIES` | Yes (prod) | `fly.toml` | `true` ⇒ `Secure` cookies. Requires HTTPS. |
-| `VIBEGRID_TIMEZONE` | Yes (prod) | `fly.toml` | Defines daily rollover. Set explicitly (code default is `Asia/Kolkata`). |
-| `VIBEGRID_ADDR` | No | `fly.toml`/image | Listen address. Unset ⇒ binds `:$PORT` if the platform injects `PORT`, else `:8081`. |
-| `VIBEGRID_MIGRATE_ON_BOOT` | No | env | `true` ⇒ apply migrations on startup (single-instance hosts with no release hook, e.g. Render free). Don't use multi-instance. |
-| `VIBEGRID_ALLOWED_ORIGINS` | Only cross-origin | secret/env | Comma-separated browser origins for CORS. Not needed same-origin. |
-| `VIBEGRID_BLOCKED_TERMS` | Optional | secret/env | Comma-separated blocked terms for community puzzles. |
-| `NEXT_PUBLIC_APP_URL` | Recommended | **build arg** | Public URL baked into the frontend export. Build-time only. |
-
-Turnstile is deliberately fail closed on community creation, reports, and
-appeals. Rejected or expired tokens return `422`; provider/network failure returns
-`503` and the mutation is not committed. Idempotent replay of an already-completed
-mutation does not reuse the single-use Turnstile token.
-
----
-
-## Free tier (Render + Neon, $0)
-
-For a portfolio link that should stay up without a bill, deploy the same
-container on **Render's free Web Service** and point it at a **free Neon
-Postgres**. The repo ships a [`render.yaml`](../render.yaml) blueprint for this.
-
-Two things differ from the Fly path and are already handled:
-- **No release hook on free.** The free plan can't run `/vibegrid migrate` as a
-  pre-deploy step, so the blueprint sets `VIBEGRID_MIGRATE_ON_BOOT=true` — the
-  server applies migrations on startup. Safe here because the free plan runs a
-  single instance (nothing races). Do **not** use this on multi-instance hosts.
-- **Port.** The binary binds `$PORT` when set (Render injects it), so
-  `VIBEGRID_ADDR` is left unset in the blueprint.
-
-Steps:
-1. **Neon** — create a free project; copy the connection string. Use the
-   **direct** (non-pooled) string to dodge the PgBouncer prepared-statement
-   gotcha in step 1 above; at one instance × `SetMaxOpenConns(10)` you are well
-   under the free connection cap. Ensure it ends with `?sslmode=require`.
-2. **Render** — New ➜ **Blueprint**, point it at this repo. Render reads
-   `render.yaml` and creates the service. In the dashboard set its `sync: false`
-   values: `DATABASE_URL` (from Neon), `VIBEGRID_ADMIN_PASSWORD`,
-   `VIBEGRID_ADMIN_SESSION_SECRET`, a generated `VIBEGRID_METRICS_TOKEN`, the
-   Cloudflare `VIBEGRID_TURNSTILE_SITE_KEY` and `VIBEGRID_TURNSTILE_SECRET_KEY`, and
-   optional `VIBEGRID_OPERATOR_WEBHOOK_URL`, plus
-   `VIBEGRID_PUBLIC_BASE_URL` set to the final `https://…onrender.com` (or custom)
-   origin. Set `VIBEGRID_TRUSTED_PROXY_CIDRS` only after verifying Render's
-   documented proxy source ranges. Deploy.
-3. **Keep it warm (optional but recommended).** Render free **spins down after
-   ~15 min idle** (first hit then wakes in ~30–60 s). A free uptime monitor
-   (UptimeRobot / cron-job.org) hitting `GET /healthz` every ~10 min keeps it
-   awake and doubles as your liveness alert — within the free monthly hours.
-4. Verify with the **section 6** checklist against your `…onrender.com` URL.
-
-> **Truly always-on for $0 (no cold start)?** Only by running your own
-> always-free VM (e.g. Oracle Cloud Always Free) with Docker + this image — more
-> setup, no spin-down. Or pay ~$7/mo for a Render paid instance, or ~$2–5/mo on
-> Fly/Railway, to drop the cold start entirely.
-
----
-
-## Other hosts (non-Fly)
-
-Any host that runs a container works. You need to replicate three things from
-`fly.toml`:
-1. Apply migrations before serving — either run `/vibegrid migrate` **once per
-   release** (release/pre-deploy hook), or set `VIBEGRID_MIGRATE_ON_BOOT=true`
-   on single-instance deploys (see the free-tier section). Either way
-   `DATABASE_URL` must be set.
-2. Set the env/secrets from the table above, including `VIBEGRID_SECURE_COOKIES=true`,
-   a fixed `VIBEGRID_TIMEZONE`, `VIBEGRID_METRICS_TOKEN`, and the exact HTTPS
-   `VIBEGRID_PUBLIC_BASE_URL`.
-3. Point the platform health check at **`/readyz`** and route HTTPS to the app's
-   port — it listens on `$PORT` if the platform injects one, else `8081`.
-
-Render: use the [`render.yaml`](../render.yaml) blueprint (free), or a Web
-Service from the `Dockerfile` + a pre-deploy `/vibegrid migrate` on paid.
-Railway: deploy the `Dockerfile`, attach Postgres, and either add a release
-command or set `VIBEGRID_MIGRATE_ON_BOOT=true`.
+The public practice round works. Crew APIs return an explicit `503`; this mode
+does not prove durable multiplayer. Use Postgres for portfolio or beta demos of
+the actual product.

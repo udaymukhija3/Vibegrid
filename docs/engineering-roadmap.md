@@ -1,49 +1,35 @@
-# VibeGrid Engineering Roadmap
+# VibeGrid engineering roadmap
 
-## P0: Playable Public MVP
+The active roadmap is evidence-driven. The former hidden-puzzle roadmap was
+retired on 21 August 2026.
 
-- App shell with daily puzzle route.
-- Public puzzle payload that hides solution metadata.
-- Go guess submission API.
-- Exact group matching and duplicate-tile validation.
-- Guest session cookie.
-- Attempt persistence in Postgres.
-- Idempotent guess handling through `clientGuessId`.
-- Completed and failed attempt states.
-- Share text generation.
-- Seed script and migration workflow.
+## Now: close proof gaps
 
-## P1: Editor Desk
+1. Real-Postgres concurrent submission/vote race tests in CI.
+2. Multi-browser Playwright make → judge → reveal flow with a test-only clock.
+3. Component/accessibility tests for composer, blind ballot, results, join, and
+   owner controls.
+4. Admin board HTTP integration, mobile preview, and duplicate-date test.
+5. Production-shaped load profile for crew polling and UTC rollover.
+6. External deployment, restore, alert, smoke, and rollback evidence.
+7. Privacy-reviewed funnel events and a small controlled cohort.
 
-- Admin authentication.
-- Puzzle draft form.
-- Four-group editor with tile uniqueness validation.
-- Preview mode using the same player UI.
-- Publish scheduler with one puzzle per date.
-- Draft, published, archived states.
-- Puzzle QA checklist before publishing.
+## Next only if cohort evidence supports it
 
-## P2: Retention And Stats
+- private result history;
+- smallest effective judge/reveal reminder;
+- browser-session recovery or optional account;
+- realtime delivery if polling is observed as harmful;
+- native shell if web retention exists and notification access is limiting.
 
-- Streak calculation.
-- Archive route with previous puzzles.
-- Completion stats: solve rate, median mistakes, median time.
-- Spoiler-safe result history.
-- Device/session migration path if accounts are introduced.
+## Explicitly not roadmap items
 
-## P3: Quality And Scale
+- rebuilding category puzzles;
+- public card feed or global leaderboard;
+- live rooms, matchmaking, or chat;
+- AI automatic publishing;
+- theme selector;
+- speculative microservices, broker, or Redis layer.
 
-- Playwright coverage for core flows.
-- Rate limiting on guess submission.
-- Admin audit log.
-- Observability for failed submissions and duplicate guesses.
-- AI-assisted draft generation behind admin-only review.
-- CDN/static caching for public puzzle payloads.
-
-## Engineering Risks
-
-- Client answer leakage if solution metadata is sent to the browser.
-- Race conditions on rapid duplicate submissions.
-- Streak ambiguity across timezones.
-- Puzzle quality becoming dependent on tools instead of editorial review.
-- Admin publishing conflicts if one date can receive multiple published puzzles.
+See `launch-sprint-plan.md` for ordered acceptance criteria and
+`decision-register.md` for the evidence gate on every deferred bet.

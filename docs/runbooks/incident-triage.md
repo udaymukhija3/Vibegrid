@@ -10,7 +10,10 @@ curl -s https://vibegrid.onrender.com/readyz    # readiness: process can reach P
 ```
 
 - Both fail / time out → Render problem: dashboard → service → Events + Logs. Free tier cold start takes ~25s after idle — wait one minute and retry before declaring an incident.
-- `healthz` OK, `readyz` 503 → database problem: Neon console (endpoint state, connection limits) and [Neon status page](https://neonstatus.com). The app degrades deliberately here: public puzzle reads stay up on the in-memory rate limiter; guesses/creates return 503 until the DB is back.
+- `healthz` OK, `readyz` 503 → database problem: Neon console (endpoint state,
+  connection limits) and [Neon status page](https://neonstatus.com). Public
+  practice can still load its curated board, but crew membership, cards, votes,
+  and history must fail explicitly rather than pretend to be durable.
 
 ## 2. Did we just deploy?
 
@@ -26,9 +29,9 @@ Render dashboard → Logs. Every request is a JSON line with `status`, `duration
 |---|---|---|
 | "Loading today's grid…" for ~10s, then loads | Cold start; client retried with extended budget (`src/lib/http.ts`) | None; consider paid instance if frequent |
 | keep-warm workflow failing | Service down or Render outage | Treat as step 1 |
-| 503 on guesses, reads fine | Postgres down/unreachable (fail-closed writes) | Neon console; wait or restore |
+| 503 on crew daily/submissions/votes while practice loads | Postgres down/unreachable (durable social path fails closed) | Provider console; wait, rollback, or restore |
 | 429s reported by users | Rate limits (per-IP) — shared NAT or abuse | Check logs for the IP; raise limits in `server.go` constants only with evidence |
-| Daily puzzle wrong/stale after midnight | CDN/browser cache within rollover window, or `VIBEGRID_TIMEZONE` misconfig | Verify `/api/puzzles/today` directly; check env |
+| Daily board or phase wrong after UTC midnight | Cache within rollover window, wrong `VIBEGRID_TIMEZONE`, or frozen date mismatch | Verify `/api/vibes/today`, environment, and `vibe_daily_boards`; do not mutate a board with submissions |
 
 ## 5. Rollback vs fix-forward
 

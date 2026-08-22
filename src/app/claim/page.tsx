@@ -4,7 +4,8 @@ import { CreatorClaim } from "@/components/CreatorClaim";
 
 export const metadata = {
   title: "Creator claim · VibeGrid",
-  description: "Check, withdraw, or appeal a community VibeGrid submission."
+  description: "Check, withdraw, or appeal a legacy community VibeGrid submission.",
+  robots: { index: false, follow: false }
 };
 
 export default function CreatorClaimPage() {

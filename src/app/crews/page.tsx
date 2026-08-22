@@ -1,30 +1,28 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { MyCrews } from "@/components/MyCrews";
+import { VibeHeader } from "@/components/VibeHeader";
 
 export const metadata = {
   title: "Your VibeGrid crews",
-  description: "Make a crew, invite your friends, and race the same daily grid."
+  description: "Make a private crew, compose a daily vibe, and judge yesterday's cards."
 };
 
 export default function CrewsPage() {
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-3xl">
-        <Link href="/" className="vg-button-secondary">
-          <ArrowLeft aria-hidden size={16} />
-          Today
-        </Link>
-
-        <header className="mt-8 border-b border-line pb-5">
-          <p className="vg-kicker">Play with friends</p>
-          <h1 className="vg-page-title mt-2">Your crews</h1>
-          <p className="mt-3 max-w-2xl font-medium leading-7 text-neutral-600">
-            A crew is a private group playing the same daily grid. Make one, send the link, and the
-            board shows how everyone did — result grids stay hidden until you have finished yours.
+    <main className="min-h-screen">
+      <div className="vg-shell">
+        <VibeHeader compact />
+        <header className="py-10 sm:py-14">
+          <p className="vg-meta text-lime">The crew is the game</p>
+          <h1 className="mt-3 max-w-4xl text-5xl font-black leading-[0.95] tracking-[-0.06em] text-cream sm:text-7xl">
+            Make privately.
+            <br />
+            Judge honestly.
+          </h1>
+          <p className="mt-5 max-w-2xl text-base font-semibold leading-7 text-cream/[.62]">
+            Each day starts with the same twelve fragments. Every person makes a different card;
+            tomorrow the names disappear and the crew chooses what lands.
           </p>
         </header>
-
         <MyCrews />
       </div>
     </main>

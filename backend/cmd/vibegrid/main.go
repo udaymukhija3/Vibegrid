@@ -64,7 +64,7 @@ func run(logger *slog.Logger) error {
 	}
 	production := environment == "production"
 	addr := resolveAddr()
-	timeZone := env("VIBEGRID_TIMEZONE", "Asia/Kolkata")
+	timeZone := env("VIBEGRID_TIMEZONE", "UTC")
 	databaseURL := os.Getenv("DATABASE_URL")
 	adminToken := os.Getenv("VIBEGRID_ADMIN_TOKEN")
 	adminPassword := os.Getenv("VIBEGRID_ADMIN_PASSWORD")
@@ -196,6 +196,8 @@ func run(logger *slog.Logger) error {
 		AdminSessions:      deps.adminSessions,
 		Community:          deps.community,
 		Crews:              deps.crews,
+		VibeRounds:         deps.vibeRounds,
+		AdminVibeBoards:    deps.adminVibeBoards,
 		Stats:              deps.stats,
 		RateLimits:         deps.rateLimits,
 		Idempotency:        deps.idempotency,
@@ -280,6 +282,8 @@ type deps struct {
 	adminPuzzles     vibegrid.AdminPuzzleStore
 	community        vibegrid.CommunityPuzzleStore
 	crews            vibegrid.CrewStore
+	vibeRounds       vibegrid.VibeRoundStore
+	adminVibeBoards  vibegrid.VibeBoardAdminStore
 	adminSessions    vibegrid.AdminSessionStore
 	stats            vibegrid.StatsStore
 	rateLimits       vibegrid.RateLimitStore
@@ -347,12 +351,15 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 	adminSessions := vibegrid.NewPostgresAdminSessionStore(database)
 	idempotency := vibegrid.NewPostgresIdempotencyStore(database)
 	outbox := vibegrid.NewPostgresNotificationOutbox(database)
+	vibeRoundStore := vibegrid.NewPostgresVibeRoundStore(database)
 	return deps{
 		attempts:         attempts,
 		puzzles:          publicPuzzles,
 		adminPuzzles:     cached,
 		community:        cached,
 		crews:            vibegrid.NewPostgresCrewStore(database),
+		vibeRounds:       vibeRoundStore,
+		adminVibeBoards:  vibeRoundStore,
 		adminSessions:    adminSessions,
 		bankSource:       banked,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database, timeZone), 5*time.Minute),

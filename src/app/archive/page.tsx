@@ -1,25 +1,35 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { ArchiveList } from "@/components/ArchiveList";
+import { ArrowLeft, Users } from "lucide-react";
+import { VibeHeader } from "@/components/VibeHeader";
+
+export const metadata = {
+  title: "VibeGrid crew history",
+  description: "VibeGrid results belong to the private crew that made them."
+};
 
 export default function ArchivePage() {
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-3xl">
-        <Link
-          href="/"
-          className="vg-button-secondary"
-        >
-          <ArrowLeft aria-hidden size={16} />
-          Today
-        </Link>
-
-        <header className="mt-8 border-b border-line pb-5">
-          <p className="text-sm font-semibold text-tomato">Archive</p>
-          <h1 className="vg-page-title mt-2">Previous grids</h1>
-        </header>
-
-        <ArchiveList />
+    <main className="min-h-screen">
+      <div className="vg-shell">
+        <VibeHeader compact />
+        <section className="vg-dark-panel mx-auto mt-12 max-w-3xl">
+          <p className="vg-meta text-violet-light">No global leaderboard</p>
+          <h1 className="mt-3 text-4xl font-black text-cream sm:text-6xl">History belongs to the crew.</h1>
+          <p className="mt-5 max-w-2xl font-semibold leading-8 text-cream/[.62]">
+            VibeGrid no longer publishes a global archive of correct answers. Each crew builds its
+            own record from the cards it made and the winners it chose.
+          </p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Link href="/crews" className="vg-primary-button">
+              <Users aria-hidden size={17} />
+              Open your crews
+            </Link>
+            <Link href="/" className="vg-secondary-button">
+              <ArrowLeft aria-hidden size={16} />
+              Practice
+            </Link>
+          </div>
+        </section>
       </div>
     </main>
   );

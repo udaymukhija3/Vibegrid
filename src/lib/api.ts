@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError, apiFetch, idempotencyHeaders } from "@/lib/http";
 import type { DraftPuzzleInput, EasyHintResponse, PublicPuzzle, PuzzleTemplate, VibeHint } from "@/types/puzzle";
+import type { VibeBoard, VibeCard, VibeCrewDaily } from "@/types/vibe";
 
 // Runtime schemas for the public API surface. Validating responses at the
 // boundary means a contract drift between the Go backend and the UI fails loudly
@@ -353,6 +354,132 @@ export async function fetchMyCrews(): Promise<Crew[]> {
     throw new ApiError(`Request failed (${response.status})`, response.status);
   }
   return z.array(crewSchema).parse(await response.json());
+}
+
+const vibeBoardSchema = z.object({
+  id: z.string(),
+  boardNumber: z.number(),
+  publishDate: z.string(),
+  prompt: z.string(),
+  tiles: z.array(tileSchema).length(12)
+}) satisfies z.ZodType<VibeBoard>;
+
+const vibeCardSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  tiles: z.array(tileSchema).length(4),
+  isYours: z.boolean(),
+  authorName: z.string().optional(),
+  votes: z.number().optional(),
+  winner: z.boolean().optional()
+}) satisfies z.ZodType<VibeCard>;
+
+const vibeCrewDailySchema = z.object({
+  crew: crewSchema,
+  isMember: z.boolean(),
+  crewStreak: z.number(),
+  today: z.object({
+    board: vibeBoardSchema,
+    submission: vibeCardSchema.optional(),
+    submittedCount: z.number(),
+    memberCount: z.number()
+  }),
+  judge: z
+    .object({
+      board: vibeBoardSchema,
+      eligible: z.boolean(),
+      hasVoted: z.boolean(),
+      yourVoteId: z.string().optional(),
+      cards: z.array(vibeCardSchema).optional(),
+      submittedCount: z.number()
+    })
+    .optional(),
+  result: z
+    .object({
+      board: vibeBoardSchema,
+      official: z.boolean(),
+      submissionCount: z.number(),
+      voteCount: z.number(),
+      cards: z.array(vibeCardSchema)
+    })
+    .optional(),
+  members: z
+    .array(
+      z.object({
+        memberId: z.string().optional(),
+        displayName: z.string(),
+        isYou: z.boolean(),
+        submittedToday: z.boolean()
+      })
+    )
+    .optional()
+}) satisfies z.ZodType<VibeCrewDaily>;
+
+export async function fetchTodayVibeBoard(): Promise<VibeBoard> {
+  return vibeBoardSchema.parse(await getJSON("/api/vibes/today"));
+}
+
+export async function fetchCrewDaily(inviteCode: string): Promise<VibeCrewDaily> {
+  const response = await apiFetch(`/api/crews/${encodeURIComponent(inviteCode)}/daily`, {
+    credentials: "include"
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    const message = parsed.success ? parsed.data.error : `Request failed (${response.status})`;
+    throw response.status === 503 ? new CrewsUnavailableError(message) : new ApiError(message, response.status);
+  }
+  return vibeCrewDailySchema.parse(payload);
+}
+
+export async function submitVibeCard(input: {
+  inviteCode: string;
+  boardId: string;
+  title: string;
+  selectedTileIds: string[];
+  clientSubmissionId: string;
+}): Promise<VibeCard> {
+  const response = await apiFetch(`/api/crews/${encodeURIComponent(input.inviteCode)}/submissions`, {
+    method: "POST",
+    credentials: "include",
+    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      boardId: input.boardId,
+      title: input.title,
+      selectedTileIds: input.selectedTileIds,
+      clientSubmissionId: input.clientSubmissionId
+    })
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+  return vibeCardSchema.parse(payload);
+}
+
+export async function castVibeVote(input: {
+  inviteCode: string;
+  boardId: string;
+  submissionId: string;
+  clientVoteId: string;
+}): Promise<{ submissionId: string }> {
+  const response = await apiFetch(`/api/crews/${encodeURIComponent(input.inviteCode)}/votes`, {
+    method: "POST",
+    credentials: "include",
+    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      boardId: input.boardId,
+      submissionId: input.submissionId,
+      clientVoteId: input.clientVoteId
+    })
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+  return z.object({ submissionId: z.string() }).parse(payload);
 }
 
 const createdModerationSchema = z.object({

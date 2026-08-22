@@ -18,27 +18,27 @@ export function PolicyPage({
   sections: PolicySection[];
 }) {
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-3xl">
+    <main className="vg-shell">
+      <div className="mx-auto max-w-4xl">
         <Link
           href="/"
-          className="vg-button-secondary"
+          className="vg-header-link"
         >
           <ArrowLeft aria-hidden size={16} />
           Today
         </Link>
 
-        <header className="mt-8 border-b border-line pb-5">
-          <p className="vg-kicker">{eyebrow}</p>
-          <h1 className="vg-page-title mt-2">{title}</h1>
-          <p className="mt-3 max-w-2xl font-medium leading-7 text-neutral-600">{intro}</p>
+        <header className="mt-10 border-b border-cream/[.15] pb-8">
+          <p className="vg-meta text-lime">{eyebrow}</p>
+          <h1 className="mt-3 text-5xl font-black tracking-[-0.06em] text-cream sm:text-7xl">{title}</h1>
+          <p className="mt-5 max-w-2xl font-semibold leading-7 text-cream/[.65]">{intro}</p>
         </header>
 
         <div className="mt-8 grid gap-7">
           {sections.map((section) => (
-            <section key={section.title}>
-              <h2 className="text-xl font-extrabold">{section.title}</h2>
-              <div className="mt-2 grid gap-2 text-sm font-medium leading-6 text-neutral-700">
+            <section key={section.title} className="vg-dark-panel">
+              <h2 className="text-xl font-black text-cream">{section.title}</h2>
+              <div className="mt-3 grid gap-3 text-sm font-semibold leading-6 text-cream/[.65]">
                 {section.body.map((paragraph) => (
                   <p key={paragraph}>{paragraph}</p>
                 ))}
@@ -47,14 +47,14 @@ export function PolicyPage({
           ))}
         </div>
 
-        <footer className="mt-8 flex flex-wrap gap-3 border-t border-line pt-4 text-sm font-semibold">
-          <Link href="/policy" className="underline decoration-2 underline-offset-4">
-            Community rules
+        <footer className="mt-8 flex flex-wrap gap-5 border-t border-cream/[.15] pt-5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.55]">
+          <Link href="/policy" className="hover:text-lime">
+            Crew rules
           </Link>
-          <Link href="/terms" className="underline decoration-2 underline-offset-4">
+          <Link href="/terms" className="hover:text-lime">
             Terms
           </Link>
-          <Link href="/privacy" className="underline decoration-2 underline-offset-4">
+          <Link href="/privacy" className="hover:text-lime">
             Privacy
           </Link>
         </footer>

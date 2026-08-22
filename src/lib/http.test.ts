@@ -98,4 +98,28 @@ describe("apiFetch", () => {
     expect(response.status).toBe(200);
     expect(keys).toEqual(["retry-safe-key", "retry-safe-key"]);
   });
+
+  it("retries a replayable mutation with the same body", async () => {
+    vi.useFakeTimers();
+    const bodies: string[] = [];
+    let calls = 0;
+    globalThis.fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      bodies.push(String(init?.body ?? ""));
+      if (calls === 1) {
+        return stalledFetch(init);
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    const body = JSON.stringify({ clientGuessId: "guess-1" });
+    const request = apiFetch("/api/guesses", { method: "POST", body }, 10, { replayable: true });
+    await vi.advanceTimersByTimeAsync(10);
+
+    const response = await request;
+    expect(response.status).toBe(200);
+    // The retry replays the same guess id, so the server dedupes it rather than
+    // recording a second miss.
+    expect(bodies).toEqual([body, body]);
+  });
 });

@@ -1,24 +1,21 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">VibeGrid mark</title>
-  <desc id="desc">A colorful four by four puzzle grid mark.</desc>
-  <rect width="256" height="256" rx="28" fill="#171717"/>
-  <g transform="translate(36 36)">
-    <rect x="0" y="0" width="38" height="38" rx="8" fill="#2EC4B6"/>
-    <rect x="48" y="0" width="38" height="38" rx="8" fill="#F9C74F"/>
-    <rect x="96" y="0" width="38" height="38" rx="8" fill="#FF6B6B"/>
-    <rect x="144" y="0" width="38" height="38" rx="8" fill="#F8FAFC"/>
-    <rect x="0" y="48" width="38" height="38" rx="8" fill="#F8FAFC"/>
-    <rect x="48" y="48" width="38" height="38" rx="8" fill="#6D5DFC"/>
-    <rect x="96" y="48" width="38" height="38" rx="8" fill="#2EC4B6"/>
-    <rect x="144" y="48" width="38" height="38" rx="8" fill="#F9C74F"/>
-    <rect x="0" y="96" width="38" height="38" rx="8" fill="#FF6B6B"/>
-    <rect x="48" y="96" width="38" height="38" rx="8" fill="#F8FAFC"/>
-    <rect x="96" y="96" width="38" height="38" rx="8" fill="#F9C74F"/>
-    <rect x="144" y="96" width="38" height="38" rx="8" fill="#6D5DFC"/>
-    <rect x="0" y="144" width="38" height="38" rx="8" fill="#6D5DFC"/>
-    <rect x="48" y="144" width="38" height="38" rx="8" fill="#FF6B6B"/>
-    <rect x="96" y="144" width="38" height="38" rx="8" fill="#F8FAFC"/>
-    <rect x="144" y="144" width="38" height="38" rx="8" fill="#2EC4B6"/>
+  <desc id="desc">Twelve fragment tiles with four chosen to make one vibe card.</desc>
+  <rect width="256" height="256" rx="34" fill="#0D1220"/>
+  <rect x="40" y="37" width="176" height="182" rx="24" fill="#7546B8"/>
+  <rect x="31" y="28" width="176" height="182" rx="24" fill="#F7F2E8" stroke="#070A12" stroke-width="6"/>
+  <g stroke="#0D1220" stroke-width="4">
+    <rect x="49" y="49" width="42" height="34" rx="8" fill="#A3E635"/>
+    <rect x="98" y="49" width="42" height="34" rx="8" fill="#FFFFFF"/>
+    <rect x="147" y="49" width="42" height="34" rx="8" fill="#FFFFFF"/>
+    <rect x="49" y="90" width="42" height="34" rx="8" fill="#FFFFFF"/>
+    <rect x="98" y="90" width="42" height="34" rx="8" fill="#7546B8"/>
+    <rect x="147" y="90" width="42" height="34" rx="8" fill="#FFFFFF"/>
+    <rect x="49" y="131" width="42" height="34" rx="8" fill="#FFFFFF"/>
+    <rect x="98" y="131" width="42" height="34" rx="8" fill="#FFFFFF"/>
+    <rect x="147" y="131" width="42" height="34" rx="8" fill="#F8B43A"/>
+    <rect x="49" y="172" width="42" height="22" rx="7" fill="#FFFFFF"/>
+    <rect x="98" y="172" width="42" height="22" rx="7" fill="#EF5350"/>
+    <rect x="147" y="172" width="42" height="22" rx="7" fill="#FFFFFF"/>
   </g>
 </svg>
-

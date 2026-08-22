@@ -1,46 +1,36 @@
 import { PolicyPage } from "@/components/PolicyPage";
 
 export const metadata = {
-  title: "VibeGrid community rules",
-  description: "What can be shared in community VibeGrid puzzles."
+  title: "VibeGrid crew rules",
+  description: "The rules for titles, display names, and private crew play."
 };
 
-export default function CommunityPolicyPage() {
+export default function CrewPolicyPage() {
   return (
     <PolicyPage
-      eyebrow="Community rules"
-      title="Keep shared grids fair and safe"
-      intro="Community puzzles are submitted by players, reviewed by an administrator, and then shared by direct link. These rules explain what can be reported, removed, appealed, or reinstated."
+      eyebrow="Crew policy"
+      title="Keep the joke inside the room."
+      intro="VibeGrid works when a crew can be specific, funny, and honest without turning a card into a weapon. These are the boundaries."
       sections={[
         {
-          title: "What is not allowed",
+          title: "Hard lines",
           body: [
-            "Do not post hateful, harassing, threatening, sexually explicit, violent, or illegal content.",
-            "Do not include private personal information, doxxing hints, passwords, keys, payment details, or other sensitive data.",
-            "Do not use community grids for spam, scams, impersonation, malware, phishing, or repeated low-quality posting.",
-            "Do not upload content you do not have the right to share, including copyrighted word sets copied from another puzzle without permission.",
-            "Do not make grids that target a private person, reveal hidden personal facts, or require inside knowledge meant to embarrass someone."
+            "Do not use a display name or card title for threats, hate, targeted harassment, sexual content involving minors, impersonation, or disclosure of private information.",
+            "Do not turn an invite into a public pile-on. The fact that a room is link-accessible does not make its people or its history public material."
           ]
         },
         {
-          title: "Fair puzzle standard",
+          title: "The social contract",
           body: [
-            "A community grid should be playable from the visible words alone. Tricky is fine; deliberately impossible, misleading, or broken grids may be removed.",
-            "Repeated tiles, empty groups, and overlong wording are blocked before saving. Moderators can still remove a grid if the saved puzzle violates these rules."
+            "Vote for the card, not against its eventual author. The ballot hides authors for a reason, and self-votes are blocked.",
+            "Inside jokes are welcome when everyone in the room can laugh. A private reference designed to humiliate one member is not."
           ]
         },
         {
-          title: "Reports and review",
+          title: "What owners can do",
           body: [
-            "Every submitted grid is reviewed before it can be played. Players can report an approved grid from the puzzle screen without logging in. Reports include a reason code, optional details, the puzzle id, and an optional contact field.",
-            "Moderators can dismiss a report, archive the grid, leave a resolution note, and review the audit log for each moderation action."
-          ]
-        },
-        {
-          title: "Appeals",
-          body: [
-            "If a shared grid is unavailable, the puzzle page shows an appeal form. The appeal goes to the admin moderation queue.",
-            "Moderators can close an appeal or reinstate the grid. Reinstatement and appeal decisions are recorded in the audit log."
+            "Owners can remove a member or rotate a leaked invite. Members can leave at any time. These controls change access going forward; they do not silently rewrite an old revealed result.",
+            "There is not yet a public in-product report queue for crew cards. If that becomes part of the product, the privacy and moderation documentation must be updated before launch."
           ]
         }
       ]}

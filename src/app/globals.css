@@ -2,35 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/fonts/BricolageGrotesque-Variable.ttf") format("truetype-variations");
+  font-style: normal;
+  font-weight: 200 800;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+}
+
 :root {
-  color-scheme: light;
-  --ink: #17231f;
-  --paper: #edf4f1;
-  --line: #c9d8d1;
-  --card: #fffdf7;
+  color-scheme: dark;
+  --ink: #0d1220;
+  --ink-deep: #070a12;
+  --paper: #11162a;
+  --line: #353b54;
+  --cream: #f7f2e8;
+  --lime: #a3e635;
+  --amber: #f8b43a;
+  --coral: #ef5350;
+  --violet: #7546b8;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   min-height: 100vh;
-  /* Mobile browsers report 100vh as the URL-bar-retracted height, which leaves a
-     dead strip below the fold. dvh tracks the visible viewport; vh stays as the
-     fallback for browsers without dvh. */
   min-height: 100dvh;
   margin: 0;
   background:
-    radial-gradient(circle at 18% 12%, rgba(244, 201, 93, 0.18), transparent 18rem),
-    linear-gradient(135deg, rgba(103, 189, 208, 0.12), transparent 30rem),
-    linear-gradient(90deg, rgba(23, 35, 31, 0.052) 1px, transparent 1px),
-    linear-gradient(rgba(23, 35, 31, 0.052) 1px, transparent 1px),
-    var(--paper);
-  background-size: auto, auto, 52px 52px, 52px 52px;
-  color: var(--ink);
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    var(--ink);
+  background-size: 40px 40px;
+  color: var(--cream);
+  font-family: "Bricolage Grotesque", "Arial Rounded MT Bold", "Arial Black", ui-sans-serif, system-ui, sans-serif;
 }
 
 button,
@@ -39,80 +67,281 @@ textarea {
   font: inherit;
 }
 
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
 button:focus-visible,
-a:focus-visible {
-  outline: 3px solid #67bdd0;
-  outline-offset: 3px;
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--amber);
+  outline-offset: 4px;
 }
 
 ::selection {
-  background: #f4c95d;
-  color: #17231f;
+  background: var(--lime);
+  color: var(--ink);
+}
+
+.font-display {
+  font-family: "Bricolage Grotesque", "Arial Rounded MT Bold", "Arial Black", ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 @layer components {
-  .vg-panel {
-    @apply rounded-lg border border-line bg-card/95 shadow-soft;
+  .vg-shell {
+    @apply mx-auto min-h-screen w-full max-w-7xl px-4 py-5 sm:px-6 sm:py-7 lg:px-8;
+    min-height: 100dvh;
   }
 
-  .vg-panel-muted {
-    @apply rounded-lg border border-line bg-white/70;
+  .vg-meta {
+    @apply font-mono text-[0.7rem] font-bold uppercase tracking-[0.13em] text-cream/[.55];
+  }
+
+  .vg-count {
+    @apply min-w-14 rounded-xl border-2 border-cream/20 bg-cream/5 px-3 py-2 text-center font-mono text-sm font-bold text-lime;
+  }
+
+  .vg-header-link {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border-2 border-cream/25 px-4 text-sm font-black text-cream transition;
+    box-shadow: 4px 4px 0 var(--ink-deep);
+  }
+
+  .vg-header-link:hover {
+    @apply border-lime text-lime;
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--ink-deep);
+  }
+
+  .vg-primary-button {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border-2 border-ink bg-lime px-5 text-sm font-black text-ink transition disabled:cursor-not-allowed disabled:bg-line disabled:text-cream/40 disabled:shadow-none;
+    box-shadow: 5px 5px 0 var(--ink-deep);
+  }
+
+  .vg-primary-button:not(:disabled):hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 7px 7px 0 var(--ink-deep);
+  }
+
+  .vg-primary-button:not(:disabled):active {
+    transform: translate(3px, 3px);
+    box-shadow: 2px 2px 0 var(--ink-deep);
+  }
+
+  .vg-secondary-button {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border-2 border-cream/25 bg-transparent px-5 text-sm font-black text-cream transition;
+  }
+
+  .vg-secondary-button:hover {
+    @apply border-cream bg-cream text-ink;
+  }
+
+  .vg-button {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border-2 px-4 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .vg-button-lime {
+    @apply border-ink bg-lime text-ink;
+    box-shadow: 4px 4px 0 var(--ink-deep);
+  }
+
+  .vg-button-quiet {
+    @apply border-cream/25 bg-transparent text-cream hover:border-cream hover:bg-cream hover:text-ink;
+  }
+
+  .vg-tag {
+    @apply inline-flex items-center gap-1 rounded-full border-2 border-ink px-2.5 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.08em];
+  }
+
+  .vg-card-row {
+    @apply rounded-2xl border-2 border-line bg-paper p-4 text-cream sm:p-5;
+    box-shadow: 5px 5px 0 var(--ink-deep);
+  }
+
+  .vg-dark-panel {
+    @apply rounded-[1.65rem] border-2 border-line bg-paper p-4 sm:p-6 lg:p-7;
+    box-shadow: 7px 7px 0 var(--ink-deep);
+  }
+
+  .vg-hero-card {
+    @apply rounded-[1.8rem] border-[3px] border-ink bg-cream p-5 text-ink sm:p-7;
+    box-shadow: 10px 10px 0 var(--violet);
+    transform: rotate(0.6deg);
+  }
+
+  .vg-hero-fragment {
+    @apply flex min-h-16 items-center justify-center rounded-xl border-2 border-ink/[.15] bg-white px-2 text-center text-[0.7rem] font-black leading-tight sm:min-h-20 sm:text-xs;
+  }
+
+  .vg-hero-fragment-accent {
+    @apply border-ink bg-lime;
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+
+  .vg-prompt {
+    @apply max-w-3xl text-2xl font-black leading-[1.04] tracking-[-0.035em] text-cream sm:text-4xl;
+  }
+
+  .vg-fragment-grid {
+    @apply grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3;
+  }
+
+  .vg-fragment {
+    @apply relative flex min-h-[5.75rem] items-center justify-center rounded-xl border-2 border-cream/25 bg-cream px-2 text-center text-xs font-black leading-tight text-ink transition sm:min-h-[6.5rem] sm:px-3 sm:text-sm;
+    box-shadow: 4px 4px 0 var(--ink-deep);
+  }
+
+  .vg-fragment:not(:disabled):hover {
+    @apply border-lime;
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--ink-deep);
+  }
+
+  .vg-fragment:active,
+  .vg-fragment-selected {
+    transform: translate(3px, 3px);
+    box-shadow: 1px 1px 0 var(--ink-deep);
+  }
+
+  .vg-fragment-selected {
+    @apply border-lime bg-violet text-cream;
+  }
+
+  .vg-fragment:disabled {
+    @apply cursor-not-allowed opacity-35;
+  }
+
+  .vg-fragment-check {
+    @apply absolute right-2 top-2 rounded-full bg-lime p-0.5 text-ink;
+  }
+
+  .vg-composer-tray {
+    @apply rounded-2xl border-2 border-line bg-ink-deep/[.45] p-4 transition sm:p-5;
+  }
+
+  .vg-composer-tray-ready {
+    @apply border-lime/60;
+  }
+
+  .vg-picked-slot {
+    @apply flex min-h-12 items-center justify-center rounded-xl border-2 border-dashed border-cream/[.15] px-2 text-center font-mono text-[0.68rem] font-bold uppercase tracking-[0.05em] text-cream/25;
+  }
+
+  .vg-picked-slot-filled {
+    @apply border-solid border-cream/25 bg-cream/[.08] text-cream;
+  }
+
+  .vg-text-button {
+    @apply inline-flex items-center gap-1.5 font-mono text-[0.68rem] font-bold uppercase tracking-[0.08em] text-cream/50 transition hover:text-lime;
+  }
+
+  .vg-title-input {
+    @apply min-h-12 w-full rounded-xl border-2 border-cream/25 bg-cream px-4 text-base font-black text-ink outline-none placeholder:text-ink/[.35] focus:border-lime;
+    box-shadow: inset 0 -3px 0 rgba(13, 18, 32, 0.12);
+  }
+
+  .vg-vibe-card {
+    @apply rounded-[1.45rem] border-[3px] border-ink bg-cream p-4 text-ink transition sm:p-5;
+    box-shadow: 6px 6px 0 var(--ink-deep);
+  }
+
+  button.vg-vibe-card:not(:disabled):hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 8px 8px 0 var(--violet);
+  }
+
+  .vg-vibe-card-selected {
+    box-shadow: 8px 8px 0 var(--violet);
+    transform: translate(-2px, -2px);
+  }
+
+  .vg-vibe-card-winner {
+    box-shadow: 8px 8px 0 var(--lime);
+  }
+
+  .vg-card-fragment {
+    @apply flex min-h-11 items-center justify-center rounded-lg border-2 border-ink/[.15] bg-white px-2 text-center text-xs font-black leading-tight;
+  }
+
+  .vg-card-badge {
+    @apply inline-flex shrink-0 items-center gap-1 rounded-full border-2 border-ink px-2.5 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.08em];
+  }
+
+  /* Legacy/admin surfaces inherit the same physical system while their routes
+     are retained for operational continuity during the product migration. */
+  .vg-panel,
+  .vg-panel-muted,
+  .vg-board-sheet,
+  .vg-control-rail {
+    @apply rounded-2xl border-2 border-line bg-card p-4 text-ink;
+    box-shadow: 5px 5px 0 var(--ink-deep);
   }
 
   .vg-desk {
     @apply mx-auto grid min-h-[calc(100vh-2.5rem)] w-full max-w-7xl gap-4 lg:grid-cols-[5.75rem_minmax(0,1fr)_20rem];
-    min-height: calc(100dvh - 2.5rem);
   }
 
   .vg-spine {
-    @apply rounded-lg border border-line bg-ink text-card shadow-soft;
-  }
-
-  .vg-board-sheet {
-    @apply rounded-lg border border-line bg-card/95 p-3 shadow-soft sm:p-4 lg:p-5;
-  }
-
-  .vg-control-rail {
-    @apply rounded-lg border border-line bg-white/[.82] p-3 shadow-soft backdrop-blur sm:p-4;
+    @apply rounded-2xl border-2 border-line bg-ink text-card;
+    box-shadow: 5px 5px 0 var(--ink-deep);
   }
 
   .vg-rule {
-    @apply border-t border-line;
+    @apply border-t-2 border-line;
+  }
+
+  .vg-icon-button,
+  .vg-button-secondary {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border-2 border-line bg-card px-3 text-sm font-bold text-ink transition hover:border-violet;
+    box-shadow: 3px 3px 0 var(--ink-deep);
   }
 
   .vg-icon-button {
-    @apply inline-flex h-11 w-11 items-center justify-center rounded-lg border border-line bg-card/95 text-ink shadow-soft transition hover:-translate-y-0.5 hover:border-ink hover:bg-pool/20 hover:shadow-lift disabled:translate-y-0 disabled:opacity-40;
+    @apply h-11 w-11 px-0;
   }
 
   .vg-button-primary {
-    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-ink bg-mint px-4 font-semibold text-ink shadow-soft transition hover:-translate-y-0.5 hover:bg-mint/[.85] hover:shadow-lift disabled:translate-y-0 disabled:bg-neutral-200 disabled:text-neutral-500 disabled:shadow-none disabled:opacity-70;
-  }
-
-  .vg-button-secondary {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-line bg-card/95 px-3 text-sm font-semibold text-neutral-700 shadow-soft transition hover:-translate-y-0.5 hover:border-ink hover:bg-yolk/20 hover:text-ink disabled:translate-y-0 disabled:opacity-50;
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border-2 border-ink bg-lime px-4 font-black text-ink disabled:opacity-45;
+    box-shadow: 4px 4px 0 var(--ink-deep);
   }
 
   .vg-input {
-    @apply rounded-lg border border-line bg-white px-3 text-ink outline-none transition focus:border-ink focus:ring-2 focus:ring-pool/[.35];
+    @apply min-h-12 w-full rounded-xl border-2 border-line bg-white px-3 text-ink outline-none focus:border-violet;
   }
 
   .vg-kicker {
-    @apply text-sm font-semibold text-plum;
+    @apply font-mono text-xs font-bold uppercase tracking-[0.1em] text-violet;
   }
 
   .vg-page-title {
-    @apply text-4xl font-extrabold leading-tight sm:text-5xl;
+    @apply text-4xl font-black leading-tight tracking-[-0.04em] sm:text-5xl;
   }
 
   .vg-mode-track {
-    @apply grid grid-cols-3 gap-1 rounded-lg border border-ink bg-ink p-1 shadow-soft;
+    @apply grid grid-cols-3 gap-1 rounded-xl border-2 border-ink bg-ink p-1;
   }
 
   .vg-mode-tab {
-    @apply h-10 rounded-md text-sm font-semibold transition;
+    @apply h-10 rounded-lg text-sm font-bold;
   }
 
   .vg-stat-cell {
-    @apply rounded-lg border border-line bg-card/90 p-3;
+    @apply rounded-xl border-2 border-line bg-card p-3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

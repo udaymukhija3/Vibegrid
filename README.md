@@ -1,300 +1,253 @@
-<div align="center">
-  <img src="public/vibegrid-mark.svg" alt="VibeGrid" width="72" height="72" />
-  <h1>VibeGrid</h1>
-  <p><strong>Group the words. Guess the vibe.</strong></p>
-  <p>A daily semantic grouping puzzle: 16 tiles, 4 hidden vibe-based categories, 4 mistakes, and a spoiler-safe result to share.</p>
-  <p>
-    <a href="https://github.com/udaymukhija3/Vibegrid/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/udaymukhija3/Vibegrid/actions/workflows/ci.yml/badge.svg" /></a>
-  </p>
-  <p>
-    <a href="#current-state">Current state</a> |
-    <a href="#what-is-built">What is built</a> |
-    <a href="#run-it-locally">Run locally</a> |
-    <a href="#deployment-status">Deployment</a> |
-    <a href="#for-portfolio-and-ai-agents">Portfolio notes</a>
-  </p>
-</div>
+<p align="center">
+  <img src="public/vibegrid-mark.svg" alt="VibeGrid" width="84" height="84" />
+</p>
 
-VibeGrid is a daily word-grouping game with real product plumbing behind it:
-guest attempts, server-authoritative guessing, spoiler-safe sharing, community
-puzzle submissions, admin publishing, moderation, analytics, and production-shaped
-observability. It ships as one Go binary that serves an exported Next.js front
-end and the API from the same origin.
+<h1 align="center">VibeGrid</h1>
 
-This is not a static mockup. The core player loop, durable Postgres path, admin
-desk, moderation queue, migrations, CI workflow, Docker image, Fly/Render config,
-and monitoring templates are all present in the repo.
+<p align="center"><strong>Make the vibe. Let the crew decide.</strong></p>
 
-## Current State
+VibeGrid is a daily asynchronous social game. Everyone receives the same prompt
+and twelve human-written fragments. Each person chooses four, gives the
+combination a title, and submits one “vibe card” to a private crew. The next day,
+people who played judge the cards without seeing the authors. The day after that,
+the result reveals who made what.
 
-- **Working local app:** `npm run dev` starts the Go API on
-  `http://localhost:8081` and the Next.js frontend on `http://localhost:3000`.
-- **No database required for a quick demo:** without `DATABASE_URL`, the backend
-  uses in-memory attempts plus the same date-driven daily generator, so the game
-  is playable immediately.
-- **Guided public demo path:** `/demo` starts a fresh seeded room, and the room
-  URL can be opened in a private window or second browser to show another guest
-  attempt without sign-in or setup.
-- **Postgres unlocks the full product:** durable attempts, stats, streaks,
-  community puzzle review, admin publishing, reports, appeals, moderation, and
-  audit logs require `DATABASE_URL`.
-- **Deployment scaffolding is ready:** the repo includes a multi-stage
-  Node+Go `Dockerfile`, `fly.toml`, `render.yaml`, embedded SQL migrations,
-  `/healthz`, `/readyz`, bearer-protected `/metrics`, structured logs, alert rules, and a starter
-  Grafana dashboard.
-- **Public demo/beta deployment:** the current Render deployment is available at
-  [vibegrid.onrender.com](https://vibegrid.onrender.com). Treat it as a portfolio
-  demo or controlled beta—not a production-readiness claim—until the canonical
-  daily lifecycle, backup/restore drill, CI-gated deploy, dependency gates, and
-  external monitoring in
-  [the launch-readiness review](docs/production-readiness.md) are complete.
+There is no answer key. The interpretation—and what it says about the people in
+the room—is the product.
 
-## What Is Built
+## The product contract
 
-| Area | Current behavior |
-| --- | --- |
-| Player game | Daily 4x4 grid, Easy/Medium/Hard modes, one-away feedback, 4-mistake terminal failure, elapsed timer, and shareable spoiler-safe result grid. |
-| Game rules | Go validates guesses server-side. The browser receives tile ids/text and vibe hints, but never receives tile-to-group answer mappings. |
-| Guest persistence | Public play uses a guest session cookie. Attempts survive refreshes; with Postgres they are durable beyond process restarts for up to 30 days. |
-| Daily content | Explicitly scheduled editorial puzzles win for their publish date. A background generator proactively persists missing canonical dailies from curated bank groups, preserving archive, streak, date, and numbering semantics. |
-| Archive/share links | Published editorial puzzles appear in `/archive`; any playable puzzle can be opened at `/p/<id>`. |
-| Community puzzles | `/create` accepts a 4x4 puzzle from scratch or starter packs, holds it for admin review, and returns a one-time private creator claim link for status, withdrawal, and appeals. Only approved submissions receive a playable `/p/<id>` link. Requires Postgres. |
-| Admin desk | `/admin` supports password-backed admin login, queue-health coverage, draft creation, exact board preview, publish-by-date, archive/reinstate, and per-puzzle analytics. Requires Postgres and admin env vars. |
-| Moderation | Turnstile protects public creation/report/appeal writes. Admins can review reports, archive/reinstate content, handle creator-claimed appeals, and inspect an audit log. Requires Postgres. |
-| Analytics | Public completion stats are computed from attempts/guesses and shown only after the player finishes and enough players exist; admins also get wrong-guess heatmaps. |
-| Operations | Health/readiness probes, bearer-protected Prometheus metrics, structured request logs, route-aware security headers, rate limits, body caps, retention cleanup, a retrying/dead-letter transactional notification outbox, Docker/Fly/Render config, and deploy smoke scripts are checked in. |
+```text
+DAY D · MAKE                 DAY D+1 · JUDGE             DAY D+2 · REVEAL
+12 shared fragments   ───▶  authors hidden        ───▶  author + votes shown
+pick exactly 4              one non-self vote           ties stay ties
+write one title             makers only can vote        ≥3 cards + ≥2 votes = official
+```
+
+- The daily board is a creative constraint, not a puzzle with a concealed
+  partition.
+- A private crew is the primary product. The public homepage is a complete
+  practice round that teaches the make → judge → reveal loop without signup.
+- Submission and vote authorship are enforced inside database transactions.
+- A member sees only their own card during the make phase. Eligible judges see
+  cards without authors. Results reveal authors to current crew members.
+- One card and one ballot are allowed per member per board. Client-generated
+  replay ids make timed-out retries safe.
+- A result is “official” only with at least three cards and two ballots. Small
+  or quiet rounds still reveal honestly but do not extend the crew streak.
+- VibeGrid uses one global UTC rollover. Open tabs are never forcibly replaced;
+  the next fetch reconciles the current stage.
+
+The full rationale and non-goals live in
+[`docs/product-vision.md`](docs/product-vision.md). Ratified behavior lives in
+[`docs/decision-register.md`](docs/decision-register.md).
+
+## Why this is not an NYT Connections clone
+
+The old implementation was one: sixteen words, four hidden groups, four
+mistakes, solve time, colored result squares, and a social layer attached after
+the solitary game. That loop remains only behind legacy `/p/<id>` links so old
+shared URLs do not break.
+
+The active VibeGrid loop changes the player’s job and the source of truth:
+
+| | Hidden-group word puzzle | VibeGrid |
+| --- | --- | --- |
+| Player action | Recover an editor’s intended answer | Author an interpretation |
+| Truth | One concealed partition | No canonical answer |
+| Social role | Compare independent scores afterward | Other people’s cards and votes are the game |
+| Primary object | Solved grid | Named four-fragment card |
+| Suspense | “Did I find it?” | “Who made this, and will it land?” |
+| Return loop | Next puzzle | Make today, judge yesterday, reveal the day before |
+
+Changing colors, typography, difficulty labels, or share copy could never have
+created this distinction. The mechanic had to change.
+
+## What is implemented
+
+### Product and UI
+
+- A complete browser-only public practice round.
+- Private crew creation, join links, rotatable invites, owner removal, leaving,
+  and ownership transfer.
+- Staged make, blind judge, and reveal surfaces with a 30-second visible-tab
+  refresh.
+- A launch visual system that fuses the strongest Toy, Arcade, and Sticker
+  directions: deep-ink ground, cream physical cards, hard offset shadows,
+  Bricolage Grotesque, IBM Plex Mono, and a restrained lime/amber/coral/violet
+  palette.
+- A raster 1200×630 social card plus a new 12-fragment brand mark.
+- An authenticated board room for freezing one prompt and twelve unique
+  fragments for a future date.
+
+### Correctness and security
+
+- Go owns membership checks, one-card/one-vote invariants, no-self-vote rules,
+  replay semantics, result thresholds, ties, and staged disclosure.
+- Postgres stores immutable dated board snapshots, card author snapshots, and
+  ballots with uniqueness constraints and cascade/restrict behavior.
+- Public identifiers and JSON bodies are capped and validated before storage
+  work. Public reads and anonymous writes are rate-limited.
+- Production guardrails require Postgres, secure cookies, an exact HTTPS public
+  base URL, protected metrics, and explicit trusted proxy CIDRs.
+- Admin browser sessions are opaque, revocable, HttpOnly, hash-only in storage,
+  and CSRF-protected for cookie-authenticated mutations.
+- Canonical/robots/sitemap metadata comes from `VIBEGRID_PUBLIC_BASE_URL`, not
+  attacker-controlled request hosts. Crew and compatibility links are omitted
+  from the sitemap.
+
+### Runtime and operations
+
+- A multi-stage Docker build exports Next.js, embeds the static site and SQL
+  migrations in the Go binary, and runs as a non-root distroless container.
+- Embedded additive migrations, health/readiness probes, structured logs,
+  bounded route metrics, DB/cache/outbox metrics, graceful shutdown, and
+  retention cleanup.
+- Fly and Render deployment scaffolding, CI, protected metrics, smoke tests, and
+  restore/incident/secret-rotation runbooks.
+
+Provider-owned settings—managed backups, a completed restore drill, branch
+protection, external uptime/error alerting, and a verified permanent public
+domain—remain manual work and are not claimed as complete.
 
 ## Architecture
 
 ```text
-Browser -> Go binary (embedded Next.js static export + /api/*) -> Postgres
+Browser
+  ├─ public practice (local state only)
+  └─ private crew UI
+          │ same-origin JSON + HttpOnly guest cookie
+          ▼
+Go HTTP binary
+  ├─ board/stage projection and authorization
+  ├─ crew, submission, and vote transactions
+  ├─ admin auth and immutable board authoring
+  ├─ rate limits, metrics, health, SEO, legacy compatibility
+  └─ embedded exported Next.js frontend + embedded migrations
+          │
+          ▼
+Postgres
+  ├─ vibe_daily_boards
+  ├─ vibe_submissions
+  ├─ vibe_votes
+  ├─ crews / crew_members
+  └─ admin, idempotency, moderation, legacy attempt tables
 ```
 
-In development, Next.js rewrites `/api/*` to the Go backend for fast UI
-iteration. In production, the Go binary serves the static frontend and API from
-one origin, which keeps cookies, CORS, and deployment simpler.
+Important implementation entry points:
 
-Important implementation points:
+- `backend/internal/vibegrid/vibe_boards.go` — deterministic fallback board bank
+  and strict 12-fragment validation.
+- `backend/internal/vibegrid/vibe_rounds.go` — transactional store and replay
+  rules.
+- `backend/internal/vibegrid/vibe_round_handlers.go` — stage projection and
+  privacy boundary.
+- `backend/internal/vibegrid/vibe_board_admin.go` — immutable dated authoring.
+- `backend/db/migrations/00018_vibe_rounds.sql` — durable schema and constraints.
+- `src/components/VibeGridApp.tsx` — public practice loop.
+- `src/components/CrewRoom.tsx` — make, judge, result, membership, and invite UX.
+- `src/components/VibeComposer.tsx` and `VibeCard.tsx` — core interaction atoms.
+- `src/components/VibeBoardDesk.tsx` — editor board room.
+- `scripts/smoke.mjs` — runtime contract, including replay-safe crew submission
+  when a database is attached.
 
-- [AGENTS.md](AGENTS.md) is the short handoff for future Codex/new-chat work:
-  current state, verification commands, hardening decisions, and manual deploy
-  tasks.
-- [docs/production-readiness.md](docs/production-readiness.md) is the current
-  product, security, runtime, and launch decision; [docs/RECRUITER_EVIDENCE.md](docs/RECRUITER_EVIDENCE.md)
-  maps the strongest engineering claims to code, verification, and deployment
-  evidence.
-- `backend/internal/vibegrid` owns game rules, sessions, attempts, puzzle stores,
-  admin routes, moderation, stats, metrics, and SEO helpers.
-- `backend/db/migrations` contains embedded SQL migrations. `vibegrid migrate`
-  is the release-time migration command.
-- `src/app`, `src/components`, `src/lib`, and `src/types` contain the Next.js
-  frontend, API client, runtime response validation, game UI, admin desk, create
-  flow, archive, policy, privacy, and terms pages.
-- `backend/internal/frontend` embeds the static Next.js export into the Go
-  binary for the single-container deploy path.
-- `scripts/dev.mjs`, `scripts/e2e.mjs`, and `scripts/smoke.mjs` are the local
-  development and smoke-test entry points.
-
-## Run It Locally
-
-Install dependencies and start both servers:
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. Without `DATABASE_URL`, the public practice round
+works and crew endpoints explicitly return `503`; the app never pretends an
+in-memory crew is durable.
 
-Useful commands:
-
-```bash
-npm run dev:backend   # Go API only on :8081
-npm run dev:web       # Next.js only on :3000
-npm run migrate:backend
-npm run test          # Vitest frontend tests
-npm run test:security # static security contract for SQL/proxy defaults
-npm run test:backend  # Go backend tests
-npm run typecheck
-npm run build
-```
-
-### Run with Postgres
-
-Use Postgres for the durable path:
+For the full path:
 
 ```bash
 createdb vibegrid
 DATABASE_URL="postgres://USER@localhost:5432/vibegrid?sslmode=disable" npm run migrate:backend
 DATABASE_URL="postgres://USER@localhost:5432/vibegrid?sslmode=disable" npm run dev:backend
+npm run dev:web
 ```
 
-Then run `npm run dev:web` in another terminal and open
-`http://localhost:3000`.
+See [`.env.example`](.env.example) for runtime configuration.
 
-Integration tests use a real Postgres database when `TEST_DATABASE_URL` is set:
+## Routes
 
-```bash
-createdb vibegrid_test
-TEST_DATABASE_URL="postgres://USER@localhost:5432/vibegrid_test?sslmode=disable" go test -race ./backend/...
-```
+- `/` — today’s complete practice round.
+- `/crews` — create a crew or return to existing crews.
+- `/crew/<invite>` — join or play the crew’s make/judge/reveal stack.
+- `/admin` — authenticated immutable daily-board authoring.
+- `/privacy`, `/terms`, `/policy` — crew-specific launch policies.
+- `/archive`, `/create`, `/demo` — pivot explanation/practice compatibility.
+- `/p/<id>` — explicitly legacy hidden-group links; retained so old URLs resolve.
+- `/healthz`, `/readyz`, `/metrics`, `/robots.txt`, `/sitemap.xml` — runtime and
+  operational surfaces. Metrics require a bearer token when enabled.
 
-See [.env.example](.env.example) for environment variables such as
-`DATABASE_URL`, `VIBEGRID_ADMIN_PASSWORD`,
-`VIBEGRID_ADMIN_SESSION_SECRET`, `VIBEGRID_ADMIN_TOKEN`,
-`VIBEGRID_ALLOWED_ORIGINS`, `VIBEGRID_SECURE_COOKIES`,
-`VIBEGRID_TIMEZONE`, `VIBEGRID_MIGRATE_ON_BOOT`, `VIBEGRID_PUBLIC_BASE_URL`,
-`VIBEGRID_METRICS_TOKEN`, and `VIBEGRID_TRUSTED_PROXY_CIDRS`.
+Primary APIs:
 
-## Routes To Try
-
-- `/` - today's puzzle.
-- `/demo` - starts a guided seeded demo room.
-- `/demo/<room>` - plays that seeded room; open the same link in a private
-  window or second browser to simulate another guest.
-- `/archive` - previous editorial daily puzzles.
-- `/create` - public puzzle builder; submits a grid for admin approval.
-- `/p/<id>` - play a puzzle by link.
-- `/admin` - Editor Desk for queue health, drafts, board previews, publishing,
-  archive/reinstate, analytics, reports, appeals, and moderation audit logs.
-- `/policy`, `/terms`, `/privacy` - community rules and launch policy copy.
-- `/healthz`, `/readyz`, `/metrics`, `/robots.txt`, `/sitemap.xml` - operational
-  and SEO endpoints served by the Go binary. `/metrics` requires a bearer token.
-
-## Deployment Status
-
-The intended production shape is a single web/API container plus managed
-Postgres. The checked-in deploy paths are:
-
-- **Fly.io:** `fly.toml` uses the Dockerfile and runs `vibegrid migrate` as the
-  release command before traffic is served.
-- **Render + Neon:** `render.yaml` supports a free-tier portfolio deployment.
-  Because Render free has no release hook, it uses `VIBEGRID_MIGRATE_ON_BOOT=true`
-  for a single-instance boot migration.
-- **Any container host:** build the Dockerfile, set the env vars from
-  `.env.example`, attach Postgres, run migrations once per release, and route
-  health checks to `/readyz`.
-
-For a temporary public demo of the no-database game loop, run the app and tunnel
-the Go server:
-
-```bash
-npm install
-npm run dev
-cloudflared tunnel --url http://localhost:8081
-```
-
-Share `/demo` for a fresh guided walkthrough. If you want to show a second
-viewer, copy the generated `/demo/<room>` URL and open it in a private window or
-another browser; it uses the same seeded room with a separate guest attempt.
-
-Then smoke-test the temporary URL:
-
-```bash
-npm run smoke:deploy -- --base-url https://<temporary-demo-url>
-```
-
-Use [docs/deployment.md](docs/deployment.md) for the full production runbook.
-Before describing it as production live, verify the real host/domain, secure
-guest cookie persistence, managed Postgres backups/PITR, one restore drill,
-external uptime checks, and log/metrics retention.
+- `GET /api/vibes/today`
+- `GET /api/crews/<invite>/daily`
+- `POST /api/crews/<invite>/submissions`
+- `POST /api/crews/<invite>/votes`
+- `GET|POST /api/admin/vibe-boards`
 
 ## Verification
 
-The local and CI verification ladder is:
-
 ```bash
-npm run test
+npm run typecheck
+npm run lint
+npm test
 npm run test:security
 npm run test:backend
-npm run typecheck
+go vet ./backend/...
+go test -race ./backend/...
 npm run build
+git diff --check
 ```
 
-GitHub Actions is configured to run:
+Set `TEST_DATABASE_URL` to exercise the real transactional crew integration
+tests. `npm run test:e2e` builds the exported frontend and Go binary, starts the
+single-container path, and runs the smoke contract; local port binding may need
+an unrestricted environment.
 
-- Go formatting, `go vet`, and `go test -race ./...` against a Postgres service.
-- A repo security contract that catches dynamic SQL builders in SQL-bearing Go
-  files and broad trusted-proxy defaults.
-- `npm ci`, lint, typecheck, Vitest, and the static Next.js build.
+## Deliberate boundaries
 
-The deploy smoke script checks the runtime routes that matter for a public demo:
-play, archive, pending community submission where supported, policy pages,
-health/readiness, protected metrics when given `--metrics-token`, robots/sitemap,
-and OG metadata.
+- No accounts, OAuth, email, chat, presence, matchmaking, push notifications,
+  monetization, or public leaderboard.
+- No public feed of cards. Crew history is private to current members.
+- No real-time protocol. Visible crew pages poll; measured demand must justify
+  SSE/WebSocket complexity.
+- No AI-generated publishing. Editorial constraints are small enough that taste
+  and safety should remain visibly human.
+- No mutation of a frozen daily board.
+- No claim of production traffic, retention, backup recovery, or alert delivery
+  until external evidence exists.
 
-## Known Gaps
+## Portfolio framing
 
-These are the main things not to overstate:
+**Short title:** VibeGrid — asynchronous social authorship game.
 
-- A public Render demo/beta URL exists, but it is not a verified production
-  environment; see [the launch-readiness review](docs/production-readiness.md).
-- Public player accounts, OAuth, leaderboards, cross-device identity, and account
-  recovery are intentionally not implemented for v1.
-- Real-time multiplayer, live rooms, matchmaking, presence, and chat are out of
-  scope; the multiplayer loop is async sharing and community puzzle links.
-- AI-assisted puzzle generation is not part of the shipped app. Any future AI
-  work should be admin-reviewed draft assistance, not automatic publishing.
-- Shared puzzle metadata exists, but the current OG image endpoint is SVG. PNG
-  social cards for more reliable unfurls are a launch polish item.
-- External production ops still need provider setup: managed Postgres backups,
-  restore drill, dependency scanning, log drain, uptime monitor, and real alert
-  routing.
+**One sentence:** Built a Go/Postgres/Next.js daily crew game where players make
+four-fragment cards, judge them blind the next day, and reveal authors and votes
+afterward, with transaction-safe replay, capability-link membership, immutable
+editorial boards, staged privacy, CI, observability, and a single-binary deploy.
 
-## For Portfolio And AI Agents
+See [`docs/RECRUITER_EVIDENCE.md`](docs/RECRUITER_EVIDENCE.md) for claim-to-code
+proof and [`docs/resume-points.md`](docs/resume-points.md) for honest wording.
 
-If you are using this README to update a portfolio website, use the framing below.
-It is intentionally specific and avoids claiming a public production launch.
+## Documents
 
-**Short portfolio title:** VibeGrid - daily semantic grouping puzzle.
-
-**One-sentence summary:** Built a Go/Postgres/Next.js daily puzzle app with
-server-authoritative game rules, guest attempt persistence, reviewed community
-puzzles, admin publishing, moderation, analytics, CI, Docker deployment
-scaffolding, and Prometheus-style observability.
-
-**Good tags:** Go, Postgres, Next.js, TypeScript, Tailwind CSS, Docker, CI,
-observability, product engineering, moderation tooling.
-
-**Strong proof points to mention:**
-
-- Server-side validation prevents the browser from receiving the answer key.
-- Postgres attempt storage uses transactional/idempotent guess handling so
-  refreshes, retries, and double-clicks do not corrupt game state.
-- The project includes a full product surface, not only gameplay: reviewed
-  community submissions, admin publishing, moderation, reports/appeals,
-  analytics, policies, and ops
-  endpoints.
-- The deploy path is single-container and same-origin: the Go binary serves the
-  exported Next.js frontend and API.
-- The repo contains production-oriented scaffolding: migrations, health/readiness
-  probes, metrics, structured logs, security headers, rate limits, CI, Docker,
-  Fly/Render config, and smoke tests.
-
-**Do not claim unless a later commit proves it:**
-
-- A permanent public production URL is live.
-- Real users or production traffic exist.
-- Public accounts, OAuth, native mobile, live multiplayer, or leaderboards exist.
-- AI is generating or publishing puzzles.
-- Backups, restore drills, external monitoring, or alert routing are already
-  configured in a provider account.
-
-For resume wording, see [docs/resume-points.md](docs/resume-points.md). For the
-remaining launch plan, see [docs/launch-sprint-plan.md](docs/launch-sprint-plan.md)
-and [docs/production-readiness.md](docs/production-readiness.md).
-
-## Project Docs
-
-- [Deployment runbook](docs/deployment.md)
-- [Recruiter evidence matrix](docs/RECRUITER_EVIDENCE.md)
-- [Production readiness review](docs/production-readiness.md)
-- [Launch sprint plan](docs/launch-sprint-plan.md)
-- [Observability runbook](docs/observability.md)
 - [Product vision](docs/product-vision.md)
 - [Decision register](docs/decision-register.md)
-- [Tech stack notes](docs/tech-stack.md)
-- [Resume points](docs/resume-points.md)
+- [Recruiter evidence](docs/RECRUITER_EVIDENCE.md)
+- [Production readiness](docs/production-readiness.md)
+- [Launch and proof plan](docs/launch-sprint-plan.md)
+- [Daily board operations](docs/daily-puzzle-operations.md)
+- [Deployment runbook](docs/deployment.md)
+- [Observability runbook](docs/observability.md)
+- [Punchline reimagination prompt](docs/PUNCHLINE_REIMAGINATION_PROMPT.md)
 
 ## License
 

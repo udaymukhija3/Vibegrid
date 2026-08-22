@@ -2,7 +2,8 @@ import { CrewRoom } from "@/components/CrewRoom";
 
 export const metadata = {
   title: "Your VibeGrid crew",
-  description: "Play today's grid alongside your friends and compare how everyone did."
+  description: "Make today's vibe, judge yesterday's cards, and reveal what your crew picked.",
+  robots: { index: false, follow: false }
 };
 
 // Crew ids are minted at runtime, so — like demo rooms — the route stays open
@@ -15,7 +16,7 @@ export function generateStaticParams() {
 
 export default function CrewPage() {
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-6 lg:px-8">
+    <main className="min-h-screen">
       <CrewRoom />
     </main>
   );

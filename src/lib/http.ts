@@ -24,21 +24,35 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = API_TIMEOUT_MS) {
+export type ApiFetchOptions = {
+  // Marks a mutation that the server deduplicates on a replay key carried in the
+  // request body rather than in an Idempotency-Key header, so it can still earn
+  // the cold-start retry below. Only set this when a replayed request is a no-op
+  // server-side — otherwise a retry double-counts the mutation.
+  replayable?: boolean;
+};
+
+export async function apiFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = API_TIMEOUT_MS,
+  options: ApiFetchOptions = {}
+) {
   try {
     return await fetchWithTimeout(input, init, timeoutMs);
   } catch (error) {
-    if (!shouldRetryAfterTimeout(error, init)) {
+    if (!shouldRetryAfterTimeout(error, init, options)) {
       throw error;
     }
     return fetchWithTimeout(input, init, COLD_START_RETRY_TIMEOUT_MS);
   }
 }
 
-// Reads are safe to retry. A mutation is retried only when its caller supplied
-// an Idempotency-Key that the server can replay, and the same RequestInit (and
-// therefore the same key) is reused for the second attempt.
-function shouldRetryAfterTimeout(error: unknown, init: RequestInit) {
+// Reads are safe to retry. A mutation is retried only when the server can replay
+// it — the caller either supplied an Idempotency-Key or declared the request
+// replayable on a body-carried key — and the same RequestInit (and therefore the
+// same key) is reused for the second attempt.
+function shouldRetryAfterTimeout(error: unknown, init: RequestInit, options: ApiFetchOptions) {
   if (!(error instanceof ApiError) || !error.timedOut) {
     return false;
   }
@@ -46,7 +60,10 @@ function shouldRetryAfterTimeout(error: unknown, init: RequestInit) {
   if (init.signal?.aborted) {
     return false;
   }
-  return method === "GET" || new Headers(init.headers).has("Idempotency-Key");
+  if (method === "GET" || options.replayable) {
+    return true;
+  }
+  return new Headers(init.headers).has("Idempotency-Key");
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {

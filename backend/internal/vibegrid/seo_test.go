@@ -25,9 +25,14 @@ func TestRobotsTxtPointsAtSitemap(t *testing.T) {
 	if !strings.Contains(body, "Disallow: /admin") {
 		t.Fatalf("robots.txt should disallow /admin:\n%s", body)
 	}
+	for _, private := range []string{"/crew/", "/p/", "/claim"} {
+		if !strings.Contains(body, "Disallow: "+private) {
+			t.Fatalf("robots.txt should disallow %s:\n%s", private, body)
+		}
+	}
 }
 
-func TestSitemapListsPublishedPuzzlesOnly(t *testing.T) {
+func TestSitemapListsOnlyPublicProductPages(t *testing.T) {
 	handler := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), Clock: fixedClock, PublicBaseURL: "https://vibegrid.example"})
 
 	rec := seoRequest(handler, "/sitemap.xml")
@@ -48,27 +53,25 @@ func TestSitemapListsPublishedPuzzlesOnly(t *testing.T) {
 	}
 
 	locs := map[string]bool{}
-	puzzleURLs := 0
 	for _, entry := range set.URLs {
 		locs[entry.Loc] = true
-		if strings.Contains(entry.Loc, "/p/") {
-			puzzleURLs++
-		}
 	}
 
 	for _, want := range []string{
 		"https://vibegrid.example/",
-		"https://vibegrid.example/archive",
-		"https://vibegrid.example/p/vibegrid-2026-06-02",
+		"https://vibegrid.example/crews",
+		"https://vibegrid.example/privacy",
 	} {
 		if !locs[want] {
 			t.Fatalf("sitemap missing %q; got %v", want, locs)
 		}
 	}
-	// As of the fixed clock (2026-06-02) only one editorial puzzle is live; the
-	// future-dated seed puzzles must not leak into the sitemap.
-	if puzzleURLs != 1 {
-		t.Fatalf("expected exactly one published puzzle URL, got %d", puzzleURLs)
+	for _, private := range []string{"/p/", "/crew/", "/admin", "/archive", "/create"} {
+		for location := range locs {
+			if strings.Contains(location, private) {
+				t.Fatalf("private or compatibility route %q leaked into sitemap", location)
+			}
+		}
 	}
 }
 

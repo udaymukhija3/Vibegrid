@@ -1,6 +1,9 @@
 import { PlaySharedPuzzle } from "@/components/PlaySharedPuzzle";
 
 export const dynamicParams = false;
+export const metadata = {
+  robots: { index: false, follow: false }
+};
 
 export function generateStaticParams() {
   return [{ id: "__share__" }];

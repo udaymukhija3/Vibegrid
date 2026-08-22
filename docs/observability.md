@@ -1,118 +1,116 @@
-# Observability Runbook
+# VibeGrid observability runbook
 
-VibeGrid exposes three operational endpoints:
+Observability must answer two different questions:
 
-- `/healthz` - process liveness.
-- `/readyz` - readiness; checks Postgres when `DATABASE_URL` is set.
-- `/metrics` - bearer-protected Prometheus text metrics for request count,
-  status, and latency, plus connection-pool, puzzle-cache, and notification-outbox series (see below).
+1. Is the service healthy enough to serve and persist crew rounds?
+2. Where does the make → judge → reveal loop fail, without logging private
+   card content, display names, or invite secrets?
 
-## Public Uptime Checks
+## Availability checks
 
-Create external checks from Better Stack, UptimeRobot, Pingdom, Grafana Cloud, or
-the hosting provider:
+- `GET /healthz` every minute: process liveness.
+- `GET /readyz` every minute: required dependency readiness, including DB.
+- `GET /` every five minutes: embedded frontend delivery.
+- `GET /api/vibes/today` every five minutes: active board contract.
 
-- `GET https://<domain>/healthz` every 60 seconds, alert after 2 failures.
-- `GET https://<domain>/readyz` every 60 seconds, alert after 2 failures.
-- `GET https://<domain>/` every 5 minutes, alert on non-2xx or timeout.
-- `GET https://<domain>/api/puzzles/today` every 5 minutes, alert on non-2xx.
+Alert after two consecutive liveness/readiness failures and after a sustained
+frontend/board failure. A production crew deployment should never treat a DB
+outage as healthy just because public practice remains available.
 
-Use `/readyz` for deploy routing and database incidents. Use `/healthz` for
-process-level restarts.
+## Metrics access
 
-## Metrics
+`/metrics` exists only when `VIBEGRID_METRICS_TOKEN` is configured and then
+requires:
 
-Import the files under `monitoring/` into the chosen metrics stack:
+```text
+Authorization: Bearer <token>
+```
 
-- `monitoring/prometheus.yml` - scrape config for `/metrics`.
-- `monitoring/alert-rules.yml` - launch alerts for scrape failure, 5xx rate, p95
-  latency, and no observed traffic.
-- `monitoring/grafana-dashboard.json` - dashboard starter for traffic, errors,
-  and latency by route.
+Mount the token for Prometheus or adapt `monitoring/prometheus.yml` to the target
+platform. Never put the token in a public URL or frontend variable.
 
-Replace `vibegrid.example.com` with the real domain before importing. Mount a
-root-readable file at `/etc/prometheus/secrets/vibegrid_metrics_token` containing
-the app's `VIBEGRID_METRICS_TOKEN` (with no surrounding quotes). The checked-in
-Prometheus example sends it as a Bearer token; a request without it receives
-`401`.
+## Existing technical signals
 
-### Exposed series
+- HTTP request count, duration, request bytes, and response bytes by bounded
+  method/route/status labels.
+- Store-operation count/duration by bounded component/operation/status.
+- DB open/in-use/idle connections, wait count, and wait duration.
+- Legacy puzzle-cache hit/miss/eviction/entry metrics.
+- Notification-outbox pending/retrying/dead/oldest-pending gauges.
+- Process `vibegrid_up`.
 
-HTTP (always):
+New routes have stable labels:
 
-- `vibegrid_http_requests_total{method,route,status}`
-- `vibegrid_http_request_duration_seconds{...}` (histogram)
-- `vibegrid_http_metric_series_dropped_total` (counter; alert if it rises)
+- `/api/vibes/today`
+- `/api/crews/{id}/daily`
+- `/api/crews/{id}/submissions`
+- `/api/crews/{id}/votes`
+- `/api/admin/vibe-boards`
 
-Route labels are a fixed, bounded set. Unknown API routes collapse to `/api/*`
-and the process keeps at most 256 HTTP metric series, so attacker-controlled
-paths cannot grow metrics memory without bound.
-
-Connection pool (when `DATABASE_URL` is set) — watch the wait series for pool
-saturation under load:
-
-- `vibegrid_db_open_connections`, `vibegrid_db_in_use_connections`,
-  `vibegrid_db_idle_connections` (gauges)
-- `vibegrid_db_wait_count_total`, `vibegrid_db_wait_seconds_total` (counters)
-
-Puzzle content cache (when `DATABASE_URL` is set) — hit rate validates the
-per-guess read-path optimization:
-
-- `vibegrid_puzzle_cache_hits_total`, `vibegrid_puzzle_cache_misses_total`,
-  `vibegrid_puzzle_cache_evictions_total` (counters)
-- `vibegrid_puzzle_cache_entries` (gauge)
-
-Transactional notification outbox (when `DATABASE_URL` is set):
-
-- `vibegrid_notification_outbox_pending`, `vibegrid_notification_outbox_retrying`
-- `vibegrid_notification_outbox_dead`
-- `vibegrid_notification_outbox_oldest_pending_seconds`
-
-Alert when the oldest pending event exceeds the operator response target and
-immediately when a dead event appears. A missing webhook does not roll back a
-product mutation; the event remains durable until delivery is configured.
+Unknown API paths collapse to `/api/*`. Crew ids, submission ids, board ids,
+display names, and titles must never become metric labels.
 
 ## Logs
 
-The Go server writes structured `slog` request logs with method, path, status,
-duration, client IP, and user agent. Configure the host's log drain to ship
-stdout/stderr to a durable log store such as Axiom, Datadog, Grafana Loki,
-Honeycomb, Logtail, or the platform log service.
+Request logs include request id, method, normalized path, status, latency,
+client identity derived under the trusted-proxy policy, and user agent. Ship
+stdout/stderr to a durable log store for production.
 
-Minimum saved fields:
+Do not add:
 
-- timestamp
-- message
-- method
-- path
-- status
-- duration_ms
-- client_ip
-- user_agent
+- invite codes or raw crew URLs;
+- card titles or selected fragment text;
+- display names or session ids;
+- admin/metrics secrets;
+- request bodies for crew mutations.
 
-Create saved searches for:
+For an incident, correlate request id and bounded route, then query database
+state with an explicit crew internal id obtained through authorized operator
+work—not by widening routine logs.
 
-- `status >= 500`
-- `path = /api/community/puzzles and status >= 400`
-- `path starts with /api/admin and status in 401,403,500`
-- `message contains panic or error`
+## Alert candidates
 
-## Error Tracking
+- readiness down;
+- 5xx ratio over 5% for five minutes;
+- p95 crew daily latency over one second;
+- any sustained submission/vote 5xx increase;
+- DB pool wait count increasing continuously;
+- DB in-use connections near configured maximum;
+- mutation rate-limit backend failure;
+- notification outbox dead/pending age if notifications are configured;
+- backup freshness heartbeat missing once external backup automation exists.
 
-For launch, backend errors are visible through 5xx metrics and structured logs,
-and frontend crashes render through the app error boundary. Add Sentry or an
-equivalent tracker when credentials are available:
+Product-level quiet rounds or low judging are not paging alerts. They belong in
+a privacy-reviewed product dashboard.
 
-- Frontend: capture `src/app/error.tsx` exceptions.
-- Backend: capture panic recovery and unexpected 5xx paths.
-- Alerts: page on new high-volume errors and regressions after deploy.
+## Privacy-safe product events (not yet implemented)
 
-## Backups
+If product analytics is added, use short-lived pseudonymous crew-scoped or
+aggregate events and exclude content:
 
-Backups are owned by the managed Postgres provider, not the app container.
-Before public launch:
+- practice_completed;
+- crew_created;
+- member_joined with coarse crew-size bucket;
+- card_submitted;
+- judge_eligible_returned;
+- vote_cast;
+- result_revealed with official/quiet and tie booleans;
+- second_official_reveal.
 
-- Enable daily backups and point-in-time recovery.
-- Record backup retention, RPO, and RTO in the provider dashboard.
-- Run one restore drill into a fresh database before announcing the link widely.
-- Confirm the restored database can pass `vibegrid migrate` and `/readyz`.
+Never send prompt text, fragment ids/text, card titles, author names, invite
+codes, or stable cross-crew identity to analytics by default. Ratify retention
+and consent before implementation.
+
+## Incident first look
+
+1. Compare `/healthz` and `/readyz`.
+2. Check the board endpoint directly and confirm UTC date.
+3. Inspect route status/latency for daily, submissions, and votes.
+4. Inspect DB reachability, connections, wait time, and recent migrations.
+5. Check deploy SHA and rollback candidate.
+6. Preserve evidence before changing state.
+7. Use `docs/runbooks/incident-triage.md` and the rollback/restore runbooks.
+
+After recovery, record user-visible impact by stage: unable to load, unable to
+make, unable to judge, or unable to reveal. That is more actionable than a
+generic “game was down.”

@@ -34,7 +34,11 @@ Never restore over the live database directly — restore to a fresh target, ver
      -d "$NEW_DATABASE_URL" vibegrid.pgcustom
    ```
 
-3. Verify: row counts on `puzzles`, `attempts`, `attempt_guesses`; then point a local run at it (`DATABASE_URL=$NEW_DATABASE_URL npm run dev:backend`) and load the daily + an attempt.
+3. Verify row counts and referential integrity for `vibe_daily_boards`,
+   `vibe_submissions`, `vibe_votes`, `crews`, and `crew_members` (plus legacy
+   tables while `/p` compatibility remains). Point a local run at the restored
+   database, load `/api/vibes/today`, open a known crew daily, and confirm one
+   historical result and its author/vote tally.
 4. Switch production: update `DATABASE_URL` in the Render dashboard → service redeploys → run the smoke check from the deploy runbook.
 
 ## Restore drill

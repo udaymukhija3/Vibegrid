@@ -15,10 +15,9 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /readyz
-    # Pushes to main deploy automatically. Optional upgrade to CI-gated deploys:
-    # create a Deploy Hook (Render dashboard -> Settings), save it as the
-    # RENDER_DEPLOY_HOOK_URL repo secret, then set this to false —
-    # .github/workflows/deploy.yml takes over and only deploys after CI passes.
+    # CI-gated deployments: create a Deploy Hook (Render dashboard -> Settings)
+    # and save it as RENDER_DEPLOY_HOOK_URL. With autoDeploy false, no production
+    # deployment occurs when that secret is absent.
     autoDeploy: false
     envVars:
       - key: VIBEGRID_ENV

@@ -1,18 +1,23 @@
 # VibeGrid agent handoff
 
-Start here when picking up this repo in a new Codex/chat session.
+Start here in a new coding session.
 
-## Current state
+## Product source of truth
 
-VibeGrid is a public portfolio web app: a daily semantic grouping puzzle with a
-Go API/binary, exported Next.js frontend, Postgres-backed durable mode, admin
-desk, community submissions, moderation, stats, and deployment scaffolding.
+VibeGrid is an asynchronous private-crew authorship game, not a semantic
+grouping puzzle. A dated board contains one prompt and exactly twelve fragments,
+with no answer key. On day D a member chooses four fragments and titles the
+combination; on D+1 eligible makers cast one blind non-self vote; on D+2 authors
+and votes reveal. An official result needs at least three cards and two votes.
 
-The app is intended to be recruiter-visible. Prioritize issues a recruiter,
-senior engineer, or basic security reviewer could spot quickly from code or by
-poking the deployed app. Keep claims honest: if a provider setting, public URL,
-backup, or production secret is not verified in code/docs, treat it as manual
-work rather than done.
+The public homepage is a local practice round. The durable product requires
+Postgres and lives in crews. Read `docs/product-vision.md` and
+`docs/decision-register.md` before changing the loop.
+
+The old hidden-group engine remains behind legacy `/p/<id>` links and APIs only
+so old shares keep resolving. Do not restore its mechanics, language, archive,
+builder, score, timer, difficulty, mistakes, or result grid to the primary
+product or sitemap.
 
 ## First commands
 
@@ -22,10 +27,10 @@ npm run typecheck
 npm run lint
 npm test
 npm run test:security
-go test ./backend/...
+npm run test:backend
 ```
 
-For larger backend/security changes also run:
+For backend, schema, security, or release work also run:
 
 ```bash
 go vet ./backend/...
@@ -34,74 +39,71 @@ npm run build
 git diff --check
 ```
 
-`npm run test:e2e` binds a local port and may fail inside restricted sandboxes.
-`npm audit --omit=dev --audit-level=high` needs registry network access. Run
-those locally or in CI if the sandbox blocks bind/network access.
+`TEST_DATABASE_URL` enables real Postgres integration tests. `npm run test:e2e`
+binds a local port and may need an unrestricted environment. Registry audits
+need network access.
 
 ## Architecture map
 
-- `backend/cmd/vibegrid` loads config, validates production guardrails, wires
-  stores, runs migrations, starts cleanup loops, and serves the Go binary.
-- `backend/internal/vibegrid` owns game rules, sessions, attempts, admin auth,
-  puzzle stores, community creation, moderation, stats, metrics, SEO, and HTTP
-  middleware.
-- `backend/db/migrations` contains embedded SQL migrations used by
-  `vibegrid migrate`.
-- `src/app`, `src/components`, `src/lib`, and `src/types` own the Next.js UI,
-  API clients, runtime response schemas, game board, admin desk, create flow,
-  policy/privacy/terms pages, and tests.
-- `scripts/smoke.mjs` and `scripts/e2e.mjs` are runtime verification entry
-  points.
-- `docs/deployment.md`, `docs/observability.md`, and
-  `docs/production-readiness.md` are the operational handoff.
+- `backend/internal/vibegrid/vibe_boards.go`: fallback editorial palettes and
+  board validation.
+- `backend/internal/vibegrid/vibe_rounds.go`: card/vote transactions, replay
+  semantics, snapshots, and streak queries.
+- `backend/internal/vibegrid/vibe_round_handlers.go`: make/judge/reveal response
+  projection and staged disclosure.
+- `backend/internal/vibegrid/vibe_board_admin.go`: immutable dated authoring.
+- `backend/db/migrations/00018_vibe_rounds.sql`: new product schema.
+- `src/components/VibeGridApp.tsx`: public practice.
+- `src/components/CrewRoom.tsx`: durable crew experience.
+- `src/components/VibeComposer.tsx`, `VibeCard.tsx`: interaction primitives.
+- `src/components/VibeBoardDesk.tsx`: editor board room.
+- `src/lib/api.ts`, `src/types/vibe.ts`: runtime-validated client contracts.
+- `scripts/smoke.mjs`, `scripts/e2e.mjs`: runtime verification.
 
-## Security/product decisions already implemented
+The Go binary still embeds the exported Next.js frontend and legacy migrations,
+stores, moderation, and route compatibility. Removal is a separate migration
+project, not drive-by cleanup.
 
-- Production startup fails fast without the required database, secure cookies,
-  metrics token, exact HTTPS public base URL, and safe CORS/proxy settings.
-- Public canonical/robots/sitemap/social metadata use `VIBEGRID_PUBLIC_BASE_URL`,
-  not request or forwarded host headers.
-- Client IP headers are trusted only from configured proxy CIDRs.
-- Admin browser login uses opaque, revocable, HttpOnly sessions; only token
-  hashes are stored. Cookie-authenticated admin mutations require CSRF.
-- `/metrics` is disabled unless `VIBEGRID_METRICS_TOKEN` is configured, and then
-  requires a bearer token.
-- Public API metrics labels are bounded; unknown API paths collapse to `/api/*`.
-- Public puzzle reads and anonymous writes are rate-limited. Shared Postgres
-  rate-limit failures fail closed on write paths.
-- Guest attempt data expires after up to 30 days and is pruned.
-- Community puzzles are created as `PENDING`; only admin approval makes them
-  playable by direct `/p/<id>` link.
-- The admin desk has queue-health coverage, exact board preview, publish,
-  approval, archive/reinstate, analytics, reports, appeals, and audit logs.
-- JSON mutation endpoints require `Content-Type: application/json`; request
-  bodies and public identifiers are size/shape capped before storage work.
-- `npm run test:security` gates SQL-bearing Go files against dynamic query
-  builders and ensures deploy defaults do not trust broad proxy CIDRs.
+## Product invariants
 
-## Manual work that code cannot finish
+- A board has exactly 12 unique fragment ids and texts and no grouping metadata.
+- A card has exactly 4 distinct fragments from that board and a 1–40 rune title.
+- One member gets one card per crew/board and one vote per crew/board.
+- Only a member who submitted can vote; the target must be another card in the
+  same crew and board.
+- Membership authorization for mutations stays inside the database transaction.
+- Client replay ids are stable across network retries. Reusing one with changed
+  input is a conflict.
+- Nonmembers never receive member lists, cards, ballots, votes, or results.
+- During make, members receive only their own card. During judge, author names
+  are absent. During result, authors reveal and ties remain ties.
+- Board content is immutable after the first row for a publish date is stored.
+- Crew links are capability secrets: never put them in sitemap or public feeds.
 
-- Push/stage/commit/PR if the worktree is still local and unstaged.
-- Provision managed Postgres, enable backups/PITR, and perform one restore drill.
-- Set production secrets: `DATABASE_URL`, `VIBEGRID_REQUIRE_DATABASE=true`,
-  `VIBEGRID_SECURE_COOKIES=true`, `VIBEGRID_ADMIN_PASSWORD`,
-  `VIBEGRID_ADMIN_SESSION_SECRET`, `VIBEGRID_METRICS_TOKEN`,
-  `VIBEGRID_PUBLIC_BASE_URL`, timezone, and optional `VIBEGRID_ADMIN_TOKEN`.
-- Configure `VIBEGRID_TRUSTED_PROXY_CIDRS` only from verified platform proxy
-  source ranges. Never use `0.0.0.0/0` or `::/0`.
-- Mount the Prometheus bearer token file expected by `monitoring/prometheus.yml`
-  or adapt the scrape config in the target metrics platform.
-- Configure uptime checks, log drain/error tracking, alert routing, branch
-  protections, and Dependabot/Renovate in GitHub/provider UIs.
-- Run `npm run test:e2e` and `npm audit --omit=dev --audit-level=high` in an
-  environment with local-port binding and network access.
+## Security and operations already implemented
 
-## How to continue safely
+- Production guardrails for database, secure cookies, HTTPS public base URL,
+  metrics token, CORS, and trusted proxy CIDRs.
+- Opaque revocable admin cookies, hash-only storage, and CSRF for cookie writes.
+- Bounded API metric labels, request bodies, identifiers, rate limits, DB
+  timeouts, pool limits, health/readiness, structured logs, and graceful stop.
+- Single-container Go + embedded static Next export, additive embedded
+  migrations, Fly/Render/Docker scaffolding, and CI/security contracts.
 
-- Use `rg`/`rg --files` first for search.
-- Preserve unrelated dirty-tree changes.
-- Use `apply_patch` for file edits.
-- After changing backend routes, update route metrics labels and tests.
-- After changing public/admin API responses, update TypeScript Zod schemas.
-- After changing launch/product state, update README and `docs/production-readiness.md`.
-- Keep public-facing copy human and specific; avoid debug/API leakage in UI text.
+Do not claim provider backups, a restore drill, permanent production uptime,
+external alert delivery, traffic, or user retention unless the repo contains
+current evidence.
+
+## Change discipline
+
+- Use `rg`/`rg --files` first and preserve unrelated dirty work.
+- Use `apply_patch` for source edits.
+- After route changes, update metric labels, runtime schemas, smoke tests, and
+  route docs.
+- After schema changes, add constraints plus a Postgres integration test.
+- After product-contract changes, update README, product vision, decision
+  register, privacy/terms/policy, recruiter evidence, and production readiness.
+- Keep board prompts human, specific, socially generative, and safe. Twelve
+  fragments need multiple plausible combinations; they must not secretly form
+  three or four intended categories.
+- Prefer honest quiet states over invented activity or fake social proof.

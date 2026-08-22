@@ -1,14 +1,15 @@
-import { DemoLauncher } from "@/components/DemoLauncher";
+import { VibeGridApp } from "@/components/VibeGridApp";
 
 export const metadata = {
   title: "VibeGrid Demo",
-  description: "Start a seeded VibeGrid demo room with no sign-in."
+  description: "Try the complete VibeGrid make, judge, and reveal rhythm with no sign-in.",
+  robots: { index: false, follow: false }
 };
 
 export default function DemoPage() {
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-6 lg:px-8">
-      <DemoLauncher />
+    <main className="min-h-screen">
+      <VibeGridApp />
     </main>
   );
 }

@@ -54,6 +54,8 @@ type ServerConfig struct {
 	AdminSessions      AdminSessionStore
 	Community          CommunityPuzzleStore
 	Crews              CrewStore
+	VibeRounds         VibeRoundStore
+	AdminVibeBoards    VibeBoardAdminStore
 	Stats              StatsStore
 	RateLimits         RateLimitStore
 	Idempotency        IdempotencyStore
@@ -88,6 +90,8 @@ type Server struct {
 	adminSessions      AdminSessionStore
 	community          CommunityPuzzleStore
 	crews              CrewStore
+	vibeRounds         VibeRoundStore
+	adminVibeBoards    VibeBoardAdminStore
 	stats              StatsStore
 	rateLimits         RateLimitStore
 	idempotency        IdempotencyStore
@@ -125,7 +129,7 @@ func NewServer(config ServerConfig) http.Handler {
 
 	timeZone := config.TimeZone
 	if timeZone == "" {
-		timeZone = "Asia/Kolkata"
+		timeZone = "UTC"
 	}
 
 	server := &Server{
@@ -134,6 +138,8 @@ func NewServer(config ServerConfig) http.Handler {
 		adminPuzzles:       config.AdminPuzzles,
 		community:          config.Community,
 		crews:              config.Crews,
+		vibeRounds:         config.VibeRounds,
+		adminVibeBoards:    config.AdminVibeBoards,
 		stats:              config.Stats,
 		rateLimits:         config.RateLimits,
 		idempotency:        config.Idempotency,
@@ -188,6 +194,7 @@ func NewServer(config ServerConfig) http.Handler {
 		mux.HandleFunc("GET /metrics", server.requireMetrics(server.handleMetrics))
 	}
 	mux.HandleFunc("GET /api/puzzles/today", server.handleTodayPuzzle)
+	mux.HandleFunc("GET /api/vibes/today", server.handleTodayVibeBoard)
 	mux.HandleFunc("GET /api/puzzles", server.handlePuzzles)
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
@@ -208,7 +215,10 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/crews", server.handleMyCrews)
 	mux.HandleFunc("POST /api/crews", server.handleCreateCrew)
 	mux.HandleFunc("GET /api/crews/{id}", server.handleCrewBoard)
+	mux.HandleFunc("GET /api/crews/{id}/daily", server.handleCrewDaily)
 	mux.HandleFunc("POST /api/crews/{id}/join", server.handleJoinCrew)
+	mux.HandleFunc("POST /api/crews/{id}/submissions", server.handleSubmitVibe)
+	mux.HandleFunc("POST /api/crews/{id}/votes", server.handleCastVibeVote)
 	mux.HandleFunc("POST /api/crews/{id}/rotate", server.handleRotateCrewInvite)
 	mux.HandleFunc("POST /api/crews/{id}/leave", server.handleLeaveCrew)
 	mux.HandleFunc("POST /api/crews/{id}/members/{memberId}/remove", server.handleRemoveCrewMember)
@@ -220,6 +230,8 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("POST /api/admin/session", server.handleAdminSession)
 	mux.HandleFunc("DELETE /api/admin/session", server.handleAdminLogout)
 	mux.HandleFunc("GET /api/admin/queue-health", server.requireAdmin(server.handleAdminQueueHealth))
+	mux.HandleFunc("GET /api/admin/vibe-boards", server.requireAdmin(server.handleAdminListVibeBoards))
+	mux.HandleFunc("POST /api/admin/vibe-boards", server.requireAdmin(server.withIdempotency("admin-vibe-board.create", server.adminIdempotencyCaller, server.handleAdminCreateVibeBoard)))
 	mux.HandleFunc("GET /api/admin/puzzles", server.requireAdmin(server.handleAdminListPuzzles))
 	mux.HandleFunc("POST /api/admin/puzzles", server.requireAdmin(server.withIdempotency("admin-puzzle.create", server.adminIdempotencyCaller, server.handleAdminCreatePuzzle)))
 	mux.HandleFunc("POST /api/admin/puzzles/{id}/publish", server.requireAdmin(server.handleAdminPublishPuzzle))

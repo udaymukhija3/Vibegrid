@@ -1,8 +1,9 @@
-import { DemoWalkthrough } from "@/components/DemoWalkthrough";
+import { VibeGridApp } from "@/components/VibeGridApp";
 
 export const metadata = {
-  title: "VibeGrid Demo Room",
-  description: "A seeded VibeGrid walkthrough room for public demos."
+  title: "VibeGrid Practice",
+  description: "Try the complete VibeGrid make, judge, and reveal rhythm with no sign-in.",
+  robots: { index: false, follow: false }
 };
 
 export function generateStaticParams() {
@@ -11,8 +12,8 @@ export function generateStaticParams() {
 
 export default function DemoRoomPage() {
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-6 lg:px-8">
-      <DemoWalkthrough />
+    <main className="min-h-screen">
+      <VibeGridApp />
     </main>
   );
 }

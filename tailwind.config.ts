@@ -5,20 +5,27 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#17231f",
-        paper: "#edf4f1",
-        card: "#fffdf7",
-        line: "#c9d8d1",
-        mint: "#6fd1aa",
-        tomato: "#ee6f5e",
-        yolk: "#f4c95d",
-        plum: "#7764d8",
-        pool: "#67bdd0"
+        ink: "#0d1220",
+        "ink-deep": "#070a12",
+        paper: "#11162a",
+        card: "#f7f2e8",
+        cream: "#f7f2e8",
+        line: "#353b54",
+        lime: "#a3e635",
+        amber: "#f8b43a",
+        coral: "#ef5350",
+        violet: "#7546b8",
+        "violet-light": "#b89be8",
+        mint: "#a3e635",
+        tomato: "#ef5350",
+        yolk: "#f8b43a",
+        plum: "#7546b8",
+        pool: "#b89be8"
       },
       boxShadow: {
-        soft: "0 18px 42px rgba(23, 35, 31, 0.08)",
-        lift: "0 22px 52px rgba(23, 35, 31, 0.13)",
-        tile: "0 9px 20px rgba(23, 35, 31, 0.09)"
+        soft: "5px 5px 0 #070a12",
+        lift: "7px 7px 0 #070a12",
+        tile: "4px 4px 0 #070a12"
       }
     }
   },

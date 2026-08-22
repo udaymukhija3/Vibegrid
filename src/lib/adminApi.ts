@@ -9,11 +9,26 @@ import type {
   ModerationAppeal,
   ModerationReport
 } from "@/types/puzzle";
+import type { VibeBoard } from "@/types/vibe";
 
 const tileSchema = z.object({
   id: z.string(),
   text: z.string()
 });
+
+const vibeBoardSchema = z.object({
+  id: z.string(),
+  boardNumber: z.number(),
+  publishDate: z.string(),
+  prompt: z.string(),
+  tiles: z.array(tileSchema).length(12)
+}) satisfies z.ZodType<VibeBoard>;
+
+export type AdminVibeBoardInput = {
+  publishDate: string;
+  prompt: string;
+  tiles: string[];
+};
 
 const publicPuzzleSchema = z.object({
   id: z.string(),
@@ -130,6 +145,20 @@ export async function checkAdminSession(): Promise<boolean> {
   }
   adminCSRFToken = adminSessionSchema.parse(payload).csrfToken ?? null;
   return true;
+}
+
+export async function fetchAdminVibeBoards(): Promise<VibeBoard[]> {
+  return z.array(vibeBoardSchema).parse(await adminFetch("/api/admin/vibe-boards"));
+}
+
+export async function createAdminVibeBoard(input: AdminVibeBoardInput): Promise<VibeBoard> {
+  return vibeBoardSchema.parse(
+    await adminFetch("/api/admin/vibe-boards", {
+      method: "POST",
+      headers: idempotencyHeaders(),
+      body: JSON.stringify(input)
+    })
+  );
 }
 
 function requiresCSRFHeader(method: string) {

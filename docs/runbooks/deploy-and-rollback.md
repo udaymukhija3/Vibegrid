@@ -2,11 +2,16 @@
 
 ## How a change reaches production
 
-1. Push to `main` (via PR or directly).
-2. Render auto-deploys the push (`autoDeploy: true` in `render.yaml`): builds the `Dockerfile` and swaps traffic only after `/readyz` passes. Migrations apply on boot (`VIBEGRID_MIGRATE_ON_BOOT=true`).
-3. In parallel, GitHub Actions runs **CI** (`.github/workflows/ci.yml`): Go race tests against Postgres, vuln scans, security contract, lint, typecheck, unit tests, build. A red CI does not block the deploy in this mode — check Actions after pushing.
+1. Merge to `main` through a branch-protected PR.
+2. GitHub Actions runs CI: Go race tests against Postgres, security/vulnerability
+   checks, lint, typecheck, unit tests, and build.
+3. After green CI, `.github/workflows/deploy.yml` calls the Render Deploy Hook.
+   `render.yaml` has `autoDeploy: false`, so a red main cannot deploy.
+4. Render builds the Dockerfile, applies boot migrations on the single free
+   instance, and swaps traffic after `/readyz` passes.
 
-**Optional upgrade — CI-gated deploys:** create a Deploy Hook (Render dashboard → service → Settings), save it as the `RENDER_DEPLOY_HOOK_URL` repo secret, and set `autoDeploy: false` in `render.yaml`. From then on `.github/workflows/deploy.yml` deploys only after CI passes, and a red main never reaches production.
+`RENDER_DEPLOY_HOOK_URL` must be configured. If it is absent, the workflow warns
+and no deployment occurs; this is safer than silently bypassing CI.
 
 ## Verify a deploy
 
@@ -14,7 +19,9 @@
 VIBEGRID_BASE_URL=https://vibegrid.onrender.com npm run smoke:deploy
 ```
 
-Also spot-check `https://vibegrid.onrender.com/api/puzzles/today` returns 200.
+Also spot-check `https://vibegrid.onrender.com/api/vibes/today` returns one
+prompt and exactly twelve fragments, then run the mutating smoke against a
+database-backed environment to prove card replay.
 
 ## Rollback
 

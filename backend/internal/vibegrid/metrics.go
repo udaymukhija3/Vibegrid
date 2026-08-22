@@ -408,7 +408,7 @@ func routeMetricLabel(r *http.Request) string {
 // paths and unknown HTTP methods.
 func knownRouteMetricLabel(route string) string {
 	switch route {
-	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/puzzles", "/api/puzzle-templates", "/api/public-config", "/api/session", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/reports", "/api/appeals", "/api/client-errors", "/api/admin/session", "/api/admin/queue-health", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
+	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/vibes/today", "/api/puzzles", "/api/puzzle-templates", "/api/public-config", "/api/session", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/crews", "/api/reports", "/api/appeals", "/api/client-errors", "/api/admin/session", "/api/admin/queue-health", "/api/admin/vibe-boards", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
 		return route
 	}
 	if strings.HasPrefix(route, "/api/attempts/") {
@@ -435,6 +435,26 @@ func knownRouteMetricLabel(route string) string {
 			return "/api/community/puzzles/{id}/claim"
 		case strings.HasSuffix(route, "/withdraw"):
 			return "/api/community/puzzles/{id}/withdraw"
+		}
+	}
+	if strings.HasPrefix(route, "/api/crews/") {
+		switch {
+		case strings.HasSuffix(route, "/daily"):
+			return "/api/crews/{id}/daily"
+		case strings.HasSuffix(route, "/submissions"):
+			return "/api/crews/{id}/submissions"
+		case strings.HasSuffix(route, "/votes"):
+			return "/api/crews/{id}/votes"
+		case strings.HasSuffix(route, "/join"):
+			return "/api/crews/{id}/join"
+		case strings.HasSuffix(route, "/rotate"):
+			return "/api/crews/{id}/rotate"
+		case strings.HasSuffix(route, "/leave"):
+			return "/api/crews/{id}/leave"
+		case strings.Contains(route, "/members/") && strings.HasSuffix(route, "/remove"):
+			return "/api/crews/{id}/members/{memberId}/remove"
+		default:
+			return "/api/crews/{id}"
 		}
 	}
 	if strings.HasPrefix(route, "/api/admin/puzzles/") {

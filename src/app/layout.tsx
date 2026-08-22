@@ -11,22 +11,22 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://vibegrid.onrender.co
 
 export const metadata: Metadata = {
   metadataBase: new URL(APP_URL),
-  title: "VibeGrid",
-  description: "Group the words. Guess the vibe. Try not to overthink it.",
+  title: "VibeGrid — make the vibe",
+  description: "Pick four fragments, name the vibe, and let your crew decide if it lands.",
   openGraph: {
     type: "website",
     url: "/",
     siteName: "VibeGrid",
-    title: "VibeGrid",
-    description: "A daily semantic grouping puzzle.",
+    title: "VibeGrid — make the vibe",
+    description: "Pick four fragments. Name the vibe. Let your crew decide.",
     // Must be a raster format: iMessage, WhatsApp, Slack and Twitter all skip
     // SVG og:images, so the previous /vibegrid-mark.svg never rendered.
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "VibeGrid — a daily semantic grouping puzzle" }]
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "VibeGrid — make the vibe" }]
   },
   twitter: {
     card: "summary_large_image",
-    title: "VibeGrid",
-    description: "A daily semantic grouping puzzle.",
+    title: "VibeGrid — make the vibe",
+    description: "Pick four fragments. Name the vibe. Let your crew decide.",
     images: ["/og.png"]
   }
 };

@@ -6,38 +6,35 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Check,
-  Copy,
-  Flame,
-  Hourglass,
+  Clock3,
+  Crown,
   LogOut,
   RefreshCw,
-  Trophy,
+  Send,
+  ShieldCheck,
+  Sparkles,
   UserMinus,
-  Users,
-  X
+  Users
 } from "lucide-react";
-import clsx from "clsx";
 import { toast } from "sonner";
+import { VibeCard } from "@/components/VibeCard";
+import { VibeComposer } from "@/components/VibeComposer";
+import { VibeHeader } from "@/components/VibeHeader";
 import {
-  CrewBoard,
-  CrewBoardEntry,
   CrewsUnavailableError,
-  fetchCrewBoard,
+  castVibeVote,
+  fetchCrewDaily,
   joinCrew,
   leaveCrew,
   removeCrewMember,
-  rotateCrewInvite
+  rotateCrewInvite,
+  submitVibeCard
 } from "@/lib/api";
-import { formatSeconds } from "@/lib/game";
 import { writeClipboardText } from "@/lib/clipboard";
 import { readStoredValue, writeStoredValue } from "@/lib/storage";
+import type { VibeCrewDaily } from "@/types/vibe";
 
-// The board refreshes on a timer so a crew watching the same daily sees each
-// other move without reloading. It is deliberately slow: this is the polling
-// fallback, and a friend group of ten on a free-tier instance should not
-// generate a request per second between them.
-const BOARD_REFRESH_MS = 15_000;
-
+const BOARD_REFRESH_MS = 30_000;
 const DISPLAY_NAME_KEY = "vibegrid:crew:name";
 const MAX_DISPLAY_NAME = 24;
 
@@ -49,29 +46,29 @@ export function CrewRoom() {
   }, []);
 
   if (crewId === null) {
-    return <CrewNotice title="Loading crew" message="Finding this crew." />;
+    return <CrewNotice title="Finding your crew…" message="Opening the private round." />;
   }
   if (crewId === "") {
-    return <CrewNotice title="Crew not found" message="That invite link is missing a crew id." />;
+    return <CrewNotice title="Crew not found" message="That invite link is missing its crew code." />;
   }
-  return <CrewBoardView crewId={crewId} />;
+  return <CrewDailyView crewId={crewId} />;
 }
 
-function CrewBoardView({ crewId }: { crewId: string }) {
-  const [board, setBoard] = useState<CrewBoard | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function CrewDailyView({ crewId }: { crewId: string }) {
+  const [daily, setDaily] = useState<VibeCrewDaily | null>(null);
+  const [error, setError] = useState("");
   const [unavailable, setUnavailable] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setBoard(await fetchCrewBoard(crewId));
-      setError(null);
+      setDaily(await fetchCrewDaily(crewId));
+      setError("");
     } catch (loadError) {
       if (loadError instanceof CrewsUnavailableError) {
         setUnavailable(true);
         return;
       }
-      setError("This crew is not available.");
+      setError(loadError instanceof Error ? loadError.message : "This crew is not available.");
     }
   }, [crewId]);
 
@@ -79,8 +76,6 @@ function CrewBoardView({ crewId }: { crewId: string }) {
     void load();
   }, [load]);
 
-  // Poll while the tab is visible. A backgrounded tab stops asking, so a phone
-  // left open overnight is not still hitting the API in the morning.
   useEffect(() => {
     if (unavailable || error) {
       return;
@@ -90,52 +85,57 @@ function CrewBoardView({ crewId }: { crewId: string }) {
         void load();
       }
     }, BOARD_REFRESH_MS);
-
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void load();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
-
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load, unavailable, error]);
+  }, [error, load, unavailable]);
 
   if (unavailable) {
     return (
       <CrewNotice
-        title="Crews are off"
-        message="This deployment is running without a database, so crews are unavailable."
+        title="Crew rounds need Postgres"
+        message="The practice round still works here, but private multi-person state is unavailable on this no-database deployment."
       />
     );
   }
   if (error) {
     return <CrewNotice title="Crew not found" message={error} />;
   }
-  if (!board) {
-    return <CrewNotice title="Loading crew" message="Fetching today's crew board." />;
+  if (!daily) {
+    return <CrewNotice title="Loading the crew…" message="Collecting the latest cards and ballots." />;
   }
 
   return (
-    <div className="mx-auto grid w-full max-w-3xl gap-5">
-      <CrewHeader board={board} onReload={load} />
-      {board.isMember ? (
-        <CrewStandings board={board} onReload={load} />
+    <div className="vg-shell">
+      <VibeHeader compact />
+      <CrewHero daily={daily} />
+      {!daily.isMember ? (
+        <JoinCrewLanding crewId={crewId} daily={daily} onJoined={load} />
       ) : (
-        <JoinCrewForm crewId={crewId} crewName={board.crew.name} onJoined={load} />
+        <main className="grid gap-8 pb-12">
+          <ResultSection daily={daily} />
+          <JudgeSection daily={daily} onReload={load} />
+          <MakeSection daily={daily} onReload={load} />
+          <CrewRoster daily={daily} onReload={load} />
+        </main>
       )}
     </div>
   );
 }
 
-function CrewHeader({ board, onReload }: { board: CrewBoard; onReload: () => Promise<void> }) {
+function CrewHero({ daily }: { daily: VibeCrewDaily }) {
   const router = useRouter();
   const [inviteUrl, setInviteUrl] = useState("");
   const [copied, setCopied] = useState(false);
-  const [confirmingRotate, setConfirmingRotate] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -147,193 +147,327 @@ function CrewHeader({ board, onReload }: { board: CrewBoard; onReload: () => Pro
 
   async function copyInvite() {
     try {
-      await writeClipboardText(inviteUrl);
+      await writeClipboardText(
+        `${daily.crew.name} is building "${daily.today.board.prompt}"\n${daily.today.submittedCount}/${daily.today.memberCount} are in. Make yours: ${inviteUrl}`
+      );
       setCopied(true);
-      toast.success("Invite link copied. Send it to your friends.");
+      toast.success("Crew invite copied.");
     } catch {
-      toast.error("Could not copy the invite link.");
+      toast.error("Could not copy the invite.");
     }
   }
 
   async function rotate() {
-    if (busy) {
-      return;
-    }
     setBusy(true);
     try {
-      const rotated = await rotateCrewInvite(board.crew.inviteCode);
-      setConfirmingRotate(false);
-      toast.success("New invite link. The old one no longer works.");
-      // The code is in the URL, so the page has to follow it to its new address.
+      const rotated = await rotateCrewInvite(daily.crew.inviteCode);
+      toast.success("Old invite revoked. This is the new one.");
       router.replace(rotated.joinPath);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not rotate the invite.");
-    } finally {
+      toast.error(error instanceof Error ? error.message : "Could not replace the invite.");
       setBusy(false);
     }
   }
 
   async function leave() {
-    if (busy) {
-      return;
-    }
     setBusy(true);
     try {
-      await leaveCrew(board.crew.inviteCode);
-      toast.success(`You left ${board.crew.name}.`);
+      await leaveCrew(daily.crew.inviteCode);
+      toast.success(`You left ${daily.crew.name}.`);
       router.push("/crews");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not leave that crew.");
+      toast.error(error instanceof Error ? error.message : "Could not leave the crew.");
       setBusy(false);
     }
   }
 
   return (
-    <section className="vg-panel p-4 sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="vg-kicker">Crew</p>
-          <h1 className="mt-2 truncate text-3xl font-extrabold leading-tight sm:text-4xl">
-            {board.crew.name}
-          </h1>
-          <p className="mt-2 text-sm font-medium text-neutral-600">
-            Everyone plays VibeGrid #{board.puzzleNumber} — today&apos;s grid — on their own.
+    <header className="py-8 sm:py-10">
+      <div className="flex flex-wrap items-start justify-between gap-5">
+        <div>
+          <p className="vg-meta text-lime">Private crew</p>
+          <h1 className="mt-2 text-4xl font-black tracking-[-0.05em] text-cream sm:text-6xl">{daily.crew.name}</h1>
+          <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-bold text-cream/[.58]">
+            <span>Board {String(daily.today.board.boardNumber).padStart(3, "0")}</span>
+            {daily.isMember && (
+              <span className="inline-flex items-center gap-1.5 text-amber">
+                <Sparkles aria-hidden size={15} />
+                {daily.crewStreak} day crew streak
+              </span>
+            )}
           </p>
         </div>
-        <div className="grid min-w-0 gap-2 sm:min-w-64">
-          <button type="button" onClick={() => void copyInvite()} className="vg-button-primary bg-yolk">
-            {copied ? <Check aria-hidden size={16} /> : <Copy aria-hidden size={16} />}
-            {copied ? "Copied" : "Copy invite link"}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => void copyInvite()} className="vg-primary-button">
+            {copied ? <Check aria-hidden size={17} /> : <Send aria-hidden size={17} />}
+            {copied ? "Copied" : "Nudge the crew"}
           </button>
-          <div className="grid grid-cols-2 gap-2">
-            <Link href="/" className="vg-button-secondary">
-              <ArrowLeft aria-hidden size={15} />
-              Play
-            </Link>
-            <Link href="/crews" className="vg-button-secondary">
-              <Users aria-hidden size={15} />
-              My crews
-            </Link>
-          </div>
-          {inviteUrl && (
-            <p
-              aria-label="Crew invite link"
-              title={inviteUrl}
-              className="truncate rounded-lg border border-line bg-white px-3 py-2 text-xs font-medium text-neutral-600"
-            >
-              {inviteUrl}
-            </p>
+          {daily.isMember && (
+            <button type="button" onClick={() => setManaging((value) => !value)} className="vg-secondary-button">
+              <ShieldCheck aria-hidden size={17} />
+              Manage
+            </button>
           )}
         </div>
       </div>
 
-      {board.isMember && (
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
-          {board.crew.isOwner && !confirmingRotate && (
-            <button
-              type="button"
-              onClick={() => setConfirmingRotate(true)}
-              className="vg-button-secondary h-9 px-3 text-xs"
-            >
-              <RefreshCw aria-hidden size={14} />
-              New invite link
-            </button>
-          )}
-          <button type="button" onClick={() => void leave()} disabled={busy} className="vg-button-secondary h-9 px-3 text-xs">
-            <LogOut aria-hidden size={14} />
-            Leave crew
-          </button>
-        </div>
-      )}
-
-      {confirmingRotate && (
-        <div className="mt-3 rounded-lg border border-tomato/60 bg-tomato/10 p-3">
-          <p className="font-extrabold">Replace the invite link?</p>
-          <p className="mt-1 text-sm font-medium leading-6 text-neutral-700">
-            Every link you have already shared stops working, so anyone who has not joined yet will
-            need the new one. People already in the crew are unaffected — they reach it from My
-            crews.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" disabled={busy} onClick={() => void rotate()} className="vg-button-primary h-9 bg-tomato px-3 text-xs">
-              {busy ? "Replacing…" : "Replace link"}
-            </button>
-            <button type="button" disabled={busy} onClick={() => setConfirmingRotate(false)} className="vg-button-secondary h-9 px-3 text-xs">
-              Keep current link
+      {managing && (
+        <div className="mt-5 rounded-2xl border-2 border-line bg-paper p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/crews" className="vg-secondary-button">
+              <Users aria-hidden size={16} />
+              All crews
+            </Link>
+            {daily.crew.isOwner && !confirmRotate && (
+              <button type="button" onClick={() => setConfirmRotate(true)} className="vg-secondary-button">
+                <RefreshCw aria-hidden size={16} />
+                Replace invite
+              </button>
+            )}
+            <button type="button" disabled={busy} onClick={() => void leave()} className="vg-secondary-button">
+              <LogOut aria-hidden size={16} />
+              Leave
             </button>
           </div>
+          {confirmRotate && (
+            <div className="mt-4 border-l-4 border-coral pl-4">
+              <p className="font-black">Revoke every old invite link?</p>
+              <p className="mt-1 text-sm font-semibold text-cream/[.58]">
+                Current members stay. Anyone who has not joined will need the replacement link.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button type="button" disabled={busy} onClick={() => void rotate()} className="vg-primary-button bg-coral">
+                  Replace it
+                </button>
+                <button type="button" onClick={() => setConfirmRotate(false)} className="vg-secondary-button">
+                  Keep it
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+      )}
+    </header>
+  );
+}
+
+function ResultSection({ daily }: { daily: VibeCrewDaily }) {
+  const result = daily.result;
+  if (!result) {
+    return null;
+  }
+  const winners = result.cards.filter((card) => card.winner);
+  return (
+    <section aria-labelledby="latest-result">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="vg-meta text-lime">Latest result · {result.board.publishDate}</p>
+          <h2 id="latest-result" className="mt-2 text-3xl font-black text-cream sm:text-4xl">
+            {result.official
+              ? winners.length > 1
+                ? "The crew called it a tie."
+                : "The crew picked a winner."
+              : "A quiet round, revealed."}
+          </h2>
+        </div>
+        <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
+          {result.submissionCount} cards · {result.voteCount} votes
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {result.cards.map((card) => <VibeCard key={card.id} card={card} />)}
+      </div>
+      {!result.official && (
+        <p className="mt-4 rounded-xl border-2 border-amber/60 bg-amber/[.1] px-4 py-3 text-sm font-bold text-cream">
+          Official wins need at least three cards and two ballots. The cards still belong to the crew.
+        </p>
       )}
     </section>
   );
 }
 
-function CrewStandings({ board, onReload }: { board: CrewBoard; onReload: () => Promise<void> }) {
-  const you = board.members.find((member) => member.isYou);
-  const finished = board.members.filter((member) => member.solved || member.failed).length;
+function JudgeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () => Promise<void> }) {
+  const judge = daily.judge;
+  const [selection, setSelection] = useState(judge?.yourVoteId ?? "");
+  const [busy, setBusy] = useState(false);
+
+  if (!judge) {
+    return null;
+  }
+  if (!judge.eligible) {
+    return (
+      <section className="vg-dark-panel">
+        <p className="vg-meta text-violet-light">Yesterday&apos;s ballot</p>
+        <h2 className="mt-2 text-2xl font-black text-cream">You sat this one out.</h2>
+        <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-cream/[.58]">
+          Only people who made a card get a ballot. The authors and result reveal tomorrow.
+        </p>
+      </section>
+    );
+  }
+
+  const activeJudge = judge;
+
+  async function vote() {
+    if (!selection || busy || activeJudge.hasVoted) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await castVibeVote({
+        inviteCode: daily.crew.inviteCode,
+        boardId: activeJudge.board.id,
+        submissionId: selection,
+        clientVoteId: crypto.randomUUID()
+      });
+      toast.success("Ballot locked. Authors reveal tomorrow.");
+      await onReload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not lock that ballot.");
+      setBusy(false);
+    }
+  }
 
   return (
-    <section className="vg-panel p-4 sm:p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line pb-3">
-        <h2 className="text-lg font-extrabold">Today&apos;s standings</h2>
-        <p className="text-sm font-semibold text-neutral-500">
-          {finished}/{board.members.length} done
+    <section className="vg-dark-panel" aria-labelledby="judge-heading">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="vg-meta text-violet-light">Judge yesterday · authors hidden</p>
+          <h2 id="judge-heading" className="mt-2 text-3xl font-black text-cream">{judge.board.prompt}</h2>
+        </div>
+        <p className="flex items-center gap-2 text-sm font-semibold text-cream/[.55]">
+          <Clock3 aria-hidden size={16} /> One vote. No self-votes.
         </p>
       </div>
-
-      {!board.spoilersUnlocked && (
-        <p className="mt-3 rounded-lg border border-yolk/80 bg-yolk/25 px-3 py-2 text-sm font-semibold leading-snug">
-          {you?.playing
-            ? "Finish today's grid to unlock everyone's result grids."
-            : "Play today's grid to unlock everyone's result grids."}
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        {(judge.cards ?? []).map((card) => (
+          <VibeCard
+            key={card.id}
+            card={card}
+            selectable
+            disabled={card.isYours || judge.hasVoted}
+            selected={(judge.yourVoteId ?? selection) === card.id}
+            onSelect={() => setSelection(card.id)}
+          />
+        ))}
+      </div>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-cream/[.55]">
+          {judge.hasVoted ? "Your vote is locked. The tally stays hidden until reveal." : "Back the card that makes the four fragments feel inevitable."}
         </p>
-      )}
+        {!judge.hasVoted && (
+          <button type="button" disabled={!selection || busy} onClick={() => void vote()} className="vg-primary-button">
+            <Crown aria-hidden size={17} />
+            {busy ? "Locking…" : "Lock my vote"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
 
-      <ul className="mt-4 grid gap-2">
-        {board.members.map((member) => (
-          <li key={member.displayName}>
-            <CrewMemberRow
-              member={member}
-              groupCount={board.groupCount}
-              inviteCode={board.crew.inviteCode}
-              onRemoved={onReload}
-            />
+function MakeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () => Promise<void> }) {
+  if (daily.today.submission) {
+    return (
+      <section aria-labelledby="today-card">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="vg-meta text-amber">Today · locked in</p>
+            <h2 id="today-card" className="mt-2 text-3xl font-black text-cream">Your card is waiting for tomorrow.</h2>
+          </div>
+          <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
+            {daily.today.submittedCount}/{daily.today.memberCount} in
+          </p>
+        </div>
+        <div className="max-w-2xl">
+          <VibeCard card={daily.today.submission} />
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="vg-dark-panel" aria-labelledby="make-heading">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <div>
+          <p className="vg-meta text-amber">Make today</p>
+          <h2 id="make-heading" className="sr-only">Make today&apos;s vibe card</h2>
+        </div>
+        <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
+          {daily.today.submittedCount}/{daily.today.memberCount} in
+        </p>
+      </div>
+      <VibeComposer
+        board={daily.today.board}
+        onSubmit={async ({ title, selectedTileIds }) => {
+          await submitVibeCard({
+            inviteCode: daily.crew.inviteCode,
+            boardId: daily.today.board.id,
+            title,
+            selectedTileIds,
+            clientSubmissionId: crypto.randomUUID()
+          });
+          toast.success("Vibe locked. Nobody sees it until tomorrow.");
+          await onReload();
+        }}
+      />
+    </section>
+  );
+}
+
+function CrewRoster({ daily, onReload }: { daily: VibeCrewDaily; onReload: () => Promise<void> }) {
+  const members = daily.members ?? [];
+  return (
+    <section className="border-t-2 border-cream/[.14] pt-7">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="vg-meta">Crew check-in</p>
+          <h2 className="mt-2 text-2xl font-black text-cream">{members.filter((member) => member.submittedToday).length} of {members.length} are in.</h2>
+        </div>
+      </div>
+      <ul className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {members.map((member) => (
+          <li key={member.displayName} className="flex items-center justify-between gap-3 rounded-xl border-2 border-line bg-paper px-3 py-3">
+            <span className="min-w-0">
+              <span className="block truncate font-black text-cream">{member.displayName}{member.isYou ? " · you" : ""}</span>
+              <span className={member.submittedToday ? "font-mono text-[0.68rem] font-bold uppercase text-lime" : "font-mono text-[0.68rem] font-bold uppercase text-cream/35"}>
+                {member.submittedToday ? "locked in" : "not in yet"}
+              </span>
+            </span>
+            {member.memberId && (
+              <RemoveMemberButton
+                inviteCode={daily.crew.inviteCode}
+                memberId={member.memberId}
+                displayName={member.displayName}
+                onRemoved={onReload}
+              />
+            )}
           </li>
         ))}
       </ul>
-
-      {board.members.length === 1 && (
-        <p className="mt-4 text-sm font-medium leading-6 text-neutral-600">
-          You&apos;re the only one here so far. Send the invite link above and the board fills up as
-          your friends play.
-        </p>
-      )}
     </section>
   );
 }
 
-function CrewMemberRow({
-  member,
-  groupCount,
+function RemoveMemberButton({
   inviteCode,
+  memberId,
+  displayName,
   onRemoved
 }: {
-  member: CrewBoardEntry;
-  groupCount: number;
   inviteCode: string;
+  memberId: string;
+  displayName: string;
   onRemoved: () => Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function remove() {
-    if (!member.memberId || busy) {
-      return;
-    }
     setBusy(true);
     try {
-      await removeCrewMember(inviteCode, member.memberId);
-      toast.success(`Removed ${member.displayName}.`);
+      await removeCrewMember(inviteCode, memberId);
+      toast.success(`Removed ${displayName}.`);
       await onRemoved();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not remove that member.");
@@ -342,102 +476,39 @@ function CrewMemberRow({
     }
   }
 
+  if (confirming) {
+    return (
+      <span className="flex gap-1">
+        <button type="button" disabled={busy} onClick={() => void remove()} className="rounded-lg bg-coral px-2 py-1 text-xs font-black text-ink">
+          {busy ? "…" : "Remove"}
+        </button>
+        <button type="button" onClick={() => setConfirming(false)} className="rounded-lg border border-cream/20 px-2 py-1 text-xs font-bold">
+          No
+        </button>
+      </span>
+    );
+  }
   return (
-    <div
-      className={clsx(
-        "rounded-lg border p-3",
-        member.isYou ? "border-ink bg-mint/25" : "border-line bg-white/70"
-      )}
+    <button
+      type="button"
+      onClick={() => setConfirming(true)}
+      aria-label={`Remove ${displayName}`}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-line text-cream/45 hover:border-coral hover:text-coral"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-2 font-extrabold">
-          <StatusIcon member={member} />
-          <span className="truncate">{member.displayName}</span>
-          {member.isYou && (
-            <span className="shrink-0 rounded-lg border border-ink/30 bg-card px-1.5 py-0.5 text-[0.65rem] font-semibold">
-              you
-            </span>
-          )}
-        </p>
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-semibold text-neutral-600">{statusLine(member, groupCount)}</p>
-          {/* memberId is only sent to the crew owner, so this control simply
-              does not exist for anyone else. */}
-          {member.memberId && !confirming && (
-            <button
-              type="button"
-              aria-label={`Remove ${member.displayName}`}
-              title={`Remove ${member.displayName}`}
-              onClick={() => setConfirming(true)}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line bg-card text-neutral-500 hover:border-tomato hover:text-tomato"
-            >
-              <UserMinus aria-hidden size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {confirming && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-tomato/60 bg-tomato/10 p-2">
-          <p className="text-xs font-semibold">Remove {member.displayName} from the crew?</p>
-          <button type="button" disabled={busy} onClick={() => void remove()} className="vg-button-primary h-8 bg-tomato px-2 text-xs">
-            {busy ? "Removing…" : "Remove"}
-          </button>
-          <button type="button" disabled={busy} onClick={() => setConfirming(false)} className="vg-button-secondary h-8 px-2 text-xs">
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {member.grid && member.grid.length > 0 && (
-        <div className="mt-2 grid gap-0.5 text-lg leading-none" aria-label={`${member.displayName}'s result grid`}>
-          {member.grid.map((row, index) => (
-            <span key={index}>{row}</span>
-          ))}
-        </div>
-      )}
-    </div>
+      <UserMinus aria-hidden size={15} />
+    </button>
   );
 }
 
-function StatusIcon({ member }: { member: CrewBoardEntry }) {
-  if (member.solved) {
-    return <Trophy aria-hidden size={16} className="shrink-0 text-plum" />;
-  }
-  if (member.failed) {
-    return <X aria-hidden size={16} className="shrink-0 text-tomato" />;
-  }
-  if (member.playing) {
-    return <Flame aria-hidden size={16} className="shrink-0 text-yolk" />;
-  }
-  return <Hourglass aria-hidden size={16} className="shrink-0 text-neutral-400" />;
-}
-
-function statusLine(member: CrewBoardEntry, groupCount: number) {
-  if (member.solved) {
-    const time = member.elapsedSeconds === undefined ? "" : ` in ${formatSeconds(member.elapsedSeconds)}`;
-    return `Solved${time} · ${member.mistakes} ${member.mistakes === 1 ? "miss" : "misses"}`;
-  }
-  if (member.failed) {
-    return `Out of misses · ${member.solvedCount}/${groupCount} found`;
-  }
-  if (member.playing) {
-    return `Playing · ${member.solvedCount}/${groupCount} found`;
-  }
-  return "Not started";
-}
-
-function JoinCrewForm({
+function JoinCrewLanding({
   crewId,
-  crewName,
+  daily,
   onJoined
 }: {
   crewId: string;
-  crewName: string;
+  daily: VibeCrewDaily;
   onJoined: () => Promise<void>;
 }) {
-  // Reuse the name from the last crew this browser joined, so a second invite
-  // is one tap rather than another round of typing.
   const remembered = useMemo(() => readStoredValue(DISPLAY_NAME_KEY) ?? "", []);
   const [displayName, setDisplayName] = useState(remembered);
   const [busy, setBusy] = useState(false);
@@ -452,58 +523,75 @@ function JoinCrewForm({
     try {
       await joinCrew(crewId, name);
       writeStoredValue(DISPLAY_NAME_KEY, name);
-      toast.success(`You're in. Welcome to ${crewName}.`);
+      toast.success(`You're in ${daily.crew.name}.`);
       await onJoined();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not join that crew.");
-    } finally {
+      toast.error(error instanceof Error ? error.message : "Could not join this crew.");
       setBusy(false);
     }
   }
 
   return (
-    <section className="vg-panel p-4 sm:p-5">
-      <h2 className="text-lg font-extrabold">Join {crewName}</h2>
-      <p className="mt-1 text-sm font-medium leading-6 text-neutral-600">
-        Pick a name your friends will recognise on the board. No account, no email — it is saved in
-        this browser.
-      </p>
-      <form className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={submit}>
-        <label className="grid gap-1 text-xs font-semibold text-neutral-600">
-          Your name in this crew
-          <input
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            maxLength={MAX_DISPLAY_NAME}
-            required
-            autoComplete="nickname"
-            placeholder="e.g. Uday"
-            className="vg-input h-11 font-medium"
-          />
-        </label>
-        <button type="submit" disabled={busy || !displayName.trim()} className="vg-button-primary h-11 sm:mt-5">
-          <Users aria-hidden size={16} />
-          {busy ? "Joining…" : "Join crew"}
-        </button>
-      </form>
-    </section>
+    <main className="grid gap-6 pb-12 lg:grid-cols-[1.1fr_.9fr]">
+      <section className="vg-hero-card">
+        <p className="vg-meta text-ink/[.55]">Today&apos;s shared prompt</p>
+        <h2 className="mt-3 text-4xl font-black leading-[1.02]">{daily.today.board.prompt}</h2>
+        <div className="mt-6 grid grid-cols-3 gap-2">
+          {daily.today.board.tiles.slice(0, 6).map((tile) => (
+            <span key={tile.id} className="vg-hero-fragment">{tile.text}</span>
+          ))}
+        </div>
+        <p className="mt-5 border-t-2 border-ink/[.15] pt-4 font-mono text-xs font-bold uppercase tracking-[0.08em]">
+          {daily.today.submittedCount}/{daily.today.memberCount} have made today&apos;s card
+        </p>
+      </section>
+
+      <section className="vg-dark-panel self-start">
+        <p className="vg-meta text-lime">Private invite</p>
+        <h2 className="mt-2 text-3xl font-black text-cream">Join {daily.crew.name}</h2>
+        <p className="mt-3 text-sm font-semibold leading-6 text-cream/[.58]">
+          Pick a name your friends recognise. No email or password—the membership stays in this browser.
+        </p>
+        <form onSubmit={submit} className="mt-5 grid gap-3">
+          <label className="grid gap-2">
+            <span className="vg-meta">Your name in this crew</span>
+            <input
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              maxLength={MAX_DISPLAY_NAME}
+              required
+              autoComplete="nickname"
+              placeholder="e.g. Uday"
+              className="vg-title-input"
+            />
+          </label>
+          <button type="submit" disabled={busy || !displayName.trim()} className="vg-primary-button">
+            <Users aria-hidden size={17} />
+            {busy ? "Joining…" : "Join and make today's vibe"}
+          </button>
+        </form>
+      </section>
+    </main>
   );
 }
 
 function CrewNotice({ title, message }: { title: string; message: string }) {
   return (
-    <section className="vg-panel mx-auto w-full max-w-3xl p-5">
-      <h1 className="text-2xl font-extrabold">{title}</h1>
-      <p className="mt-2 font-medium text-neutral-600">{message}</p>
-      <Link href="/" className="vg-button-secondary mt-4">
-        <ArrowLeft aria-hidden size={15} />
-        Today&apos;s grid
-      </Link>
-    </section>
+    <div className="vg-shell">
+      <VibeHeader />
+      <section className="vg-dark-panel mx-auto mt-12 max-w-2xl text-center">
+        <h1 className="text-3xl font-black text-cream">{title}</h1>
+        <p className="mt-3 font-semibold leading-7 text-cream/[.58]">{message}</p>
+        <Link href="/" className="vg-secondary-button mt-5">
+          <ArrowLeft aria-hidden size={16} />
+          Back to practice
+        </Link>
+      </section>
+    </div>
   );
 }
 
 function crewIdFromPath() {
-  const [, id = ""] = window.location.pathname.match(/^\/crew\/([^/]+)/) ?? [];
-  return decodeURIComponent(id);
+  const match = window.location.pathname.match(/^\/crew\/([^/]+)\/?$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : "";
 }
