@@ -144,6 +144,9 @@ func (store *PostgresVibeRoundStore) ListVibeBoards(ctx context.Context, limit i
 	return boards, rows.Err()
 }
 
+// jsonb params must be bound as text. A []byte goes to the driver as bytea,
+// which Postgres then fails to parse as json (SQLSTATE 22P02) — the same trap
+// that broke the idempotency header column. Marshal, then string().
 func (store *PostgresVibeRoundStore) CreateVibeBoard(ctx context.Context, board VibeBoard) (VibeBoard, error) {
 	if err := validateVibeBoard(board); err != nil {
 		return VibeBoard{}, err
@@ -158,7 +161,7 @@ func (store *PostgresVibeRoundStore) CreateVibeBoard(ctx context.Context, board 
 	if _, err := store.db.ExecContext(ctx,
 		`insert into vibe_daily_boards (id, publish_date, board_number, prompt, tiles)
 		 values ($1, $2, $3, $4, $5)`,
-		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, tiles,
+		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(tiles),
 	); err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
@@ -184,7 +187,7 @@ func (store *PostgresVibeRoundStore) EnsureBoard(ctx context.Context, board Vibe
 		`insert into vibe_daily_boards (id, publish_date, board_number, prompt, tiles)
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (publish_date) do nothing`,
-		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, tiles,
+		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(tiles),
 	); err != nil {
 		return VibeBoard{}, fmt.Errorf("persist vibe board: %w", err)
 	}
