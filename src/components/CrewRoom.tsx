@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -58,12 +58,22 @@ function CrewDailyView({ crewId }: { crewId: string }) {
   const [daily, setDaily] = useState<VibeCrewDaily | null>(null);
   const [error, setError] = useState("");
   const [unavailable, setUnavailable] = useState(false);
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     try {
-      setDaily(await fetchCrewDaily(crewId));
+      const nextDaily = await fetchCrewDaily(crewId);
+      if (sequence !== loadSequence.current) {
+        return;
+      }
+      setDaily(nextDaily);
       setError("");
+      setUnavailable(false);
     } catch (loadError) {
+      if (sequence !== loadSequence.current) {
+        return;
+      }
       if (loadError instanceof CrewsUnavailableError) {
         setUnavailable(true);
         return;
@@ -119,12 +129,12 @@ function CrewDailyView({ crewId }: { crewId: string }) {
       {!daily.isMember ? (
         <JoinCrewLanding crewId={crewId} daily={daily} onJoined={load} />
       ) : (
-        <main className="grid gap-8 pb-12">
+        <div className="grid gap-8 pb-12">
           <ResultSection daily={daily} />
           <JudgeSection daily={daily} onReload={load} />
           <MakeSection daily={daily} onReload={load} />
           <CrewRoster daily={daily} onReload={load} />
-        </main>
+        </div>
       )}
     </div>
   );
@@ -532,12 +542,15 @@ function JoinCrewLanding({
   }
 
   return (
-    <main className="grid gap-6 pb-12 lg:grid-cols-[1.1fr_.9fr]">
+    <div className="grid gap-6 pb-12 lg:grid-cols-[1.1fr_.9fr]">
       <section className="vg-hero-card">
         <p className="vg-meta text-ink/[.55]">Today&apos;s shared prompt</p>
         <h2 className="mt-3 text-4xl font-black leading-[1.02]">{daily.today.board.prompt}</h2>
-        <div className="mt-6 grid grid-cols-3 gap-2">
-          {daily.today.board.tiles.slice(0, 6).map((tile) => (
+        <div
+          className="mt-6 grid grid-cols-4 gap-2"
+          aria-label={`Today's ${daily.today.board.tiles.length} fragments in ${daily.today.board.tiles.length / 4} rows`}
+        >
+          {daily.today.board.tiles.map((tile) => (
             <span key={tile.id} className="vg-hero-fragment">{tile.text}</span>
           ))}
         </div>
@@ -571,7 +584,7 @@ function JoinCrewLanding({
           </button>
         </form>
       </section>
-    </main>
+    </div>
   );
 }
 

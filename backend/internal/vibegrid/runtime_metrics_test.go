@@ -1,8 +1,10 @@
 package vibegrid
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -99,6 +101,9 @@ func TestMetricsNormalizeUnknownAPIPathsAndRequireAuthorization(t *testing.T) {
 			t.Fatalf("unexpected normalized route %q", key.route)
 		}
 	}
+	if got := knownRouteMetricLabel("/api/vibes/practice/18446744073709551615"); got != "/api/vibes/practice/{sequence}" {
+		t.Fatalf("unlimited practice route must have a bounded metric label, got %q", got)
+	}
 
 	protected := NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles()), MetricsToken: "test-metrics-token"})
 	unauthorized := httptest.NewRecorder()
@@ -118,6 +123,45 @@ func TestMetricsNormalizeUnknownAPIPathsAndRequireAuthorization(t *testing.T) {
 	NewServer(ServerConfig{Puzzles: StaticPuzzleSource(SeedPuzzles())}).ServeHTTP(disabled, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if disabled.Code != http.StatusNotFound {
 		t.Fatalf("metrics must be absent when no token is configured, got %d", disabled.Code)
+	}
+}
+
+func TestRequestLogsNormalizeCapabilityPaths(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	handler := withRequestLogging(http.NotFoundHandler())
+	const invite = "invite-secret-must-not-reach-logs"
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/crews/"+invite+"/daily", nil))
+
+	body := logs.String()
+	if strings.Contains(body, invite) {
+		t.Fatalf("request log leaked crew capability: %s", body)
+	}
+	if !strings.Contains(body, `"path":"/api/crews/{id}/daily"`) {
+		t.Fatalf("request log did not retain the normalized route: %s", body)
+	}
+}
+
+func TestCrewAPIsAreAlwaysPrivateNoStore(t *testing.T) {
+	handler := withCacheSafety(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for _, path := range []string{"/api/crews", "/api/crews/invite-secret/daily", "/api/crews/invite-secret/votes"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := recorder.Header().Get("Cache-Control"); got != "private, no-store" {
+			t.Fatalf("%s must not be cached, got %q", path, got)
+		}
+	}
+
+	public := httptest.NewRecorder()
+	handler.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/api/vibes/today", nil))
+	if got := public.Header().Get("Cache-Control"); got != "" {
+		t.Fatalf("cache-safety middleware should leave public policy to the handler, got %q", got)
 	}
 }
 

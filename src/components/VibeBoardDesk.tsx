@@ -12,7 +12,8 @@ import {
 } from "@/lib/adminApi";
 import type { VibeBoard } from "@/types/vibe";
 
-const EMPTY_TILES = Array.from({ length: 12 }, () => "");
+const BOARD_TILE_COUNT = 28;
+const EMPTY_TILES = Array.from({ length: BOARD_TILE_COUNT }, () => "");
 
 function nextDate() {
   return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -46,7 +47,7 @@ export function VibeBoardDesk() {
     () => new Set(tiles.map((tile) => tile.trim().toLocaleLowerCase()).filter(Boolean)).size,
     [tiles]
   );
-  const ready = Boolean(publishDate && prompt.trim() && uniqueTileCount === 12 && !busy);
+  const ready = Boolean(publishDate && prompt.trim() && uniqueTileCount === BOARD_TILE_COUNT && !busy);
 
   async function signIn() {
     if (!password.trim()) return;
@@ -102,7 +103,7 @@ export function VibeBoardDesk() {
         <p className="vg-meta mt-5">Private editorial tool</p>
         <h2 className="mt-2 text-3xl font-black tracking-[-0.04em]">Enter the board room.</h2>
         <p className="mt-3 text-sm font-semibold text-paper/[.65]">
-          This desk freezes the prompt and 12-fragment palette for a specific date. A frozen date never mutates under players.
+          This desk freezes a 28-fragment master palette for a specific date. Crews receive a stable 3–7 row projection from it.
         </p>
         <label className="mt-6 block">
           <span className="vg-meta">Admin password</span>
@@ -129,7 +130,7 @@ export function VibeBoardDesk() {
         <div>
           <p className="vg-meta text-lime">Editorial contract</p>
           <p className="mt-2 max-w-2xl text-sm font-semibold text-paper/[.65]">
-            One evocative prompt. Twelve fragments with range. No hidden answer. The crew supplies the meaning.
+            One evocative prompt. Twenty-eight fragments with range. No hidden answer. Crew size determines the frozen row count.
           </p>
         </div>
         <button type="button" className="vg-button vg-button-quiet" onClick={() => void signOut()}>
@@ -143,7 +144,7 @@ export function VibeBoardDesk() {
             <p className="vg-meta text-lime">Next board</p>
             <h2 className="mt-2 text-3xl font-black tracking-[-0.04em]">Author the palette.</h2>
           </div>
-          <p className="vg-meta">{uniqueTileCount}/12 distinct</p>
+          <p className="vg-meta">{uniqueTileCount}/{BOARD_TILE_COUNT} distinct</p>
         </div>
 
         <div className="mt-6 grid gap-5 lg:grid-cols-[220px_1fr]">

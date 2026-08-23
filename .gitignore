@@ -15,3 +15,13 @@ backend/internal/frontend/out/*
 
 # Private planning notes (kept locally, not part of the public repo)
 01_VIBEGRID_*.md
+
+# Agent worktrees (live nested git checkouts, not repo content)
+**/.claude/worktrees/
+
+# Prompt notes for other projects (kept locally, not part of the public repo)
+docs/PUNCHLINE_REIMAGINATION_PROMPT.md
+
+# Published design-canvas bundle (2MB of generated editor + content;
+# the editable sources live in .design-wip/)
+vibegrid-design-directions.html

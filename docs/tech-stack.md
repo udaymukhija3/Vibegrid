@@ -15,8 +15,10 @@ constraints in Postgres.
 - Lucide icons and Sonner feedback.
 - Vitest for pure client/storage/network behavior.
 
-The public practice loop is client-local. Durable crew state is always loaded
-from the same-origin Go API with credentials included.
+The public practice loop is client-local. Daily and deterministic Unlimited
+palettes come from the public same-origin API, while selections, titles, and
+tutorial votes remain browser state. Durable crew state is always loaded from
+the same-origin Go API with credentials included.
 
 ## Backend
 
@@ -33,7 +35,9 @@ from the same-origin Go API with credentials included.
 
 Active product tables:
 
-- `vibe_daily_boards`: immutable dated prompt and 12-tile JSON snapshot.
+- `vibe_daily_boards`: immutable dated prompt and rollback-compatible 12-tile base.
+- `vibe_board_expansions`: immutable 16-tile editorial expansion for new boards.
+- `vibe_crew_boards`: frozen member/tile count per crew and dated board.
 - `vibe_submissions`: crew/board/member, author-name snapshot, title, four tile
   ids, client replay id.
 - `vibe_votes`: crew/board/voter/target, client replay id.

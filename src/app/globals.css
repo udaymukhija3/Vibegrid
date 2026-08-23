@@ -97,6 +97,16 @@ textarea:focus-visible {
   .vg-shell {
     @apply mx-auto min-h-screen w-full max-w-7xl px-4 py-5 sm:px-6 sm:py-7 lg:px-8;
     min-height: 100dvh;
+    /* Mobile Safari restores its floating toolbar at the document boundary.
+       Leave enough scroll runway for the final ballot/result controls to move
+       above that chrome, including the device home-indicator safe area. */
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+
+  @media (min-width: 640px) {
+    .vg-shell {
+      padding-bottom: 1.75rem;
+    }
   }
 
   .vg-meta {
@@ -171,16 +181,11 @@ textarea:focus-visible {
   .vg-hero-card {
     @apply rounded-[1.8rem] border-[3px] border-ink bg-cream p-5 text-ink sm:p-7;
     box-shadow: 10px 10px 0 var(--violet);
-    transform: rotate(0.6deg);
+    transform: rotate(0.35deg);
   }
 
   .vg-hero-fragment {
-    @apply flex min-h-16 items-center justify-center rounded-xl border-2 border-ink/[.15] bg-white px-2 text-center text-[0.7rem] font-black leading-tight sm:min-h-20 sm:text-xs;
-  }
-
-  .vg-hero-fragment-accent {
-    @apply border-ink bg-lime;
-    box-shadow: 3px 3px 0 var(--ink);
+    @apply flex min-h-14 items-center justify-center rounded-xl border-2 border-ink/[.15] bg-white px-1.5 text-center text-[0.62rem] font-black leading-tight sm:min-h-20 sm:px-2 sm:text-xs;
   }
 
   .vg-prompt {
@@ -188,11 +193,11 @@ textarea:focus-visible {
   }
 
   .vg-fragment-grid {
-    @apply grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3;
+    @apply grid grid-cols-4 gap-2 sm:gap-3;
   }
 
   .vg-fragment {
-    @apply relative flex min-h-[5.75rem] items-center justify-center rounded-xl border-2 border-cream/25 bg-cream px-2 text-center text-xs font-black leading-tight text-ink transition sm:min-h-[6.5rem] sm:px-3 sm:text-sm;
+    @apply relative flex min-h-[4.75rem] items-center justify-center rounded-xl border-2 border-cream/25 bg-cream px-1.5 text-center text-[0.65rem] font-black leading-tight text-ink transition sm:min-h-[6.5rem] sm:px-3 sm:text-sm;
     box-shadow: 4px 4px 0 var(--ink-deep);
   }
 

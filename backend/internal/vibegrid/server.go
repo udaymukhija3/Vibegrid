@@ -195,6 +195,7 @@ func NewServer(config ServerConfig) http.Handler {
 	}
 	mux.HandleFunc("GET /api/puzzles/today", server.handleTodayPuzzle)
 	mux.HandleFunc("GET /api/vibes/today", server.handleTodayVibeBoard)
+	mux.HandleFunc("GET /api/vibes/practice/{sequence}", server.handleUnlimitedVibeBoard)
 	mux.HandleFunc("GET /api/puzzles", server.handlePuzzles)
 	mux.HandleFunc("GET /api/puzzles/{id}", server.handleGetPuzzle)
 	mux.HandleFunc("GET /api/puzzles/{id}/stats", server.handleStats)
@@ -979,7 +980,9 @@ func withRequestLogging(next http.Handler) http.Handler {
 		slog.Info(
 			"http request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			// Crew invite codes and creator/admin claims are capabilities. Logging
+			// the raw URL would turn the log sink into a second credential store.
+			"path", routeMetricLabel(r),
 			"status", status,
 			"duration_ms", time.Since(started).Milliseconds(),
 			"request_id", requestIDFromContext(r.Context()),
@@ -1105,7 +1108,8 @@ func withCacheSafety(next http.Handler) http.Handler {
 }
 
 func isPrivateRoute(route string) bool {
-	return route == "/api/session" || route == "/api/streak" ||
+	return route == "/api/session" || route == "/api/streak" || route == "/api/crews" ||
+		strings.HasPrefix(route, "/api/crews/") ||
 		strings.HasPrefix(route, "/api/attempts/") ||
 		strings.HasPrefix(route, "/api/admin/") ||
 		strings.HasSuffix(route, "/easy-hint")

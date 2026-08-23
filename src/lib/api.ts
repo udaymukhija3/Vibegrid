@@ -361,7 +361,11 @@ const vibeBoardSchema = z.object({
   boardNumber: z.number(),
   publishDate: z.string(),
   prompt: z.string(),
-  tiles: z.array(tileSchema).length(12)
+  tiles: z
+    .array(tileSchema)
+    .min(12)
+    .max(28)
+    .refine((tiles) => tiles.length % 4 === 0, "Vibe boards must have complete four-column rows")
 }) satisfies z.ZodType<VibeBoard>;
 
 const vibeCardSchema = z.object({
@@ -417,6 +421,13 @@ const vibeCrewDailySchema = z.object({
 
 export async function fetchTodayVibeBoard(): Promise<VibeBoard> {
   return vibeBoardSchema.parse(await getJSON("/api/vibes/today"));
+}
+
+export async function fetchUnlimitedVibeBoard(sequence: number): Promise<VibeBoard> {
+  if (!Number.isSafeInteger(sequence) || sequence < 0) {
+    throw new ApiError("Unlimited practice sequence is invalid.", 400);
+  }
+  return vibeBoardSchema.parse(await getJSON(`/api/vibes/practice/${sequence}`));
 }
 
 export async function fetchCrewDaily(inviteCode: string): Promise<VibeCrewDaily> {

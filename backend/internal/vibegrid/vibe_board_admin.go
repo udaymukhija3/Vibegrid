@@ -37,7 +37,7 @@ func (server *Server) handleAdminCreateVibeBoard(w http.ResponseWriter, r *http.
 	}
 	board, err := input.toBoard(server.todayString())
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "Choose today or a future date, write one clear prompt, and provide 12 different fragments.")
+		writeError(w, http.StatusUnprocessableEntity, "Choose today or a future date, write one clear prompt, and provide 28 different fragments.")
 		return
 	}
 	if err := server.blocklist.reviewText(board.Prompt); err != nil {
@@ -64,7 +64,7 @@ func (server *Server) handleAdminCreateVibeBoard(w http.ResponseWriter, r *http.
 
 func (input adminVibeBoardInput) toBoard(today string) (VibeBoard, error) {
 	publishDate := strings.TrimSpace(input.PublishDate)
-	if _, err := time.Parse("2006-01-02", publishDate); err != nil || publishDate < today || len(input.Tiles) != VibeBoardTileCount {
+	if _, err := time.Parse("2006-01-02", publishDate); err != nil || publishDate < today || len(input.Tiles) != VibeBoardMaxTileCount {
 		return VibeBoard{}, ErrVibeBoardInvalid
 	}
 	canonical, err := VibeBoardForDate(publishDate)
@@ -72,7 +72,7 @@ func (input adminVibeBoardInput) toBoard(today string) (VibeBoard, error) {
 		return VibeBoard{}, err
 	}
 	canonical.Prompt = strings.Join(strings.Fields(input.Prompt), " ")
-	canonical.Tiles = make([]Tile, VibeBoardTileCount)
+	canonical.Tiles = make([]Tile, VibeBoardMaxTileCount)
 	for index, raw := range input.Tiles {
 		canonical.Tiles[index] = Tile{
 			ID:   bankTileID(canonical.ID, index),

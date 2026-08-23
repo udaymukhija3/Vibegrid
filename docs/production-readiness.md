@@ -1,6 +1,6 @@
 # VibeGrid production readiness
 
-**Review date:** 21 August 2026
+**Review date:** 23 August 2026
 **Decision:** recruiter demonstration ready; controlled beta requires the P0
 evidence below; broad launch is blocked.
 
@@ -18,7 +18,7 @@ judge, or enjoy the reveal. The correct next launch is controlled and measured.
 
 | Posture | Status | Conditions |
 | --- | --- | --- |
-| Local public practice | **READY** | Works without database. |
+| Local public practice | **READY** | Direct composer, first-visit dialog, and deterministic Unlimited deals work without database. |
 | Local durable crew demo | **READY WITH DB** | Migrations applied; at least three browser sessions. |
 | Recruiter demo | **READY WITH DISCLOSED GAPS** | Run verification; never claim traffic/backups/alerts. |
 | Controlled beta | **BLOCKED ON P0** | Provider durability, E2E, accessibility pass, privacy-reviewed funnel, seeded crews. |
@@ -29,7 +29,8 @@ judge, or enjoy the reveal. The correct next launch is controlled and measured.
 ### 1. Production-shaped data path
 
 - Provision managed Postgres.
-- Apply migration `00018_vibe_rounds.sql` through the release workflow.
+- Apply migrations `00018_vibe_rounds.sql` and
+  `00019_variable_vibe_boards.sql` through the release workflow.
 - Run the full Go race suite with `TEST_DATABASE_URL` and retain the CI link.
 - Run `npm run test:e2e` against the embedded single-binary build.
 - Run `npm run smoke:deploy -- --mutate` against the deployed URL; verify crew
@@ -61,11 +62,16 @@ is configured.
 
 - Add a multi-context Playwright flow over real Postgres for create → three
   joins → make → judge fixture → reveal fixture.
-- Add automated accessibility checks for homepage, join, composer, ballot,
-  result, owner controls, and admin authoring.
-- Manually verify keyboard-only selection/voting, 320px layout, 200% zoom,
-  VoiceOver or NVDA labels, reduced motion, and focus restoration.
+- Add automated accessibility checks for homepage introduction, join, composer,
+  ballot, result, owner controls, and admin authoring.
+- Manually verify 320px layout, 200% zoom, VoiceOver or NVDA labels, and reduced
+  motion. Keyboard selection/focus restoration and an iPhone 17 Pro simulator
+  touch pass through onboarding, practice ballot/reveal, and durable crew join
+  were completed on 23 August 2026; the simulator pass also caught and closed a
+  Mobile Safari bottom-toolbar obstruction on final controls.
 - Test Safari/iOS, Chrome/Android, and one desktop Chromium/Firefox path.
+- Exercise 3×4, 4×4, and 7×4 palettes at phone width; confirm every surface
+  remains four columns and final controls clear the browser toolbar.
 
 ### 5. Product evidence with privacy discipline
 
@@ -80,11 +86,13 @@ is configured.
 
 | Invariant | Current implementation | Evidence | Gap |
 | --- | --- | --- | --- |
-| 12 unique fragments, no answer mapping | strict board validation and new API shape | unit + smoke | editorial ambiguity checklist is manual |
-| One card per member/round | transaction + unique constraint | Postgres integration when configured | CI artifact needed |
-| Exact retry is safe | persisted client id; changed input conflicts | unit/integration + deploy smoke path | browser timeout E2E |
+| 28 unique master fragments, no answer mapping | strict master validation and additive expansion storage | unit + smoke | nested editorial ambiguity checklist is manual |
+| Unlimited is isolated from durable play | public deterministic 4×4 deal endpoint; cards/ballots remain component state | determinism/max-sequence and in-process HTTP/cache tests; E2E assertion checked in | updated embedded E2E rerun and product cannibalization evidence |
+| Crew-sized rows stay stable | crew-lock first-open snapshot + `(crew,board)` key; selection revalidated in transaction | row-band unit matrix; real-Postgres 32-open convergence, max-crew writes, post-freeze join, and join/freeze race | multi-browser join/open trace |
+| One card per member/round | transaction + unique constraint | real-Postgres distinct-client contention under the Go race detector | retained release CI artifact needed |
+| Exact retry is safe | persisted client id; changed input conflicts; loser reloads winner | sequential replay, 16-way identical card/vote races, durable E2E smoke | browser timeout E2E |
 | Makers-only blind vote | transaction checks own submission and target | integration tests | multi-browser E2E |
-| No self-vote / one ballot | transaction + unique constraint | integration tests | concurrent race test under load |
+| No self-vote / one ballot | transaction + unique constraint | integration plus distinct/identical concurrent race tests | sustained load profile |
 | Outsider privacy | member-aware response projection | unit test | hostile HTTP matrix |
 | Author hidden then revealed | judge/result views | unit test | screen-reader/browser QA |
 | Official threshold and ties | result builder/streak query | unit + integration | validate with real crews |
@@ -102,14 +110,17 @@ is configured.
   rate limits, bounded metric labels, secure headers, exact public base URL, and
   trusted-proxy allowlist.
 - Private crew routes excluded from sitemap; nonmember stage projection.
+- Capability-bearing request paths are normalized before logging and all crew
+  API responses are centrally marked `private, no-store`.
 - Admin board rows immutable after creation.
 
 ### Not complete
 
 - No public crew-card reporting/appeal workflow.
 - No named operator identity or MFA; acceptable only for one operator.
-- No external penetration test, sustained load test, or dependency audit result
-  recorded for this pivot.
+- No external penetration test or sustained load test. The 23 August local npm
+  audit and Go vulnerability scan found no known dependency vulnerabilities;
+  this is a dated local result, not continuous monitoring.
 - Guest browser loss means membership loss; there is no recovery.
 - Capability invites are secrets but still transferable by design.
 

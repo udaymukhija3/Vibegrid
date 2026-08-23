@@ -27,8 +27,9 @@ reveal authors and votes afterward.
   protected bounded-label metrics, structured logs, rate limits, secure admin
   sessions, CI, Docker, and Fly/Render runbooks.
 - Created an authenticated immutable board pipeline for one prompt and twelve
-  fragments per UTC date, plus a deterministic curated fallback and editorial
-  QA doctrine.
+  base fragments plus a 16-fragment expansion per UTC date, with frozen
+  crew-sized projections, a deterministic curated fallback, and nested
+  editorial QA doctrine.
 
 ## Interview story
 
@@ -36,7 +37,7 @@ reveal authors and votes afterward.
    NYT Connections with social comparison attached.
 2. **Decision:** stop visual iteration and change who creates meaning—the player,
    not the editor.
-3. **Mechanic:** twelve fragments → choose four → title → delayed blind vote →
+3. **Mechanic:** crew-sized four-column palette → choose four → title → delayed blind vote →
    author reveal.
 4. **Engineering consequence:** the system now had temporal phases, reciprocal
    eligibility, privacy staging, retry semantics, ties, quiet rounds, and

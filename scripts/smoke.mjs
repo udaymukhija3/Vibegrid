@@ -32,13 +32,17 @@ export async function runSmoke({
   const base = normalizeBaseURL(baseUrl);
   const jar = new CookieJar();
 
-  async function request(path, init = {}) {
+  async function requestWithJar(activeJar, path, init = {}) {
     const headers = new Headers(init.headers ?? {});
-    const cookie = jar.header();
+    const cookie = activeJar.header();
     if (cookie) headers.set("Cookie", cookie);
     const response = await fetch(new URL(path, base), { ...init, headers });
-    jar.store(response);
+    activeJar.store(response);
     return response;
+  }
+
+  async function request(path, init = {}) {
+    return requestWithJar(jar, path, init);
   }
 
   async function expectJSON(path, status = 200, init = {}) {
@@ -70,8 +74,23 @@ export async function runSmoke({
   const today = await expectJSON("/api/vibes/today");
   const board = today.payload;
   assertVibeBoard(board, "today board");
+  assert(board.tiles.length === 16, "public practice was not a 4x4 board");
   assert(today.response.headers.get("cache-control"), "today board had no cache policy");
   log(`ok board ${String(board.boardNumber).padStart(3, "0")} (${board.publishDate})`);
+
+  const unlimited = await expectJSON("/api/vibes/practice/0");
+  const unlimitedVariation = await expectJSON("/api/vibes/practice/12");
+  assertVibeBoard(unlimited.payload, "unlimited board");
+  assertVibeBoard(unlimitedVariation.payload, "unlimited board variation");
+  assert(unlimited.payload.tiles.length === 16, "unlimited practice was not 4x4");
+  assert(unlimited.payload.id !== unlimitedVariation.payload.id, "unlimited sequence did not advance");
+  assert(
+    unlimited.response.headers.get("cache-control")?.includes("immutable"),
+    "unlimited board was not immutably cacheable"
+  );
+  const invalidUnlimited = await request("/api/vibes/practice/not-a-number");
+  assert(invalidUnlimited.status === 404, `invalid unlimited sequence returned ${invalidUnlimited.status}`);
+  log("ok unlimited practice sequence");
 
   const session = await expectJSON("/api/session");
   assert(session.payload.mode === "guest", "session did not report guest mode");
@@ -100,9 +119,36 @@ export async function runSmoke({
       const crew = await create.json();
       assert(typeof crew.inviteCode === "string" && crew.inviteCode.length > 8, "created crew had no invite code");
 
+      // Join to the five-member breakpoint before anyone opens the board. Each
+      // browser has its own capability session, matching real concurrent users.
+      for (let index = 1; index < 5; index++) {
+        const memberJar = new CookieJar();
+        const joined = await requestWithJar(
+          memberJar,
+          `/api/crews/${encodeURIComponent(crew.inviteCode)}/join`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+            body: JSON.stringify({ displayName: `Smoke ${index}` })
+          }
+        );
+        assert(joined.status === 200, `smoke member ${index} could not join (${joined.status})`);
+      }
+
       const daily = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/daily`);
       assert(daily.payload.isMember === true, "crew creator was not a member");
       assertVibeBoard(daily.payload.today?.board, "crew today board");
+      assert(daily.payload.today.board.tiles.length === 16, "five-member crew did not freeze at 4x4");
+
+      const lateJar = new CookieJar();
+      const lateJoin = await requestWithJar(lateJar, `/api/crews/${encodeURIComponent(crew.inviteCode)}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        body: JSON.stringify({ displayName: "Smoke late" })
+      });
+      assert(lateJoin.status === 200, `post-freeze member could not join (${lateJoin.status})`);
+      const stillFrozen = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/daily`);
+      assert(stillFrozen.payload.today.board.tiles.length === 16, "post-freeze join resized the active board");
 
       const clientSubmissionId = `smoke_${randomUUID().replaceAll("-", "_")}`;
       const body = {
@@ -147,7 +193,10 @@ function assertVibeBoard(board, label) {
   assert(Number.isInteger(board.boardNumber), `${label} had no board number`);
   assert(/^\d{4}-\d{2}-\d{2}$/.test(board.publishDate), `${label} had an invalid date`);
   assert(typeof board.prompt === "string" && board.prompt.length > 5, `${label} had no prompt`);
-  assert(Array.isArray(board.tiles) && board.tiles.length === 12, `${label} did not expose exactly 12 fragments`);
+  assert(
+    Array.isArray(board.tiles) && board.tiles.length >= 12 && board.tiles.length <= 28 && board.tiles.length % 4 === 0,
+    `${label} did not expose complete four-column rows`
+  );
   for (const forbiddenKey of ["groups", "answers", "answerKey", "difficulty", "mistakesAllowed"]) {
     assert(!(forbiddenKey in board), `${label} leaked obsolete field ${forbiddenKey}`);
   }
@@ -158,7 +207,7 @@ function assertVibeBoard(board, label) {
     ids.add(tile.id);
     texts.add(tile.text.toLocaleLowerCase());
   }
-  assert(ids.size === 12 && texts.size === 12, `${label} contained duplicate fragments`);
+  assert(ids.size === board.tiles.length && texts.size === board.tiles.length, `${label} contained duplicate fragments`);
 }
 
 function normalizeBaseURL(value) {

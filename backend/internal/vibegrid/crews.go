@@ -334,18 +334,33 @@ func (store *PostgresCrewStore) RemoveMember(ctx context.Context, crewID, member
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	// The owner guard lives in the statement itself, so a non-owner cannot race
-	// between a check and a delete. The session_id guard stops the owner from
-	// removing themselves here — leaving has to run the succession logic.
-	result, err := store.db.ExecContext(ctx,
-		`delete from crew_members m
-		 using crews c
-		 where m.crew_id = c.id
-		   and c.id = $1
-		   and c.created_by_session = $2
-		   and m.member_id = $3
-		   and m.session_id <> $2`,
-		crewID, sessionID, memberID,
+	// The crew lock serializes removals with joins, leaves, and first-open board
+	// sizing. Whichever transaction owns the lock first defines whether the
+	// departing member belongs to that dated board's frozen size.
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin crew member removal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ownerID string
+	if err := tx.QueryRowContext(ctx,
+		`select created_by_session from crews where id = $1 for update`, crewID,
+	).Scan(&ownerID); errors.Is(err, sql.ErrNoRows) {
+		return ErrCrewNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock crew for member removal: %w", err)
+	}
+	if ownerID != sessionID {
+		return ErrNotCrewOwner
+	}
+
+	// The session guard stops the owner from removing themselves here — leaving
+	// has to run the succession logic.
+	result, err := tx.ExecContext(ctx,
+		`delete from crew_members
+		 where crew_id = $1 and member_id = $2 and session_id <> $3`,
+		crewID, memberID, sessionID,
 	)
 	if err != nil {
 		return fmt.Errorf("remove crew member: %w", err)
@@ -355,14 +370,9 @@ func (store *PostgresCrewStore) RemoveMember(ctx context.Context, crewID, member
 		return fmt.Errorf("remove crew member rows: %w", err)
 	}
 	if affected == 0 {
-		// Either not the owner, or no such member. Distinguish so the caller can
-		// answer 403 vs 404 honestly.
-		if err := store.requireOwner(ctx, crewID, sessionID); err != nil {
-			return err
-		}
 		return ErrCrewMemberUnknown
 	}
-	return nil
+	return commitCrewTx(tx, "member removal")
 }
 
 // LeaveCrew removes the caller and keeps the crew owned. Succession is by join

@@ -1,7 +1,7 @@
 # VibeGrid — Launch Report (historical; superseded)
 
 **Date:** 2026-08-20
-**Decision update:** 2026-08-21
+**Decision update:** 2026-08-23
 **Status:** **OVERRULED as a product strategy. Retained only as a record of the
 pre-pivot audit.**
 **Scope:** content audit, design audit, new design direction, and go-to-market for a real product launch
@@ -43,8 +43,13 @@ The fragments are prompts for expression, not clues to a hidden taxonomy. There
 is no canonical grouping and no correct solution. The creative and social output
 of the crew is the content.
 
-Every daily board contains one human-written prompt and exactly 12 fragments. A
-round unfolds across three UTC dates:
+Every daily board contains one human-written prompt and a 28-fragment editorial
+master. A crew receives a frozen four-column projection sized when a member
+first opens that date: 1–4 members see 12 fragments, 5–8 see 16, 9–12 see 20,
+13–16 see 24, and 17–20 see 28. Public practice is deliberately 4×4. The row
+count changes the amount of creative material, not the answer model—there is
+still no partition, intended quartet, correctness, timer, or mistakes. A round
+unfolds across three UTC dates:
 
 1. **Make — day D.** Each crew member privately chooses four fragments and gives
    the combination a short title. There is no timer, difficulty, mistake counter,
@@ -60,17 +65,21 @@ Undersized rounds end quietly and do not extend the crew streak. This makes the
 streak evidence of a continuing group ritual, not individual compulsion.
 
 The public homepage offers a complete local practice round so a visitor can
-understand the emotional act without entering a crew. Durable play belongs in a
-private crew reached through an invite capability link. Crew pages, claims,
-legacy puzzle shares, demos, admin pages, and API routes are excluded from search.
+understand the emotional act without entering a crew. A separately labeled
+Unlimited sandbox can deal another local 4×4 interpretation round indefinitely,
+without scores, persistence, or invented players; its finite curated masters
+eventually cycle. Durable play belongs in a private crew reached through an
+invite capability link. Crew pages, claims, legacy puzzle shares, demos, admin
+pages, and API routes are excluded from search.
 
 ### 0.2 Exactly what this report overruled
 
 | Earlier recommendation or assumption | 2026-08-21 ruling | Reason |
 |---|---|---|
 | The product is a daily 4×4 hidden-group puzzle | **Removed from the primary product** | It left the core interaction recognisably derivative even with better writing. |
+| Every active board must remain a fixed 12-fragment 3×4 palette | **Overruled on 2026-08-23** | It was an implementation choice, not the product thesis. Four columns now remain stable while membership determines 3–7 frozen rows; the public 4×4 uses authorship, not hidden grouping. |
 | “Connections, but for feelings” is the position | **Rejected** | It defines VibeGrid through another product and describes flavour, not a new behavior. |
-| Build a runway of 90–120 category puzzles | **Cancelled** | The new editorial unit is a 12-fragment expressive prompt, with no answer key or fairness graph. |
+| Build a runway of 90–120 category puzzles | **Cancelled** | The new editorial unit is one layered 28-fragment expressive master, QA'd at every crew-size breakpoint, with no answer key or fairness graph. |
 | Difficulty modes, four mistakes, one-away feedback, elapsed time | **Removed** | They reward answer recovery and performance; the new product rewards authorship and recognition. |
 | The solved result and emoji grid are the growth engine | **Replaced** | The primary retention engine is the make → blind judgment → named reveal cycle inside a real crew. |
 | Crews are a secondary wedge placed after solo play | **Reversed** | The crew is the product. Solo practice explains it; it is not the durable loop. |
@@ -100,14 +109,25 @@ and have been carried into the rebuilt product:
 ### 0.4 Current implementation status
 
 The superseding vision is not merely a proposal. It is represented in the current
-codebase by the 12-fragment board model, immutable daily board publishing,
-Postgres-backed cards and ballots, replay-safe mutations, stage-aware disclosure,
+codebase by the 28-fragment master plus frozen crew projections, deterministic
+Unlimited practice deals, immutable daily board publishing, Postgres-backed
+cards and ballots, replay-safe mutations, stage-aware disclosure,
 make/judge/reveal crew interfaces, the local practice round, the board-authoring
 desk, updated indexing boundaries, and the fused visual system.
 
 The old `/p/<id>` hidden-category engine is retained only as labelled, no-index
 compatibility for existing links. It is not the VibeGrid product direction and
 must not drive new roadmap, positioning, content, or design decisions.
+
+The first 2026-08-23 verification closed the nine-fragment homepage and
+six-fragment invite defects, but it also preserved a three-column phone layout
+and treated fixed 12 versus crew-sized boards as undecided. That ruling is now
+itself overruled. The active UI always renders four columns. The public practice
+board is 4×4; private crew boards freeze at 3×4 through 7×4 based on membership.
+The data model stores that crew/date decision once, and the submission
+transaction rejects master fragments outside the frozen projection. This is not
+a return to Connections: the player still authors and titles one interpretation,
+other players judge it, and no correct grouping exists.
 
 ---
 

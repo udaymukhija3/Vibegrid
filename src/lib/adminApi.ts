@@ -21,7 +21,7 @@ const vibeBoardSchema = z.object({
   boardNumber: z.number(),
   publishDate: z.string(),
   prompt: z.string(),
-  tiles: z.array(tileSchema).length(12)
+  tiles: z.array(tileSchema).min(12).max(28).refine((tiles) => tiles.length % 4 === 0)
 }) satisfies z.ZodType<VibeBoard>;
 
 export type AdminVibeBoardInput = {

@@ -1,6 +1,6 @@
 # VibeGrid product vision
 
-**Ratified:** 21 August 2026
+**Ratified:** 21 August 2026; crew-sized board contract ratified 23 August 2026
 
 **Status:** source of truth for product, design, content, and engineering
 **Supersedes:** the hidden-category daily puzzle described by the launch report
@@ -34,11 +34,29 @@ that way.
 
 ## The primitive
 
-Every date has one immutable board:
+Every date has one immutable editorial master:
 
 - one evocative prompt;
-- twelve short, human-written fragments;
+- twenty-eight short, human-written fragments;
 - no categories, group ids, difficulty, timer, mistakes, or answer key.
+
+Every crew sees a nested, four-column projection of that master. The number of
+rows is based on membership when a member first opens that dated round:
+
+| Members at first open | Rows | Fragments |
+| --- | --- | --- |
+| 1–4 | 3 | 12 |
+| 5–8 | 4 | 16 |
+| 9–12 | 5 | 20 |
+| 13–16 | 6 | 24 |
+| 17–20 | 7 | 28 |
+
+That choice is then frozen for the crew and date. A join, leave, removal,
+refresh, retry, or second server opening the round cannot resize the palette
+under existing cards. Different crews may therefore receive different amounts
+of material on the same date; every member inside one crew receives exactly the
+same historical projection. The first 12, 16, 20, 24, and 28 fragments must each
+stand as an intentionally edited palette—not padding exposed only at scale.
 
 Every member may make one card:
 
@@ -118,10 +136,47 @@ House cards are tutorial fixtures, never presented as real people or activity.
 Public practice state is local and disposable. This avoids a hollow landing
 page while keeping the private crew as the only durable social product.
 
+Practice deliberately uses four rows (16 fragments). It makes the familiar
+four-column interaction immediately legible without restoring hidden groups:
+there is still no partition, correctness, mistake budget, or result grid. The
+player authors one titled card and judges interpretations.
+
+The playable composer is the homepage—not a destination below a marketing hero
+or an interstitial explanation screen. A concise first-visit dialog explains
+make → judge → reveal over the real board, can be dismissed with one action, is
+remembered by that browser, and remains available from “How it works.” Closing
+it leaves focus at the first fragment. Returning visitors land directly on the
+composer. Product explanation must never become a second front door before the
+first meaningful action.
+
+### Unlimited practice
+
+Some people will understand the mechanic only after making several cards, and
+some will simply want to keep playing. The public surface therefore has an
+explicit **Unlimited** mode. Completing make → blind house ballot → reveal can
+deal another 4×4 palette immediately.
+
+Unlimited is a sandbox, not a second social economy:
+
+- card titles, selections, and votes remain disposable browser state;
+- it has no timer, lives, correctness, score, leaderboard, streak, account, or
+  fabricated public participation;
+- it never advances, backfills, or otherwise changes a crew's dated stages;
+- each deal stays inside one coherent 28-fragment editorial master; deterministic
+  rotation and coprime stepping vary the visible 16 without mixing prompts;
+- the activity can continue indefinitely, but the curated source material is
+  finite and will eventually cycle. The product must never call a reshuffle a
+  newly human-authored board.
+
+This is the right kind of abundance: unlimited opportunities to interpret,
+while the daily crew reveal remains scarce, relational, and worth returning for.
+If Unlimited begins to reduce crew creation or judge return, it is subordinate
+and may be moved later in the funnel.
+
 ## Editorial doctrine
 
-A good board is not twelve synonyms and not three disguised categories. It is a
-palette with useful tension.
+A good board is not twenty-eight synonyms, seven disguised categories, or twelve
+good fragments followed by filler. It is a layered palette with useful tension.
 
 ### A good prompt
 
@@ -147,15 +202,20 @@ Examples:
 - contains no duplicate text, concealed demographic target, answer-key coding,
   or single obviously dominant quartet;
 - stays short enough to read on a phone tile.
+- remains generative at every nested breakpoint: first 12, 16, 20, 24, and all
+  28 fragments;
+- uses the later rows to widen tone and possibility, not introduce an intended
+  category or a more obviously correct quartet.
 
 ### Editorial QA before freezing
 
-1. Make six titled cards from the palette without reusing the same quartet.
+1. Make six titled cards at 12 fragments, then repeat at 16, 20, 24, and 28.
 2. Ask whether two different titles can plausibly use at least one shared tile.
 3. Remove any four that read like an intended hidden category.
-4. Read every title/fragment combination for harassment and private-person risk.
-5. Preview the 320px board and the social card.
-6. Freeze the date. Never edit a live board; replace a future date before it is
+4. Check that each added row expands choices rather than merely diluting them.
+5. Read every title/fragment combination for harassment and private-person risk.
+6. Preview 320px at 3, 4, and 7 rows plus desktop and the social card.
+7. Freeze the date. Never edit a live board; replace a future date before it is
    first persisted or choose another date.
 
 ## Design doctrine
@@ -170,7 +230,8 @@ the wordmark. The new system keeps that rigor but assigns it to the new mechanic
 - Bricolage Grotesque carries voice; IBM Plex Mono carries dates, counts, and
   system truth.
 - Hard offset shadows make cards feel handled, not like generic SaaS panels.
-- A 3×4 fragment palette—not a 4×4 solved-color grid—is the core silhouette.
+- A four-column stack of tactile fragments is the core silhouette. Its height
+  changes with the room; solved colour bands never appear.
 - Motion is small, responsive, and reduced-motion safe. No confetti is required
   to manufacture significance.
 
@@ -189,10 +250,17 @@ concurrency, removed members, leaked links, and partial participation.
 - Client-generated replay ids survive timeouts; changed replay input is rejected.
 - Dated board rows are immutable snapshots. Editorial fallback code may evolve
   without rewriting history.
+- Per-crew row count is inserted once under the same crew lock used by joins and
+  leaves. The database uniqueness key is the final arbiter for concurrent opens.
+- The original 12-fragment row and its 16-fragment expansion are stored
+  separately so the schema migration is additive and the prior binary can still
+  boot during rollback. A roll-forward is required after cards use expansion ids.
 - Display names are copied into card history; removing a membership cannot make
   old results unintelligible.
 - Crew links never enter sitemap, public feeds, or analytics labels.
 - No-database mode serves practice and explicitly refuses fake durable crews.
+- Unlimited deals are deterministic public reads; selections and tutorial votes
+  never enter Postgres or operational logs as authored content.
 - New product claims need a test, a runtime check, or a documented manual gap.
 
 ## Success criteria
@@ -203,6 +271,8 @@ groups complete recurring social loops.
 Initial product measures, once privacy-reviewed analytics exists:
 
 - practice completion → crew creation;
+- daily-practice versus Unlimited completion → crew creation, so the sandbox is
+  tested for teaching value rather than assumed to help;
 - crew creation → third member joined within 72 hours;
 - eligible member make rate per board;
 - maker → next-day judge return rate;
@@ -210,6 +280,7 @@ Initial product measures, once privacy-reviewed analytics exists:
 - crews with a second official round within seven days;
 - invite rotation/removal frequency as a safety signal;
 - quiet-round rate by crew size.
+- card overlap, completion time, and abandonment by frozen row count.
 
 The north-star candidate is **weekly crews with two or more official reveals**.
 It measures authored participation, judgment, and return behavior without

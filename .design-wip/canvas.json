@@ -1,0 +1,50 @@
+{
+  "pages": [
+    { "id": "loop",  "name": "Launch set — the growth loop" },
+    { "id": "explo", "name": "Earlier explorations" }
+  ],
+  "artboards": [
+    { "file": "Board.dc.html",      "title": "1 · Board",        "page": "loop",  "x": 0,    "y": 0,   "w": 375,  "h": 748 },
+    { "file": "Result.dc.html",     "title": "2 · Result",       "page": "loop",  "x": 455,  "y": 0,   "w": 375,  "h": 748 },
+    { "file": "Shared.dc.html",     "title": "3 · Cold landing", "page": "loop",  "x": 910,  "y": 0,   "w": 375,  "h": 748 },
+    { "file": "ChatThread.dc.html", "title": "4 · Share text",   "page": "loop",  "x": 1365, "y": 0,   "w": 375,  "h": 700 },
+    { "file": "SocialCard.dc.html", "title": "5 · Link preview", "page": "loop",  "x": 0,    "y": 880, "w": 1200, "h": 630 },
+
+    { "file": "Main.dc.html",     "title": "A — Editorial", "page": "explo", "x": 0,    "y": 0, "w": 680, "h": 840 },
+    { "file": "Toy.dc.html",      "title": "B — Toy",       "page": "explo", "x": 780,  "y": 0, "w": 680, "h": 770 },
+    { "file": "Terminal.dc.html", "title": "C — Brutalist", "page": "explo", "x": 1560, "y": 0, "w": 680, "h": 800 },
+    { "file": "Arcade.dc.html",   "title": "B2 — Arcade",   "page": "explo", "x": 2340, "y": 0, "w": 375, "h": 720 },
+    { "file": "Sticker.dc.html",  "title": "B3 — Sticker",  "page": "explo", "x": 2795, "y": 0, "w": 375, "h": 720 }
+  ],
+  "annotations": [
+    {
+      "id": "n-direction", "page": "loop", "x": 0, "y": -232, "w": 830,
+      "text": "ONE DIRECTION, NOT A BEAUTY CONTEST\nB's tactile chunk (hard offset shadows, never blurs) fused with C's mono system — IBM Plex Mono carries every number, label and timer; Bricolage Grotesque carries the words. Deep ink ground so tiles and the share grid pop in a screenshot.\nThe four vibe colours are fixed identity: lime, amber, coral, violet. They are the same four squares in the board, the result grid, the crew rows, the chat message and the link preview — so the grid is recognisable in a feed before the wordmark is."
+    },
+    {
+      "id": "n-board", "page": "loop", "x": 0, "y": -104, "w": 375,
+      "text": "1 · BOARD — the least important screen here.\nMobile-first: submit sits in the thumb zone and stays dead until four are picked. Solved groups collapse to a one-line bar instead of the tall banner, buying a full tile row. No stat rail — the board already shows what is selected."
+    },
+    {
+      "id": "n-result", "page": "loop", "x": 455, "y": -104, "w": 375,
+      "text": "2 · RESULT — this is the growth engine.\nOne dominant action, not five competing buttons. The crew board lives HERE, at the moment of completion, rather than behind a nav icon — it is your only real edge over NYT Connections and it currently costs a tap to find. 'Next grid 7h 46m' is the retention hook."
+    },
+    {
+      "id": "n-shared", "page": "loop", "x": 910, "y": -104, "w": 375,
+      "text": "3 · COLD LANDING — the screen you do not have.\nEvery shared link today drops a stranger on the homepage. This drops them on their friend's result: social proof, a curiosity gap, one CTA, and 'no signup' said out loud. This screen is where share-rate becomes install-rate."
+    },
+    {
+      "id": "n-chat", "page": "loop", "x": 1365, "y": -104, "w": 375,
+      "text": "4 · SHARE TEXT — read more than the site itself.\nA teardown of what buildShareText actually emits today versus what it could. The onrender.com URL is the single highest-leverage fix on this whole canvas."
+    },
+    {
+      "id": "n-og", "page": "loop", "x": 0, "y": 786, "w": 1200,
+      "text": "5 · LINK PREVIEW (1200x630) — what renders in WhatsApp, iMessage and Slack before anyone clicks.\nYou ship one static og.png today. Generating this per puzzle costs one handler and makes every shared link look current. Nothing here spoils the grid: colours only, no words."
+    },
+    {
+      "id": "n-explo", "page": "explo", "x": 0, "y": -128, "w": 680,
+      "text": "First pass, kept for reference. A was rejected; B and C fed the launch direction on the previous page. Arcade and Sticker are B palette variants at phone width if you want to pull the tile treatment in a different direction."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "loop" }
+}

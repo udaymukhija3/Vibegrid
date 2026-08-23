@@ -23,7 +23,8 @@ export default function CrewPolicyPage() {
           title: "The social contract",
           body: [
             "Vote for the card, not against its eventual author. The ballot hides authors for a reason, and self-votes are blocked.",
-            "Inside jokes are welcome when everyone in the room can laugh. A private reference designed to humiliate one member is not."
+            "Inside jokes are welcome when everyone in the room can laugh. A private reference designed to humiliate one member is not.",
+            "Public-practice house cards are tutorial fixtures, not people. Daily and Unlimited practice reveals never represent real participation or social proof."
           ]
         },
         {

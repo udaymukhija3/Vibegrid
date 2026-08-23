@@ -5,13 +5,16 @@ Start here in a new coding session.
 ## Product source of truth
 
 VibeGrid is an asynchronous private-crew authorship game, not a semantic
-grouping puzzle. A dated board contains one prompt and exactly twelve fragments,
-with no answer key. On day D a member chooses four fragments and titles the
+grouping puzzle. A dated board contains one prompt and a 28-fragment master
+palette with no answer key. Each crew receives a frozen four-column projection:
+1–4 members get 3 rows, 5–8 get 4, 9–12 get 5, 13–16 get 6, and 17–20 get 7.
+On day D a member chooses four fragments and titles the
 combination; on D+1 eligible makers cast one blind non-self vote; on D+2 authors
 and votes reveal. An official result needs at least three cards and two votes.
 
-The public homepage is a local practice round. The durable product requires
-Postgres and lives in crews. Read `docs/product-vision.md` and
+The public homepage has today's local practice plus an explicitly disposable
+Unlimited mode whose deterministic curated deals can continue without durable
+state. The durable social product requires Postgres and lives in crews. Read `docs/product-vision.md` and
 `docs/decision-register.md` before changing the loop.
 
 The old hidden-group engine remains behind legacy `/p/<id>` links and APIs only
@@ -52,7 +55,9 @@ need network access.
 - `backend/internal/vibegrid/vibe_round_handlers.go`: make/judge/reveal response
   projection and staged disclosure.
 - `backend/internal/vibegrid/vibe_board_admin.go`: immutable dated authoring.
-- `backend/db/migrations/00018_vibe_rounds.sql`: new product schema.
+- `backend/db/migrations/00018_vibe_rounds.sql`: base product schema.
+- `backend/db/migrations/00019_variable_vibe_boards.sql`: additive master-palette
+  expansion and frozen per-crew sizing.
 - `src/components/VibeGridApp.tsx`: public practice.
 - `src/components/CrewRoom.tsx`: durable crew experience.
 - `src/components/VibeComposer.tsx`, `VibeCard.tsx`: interaction primitives.
@@ -66,7 +71,13 @@ project, not drive-by cleanup.
 
 ## Product invariants
 
-- A board has exactly 12 unique fragment ids and texts and no grouping metadata.
+- A new editorial master has 28 unique fragment ids/texts and no grouping
+  metadata; legacy 12-fragment boards remain immutable.
+- The rendered board always has four columns. Public practice is 4x4. A crew's
+  3–7 row size is frozen against membership on first member open and cannot be
+  resized by later joins, leaves, removals, retries, or concurrent opens.
+- Unlimited mode deals another local 4x4 board on demand. It has no correctness,
+  timer, lives, streak, persistence, invented people, or effect on crew phases.
 - A card has exactly 4 distinct fragments from that board and a 1–40 rune title.
 - One member gets one card per crew/board and one vote per crew/board.
 - Only a member who submitted can vote; the target must be another card in the
@@ -103,7 +114,7 @@ current evidence.
 - After schema changes, add constraints plus a Postgres integration test.
 - After product-contract changes, update README, product vision, decision
   register, privacy/terms/policy, recruiter evidence, and production readiness.
-- Keep board prompts human, specific, socially generative, and safe. Twelve
+- Keep board prompts human, specific, socially generative, and safe. All 28
   fragments need multiple plausible combinations; they must not secretly form
   three or four intended categories.
 - Prefer honest quiet states over invented activity or fake social proof.

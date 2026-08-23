@@ -417,6 +417,9 @@ func knownRouteMetricLabel(route string) string {
 	if strings.HasPrefix(route, "/api/og/puzzles/") {
 		return "/api/og/puzzles/{id}"
 	}
+	if strings.HasPrefix(route, "/api/vibes/practice/") {
+		return "/api/vibes/practice/{sequence}"
+	}
 	if strings.HasPrefix(route, "/api/puzzles/") {
 		switch {
 		case strings.HasSuffix(route, "/stats"):

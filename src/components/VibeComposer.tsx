@@ -67,7 +67,10 @@ export function VibeComposer({ board, onSubmit, submitLabel = "Lock it in", comp
           </p>
         </div>
 
-        <div className="vg-fragment-grid mt-5" aria-label="Twelve fragments. Choose four.">
+        <div
+          className="vg-fragment-grid mt-5"
+          aria-label={`${board.tiles.length} fragments in ${board.tiles.length / 4} rows. Choose four.`}
+        >
           {board.tiles.map((tile) => {
             const isSelected = selected.includes(tile.id);
             const unavailable = selected.length === 4 && !isSelected;

@@ -19,7 +19,7 @@ export default function CrewsPage() {
             Judge honestly.
           </h1>
           <p className="mt-5 max-w-2xl text-base font-semibold leading-7 text-cream/[.62]">
-            Each day starts with the same twelve fragments. Every person makes a different card;
+            Each day starts with a shared palette sized to the crew. Every person makes a different card;
             tomorrow the names disappear and the crew chooses what lands.
           </p>
         </header>

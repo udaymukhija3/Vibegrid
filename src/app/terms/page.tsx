@@ -16,6 +16,7 @@ export default function TermsPage() {
           title: "Using VibeGrid",
           body: [
             "You can use the public practice round or create and join private crews. Do not interfere with the service, bypass rate limits, scrape aggressively, or use the app to target or harm another person.",
+            "The public daily and Unlimited practice ballots use clearly labeled house cards to demonstrate the loop. They are fixtures, not claims about real players or live community activity. Unlimited deals may eventually repeat finite curated source material.",
             "A crew invite is a capability link: anyone who has it may ask to join until the owner rotates it. Share it only with people you intend to invite."
           ]
         },

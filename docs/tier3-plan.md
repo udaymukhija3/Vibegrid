@@ -7,9 +7,9 @@ admin tooling. That plan is no longer active.
 The valuable outcomes have been reinterpreted for the new product:
 
 - a static raster social card exists at `public/og.png`;
-- the 3×4 fragment palette replaces the solved 4×4 brand silhouette;
+- a crew-sized four-column fragment stack replaces the solved-colour silhouette;
 - the deterministic curated board bank prevents an empty day;
-- `/admin` freezes prompts and twelve fragments, not four answer groups;
+- `/admin` freezes prompts and 28 ordered fragments, not four answer groups;
 - private crew and legacy links stay out of the sitemap;
 - `scripts/smoke.mjs` verifies the new board and replay contract.
 

@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif; }
+    a { color: oklch(0.84 0.18 128); } a:hover { color: oklch(0.9 0.16 128); }
+  </style>
+</helmet>
+<div style="width: 1200px; height: 630px; background: oklch(0.19 0.028 265); color: oklch(0.96 0.012 85); padding: 62px 68px; display: flex; align-items: center; justify-content: space-between; gap: 60px; box-sizing: border-box;">
+
+  <div style="display: flex; flex-direction: column; gap: 30px; min-width: 0;">
+    <div style="display: flex; align-items: baseline; gap: 16px;">
+      <span style="font-weight: 800; font-size: 40px; letter-spacing: -0.04em; line-height: 1;">VibeGrid</span>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 500; color: oklch(0.84 0.18 128); letter-spacing: 0.05em;">NO. 047</span>
+    </div>
+    <div style="font-weight: 800; font-size: 76px; line-height: 0.98; letter-spacing: -0.045em;">Group the words.<br>Guess the vibe.</div>
+    <div style="font-size: 26px; font-weight: 500; line-height: 1.4; color: oklch(0.76 0.025 265); max-width: 560px;">Sixteen words hide four moods. Four mistakes allowed. A new grid every day.</div>
+    <div style="display: flex; align-items: center; gap: 14px; padding-top: 6px;">
+      <div style="background: oklch(0.84 0.18 128); color: oklch(0.17 0.06 128); border-radius: 12px; padding: 14px 26px; font-weight: 800; font-size: 22px; letter-spacing: -0.01em;">vibegrid.app</div>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 17px; color: oklch(0.62 0.03 265);">no signup</span>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, 92px); gap: 11px; flex-shrink: 0;">
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.84 0.18 128); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.80 0.15 75); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.52 0.16 300); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.62 0.19 25); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.84 0.18 128); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+    <div style="width: 92px; height: 92px; border-radius: 16px; background: oklch(0.96 0.012 85); box-shadow: 6px 6px 0 oklch(0.11 0.02 265);"></div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

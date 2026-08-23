@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -70,7 +71,31 @@ func (server *Server) handleTodayVibeBoard(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "Could not load today's fragments.")
 		return
 	}
+	// Practice is intentionally 4x4. A legacy persisted 12-fragment board is
+	// extended in-memory from the canonical bank; durable crew history remains
+	// untouched and continues to use its original frozen palette.
+	board = practiceVibeBoard(board)
 	w.Header().Set("Cache-Control", server.dailyCacheControl())
+	writeJSON(w, http.StatusOK, board)
+}
+
+func (server *Server) handleUnlimitedVibeBoard(w http.ResponseWriter, r *http.Request) {
+	if !server.allowPuzzleRead(w, r) {
+		return
+	}
+	sequence, err := strconv.ParseUint(r.PathValue("sequence"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Practice board not found.")
+		return
+	}
+	board, err := UnlimitedVibeBoard(sequence)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not deal another board.")
+		return
+	}
+	// A sequence always maps to the same local-practice deal. It contains no
+	// identity or crew state and is safe for shared immutable caching.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	writeJSON(w, http.StatusOK, board)
 }
 
@@ -115,6 +140,23 @@ func (server *Server) handleCrewDaily(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not load this crew's daily.")
 		return
 	}
+	if snapshotHasSession(snapshot, sessionID) {
+		today, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, today)
+		if err == nil {
+			judge, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, judge)
+		}
+		if err == nil {
+			result, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, result)
+		}
+		if err != nil {
+			writeVibeRoundError(w, err)
+			return
+		}
+	} else {
+		// Invite previews may reflect the current room size, but only a member can
+		// freeze it. Joining and the ensuing member refresh perform the freeze.
+		today = projectVibeBoardForMembers(today, len(snapshot.Members))
+	}
 	response := buildVibeCrewDaily(crew, sessionID, today, judge, result, snapshot)
 	if response.IsMember {
 		response.CrewStreak, err = server.vibeRounds.CrewStreak(r.Context(), crew.ID, result.PublishDate)
@@ -139,6 +181,11 @@ func (server *Server) handleSubmitVibe(w http.ResponseWriter, r *http.Request) {
 	board, err := server.vibeBoardForDate(r.Context(), server.todayString())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load today's fragments.")
+		return
+	}
+	board, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, board)
+	if err != nil {
+		writeVibeRoundError(w, err)
 		return
 	}
 	request.Title, err = normalizeVibeTitle(request.Title)
@@ -224,6 +271,22 @@ func (server *Server) vibeBoardForDate(ctx context.Context, date string) (VibeBo
 	return server.vibeRounds.EnsureBoard(ctx, board)
 }
 
+func practiceVibeBoard(stored VibeBoard) VibeBoard {
+	if len(stored.Tiles) >= VibePracticeTileCount {
+		return projectVibeBoard(stored, VibePracticeTileCount)
+	}
+	canonical, err := VibeBoardForDate(stored.PublishDate)
+	if err != nil || canonical.ID != stored.ID || len(canonical.Tiles) < VibePracticeTileCount {
+		return stored
+	}
+	for index := range stored.Tiles {
+		if stored.Tiles[index] != canonical.Tiles[index] {
+			return stored
+		}
+	}
+	return projectVibeBoard(canonical, VibePracticeTileCount)
+}
+
 func (server *Server) vibeRoundDates() (today, judge, result string) {
 	location, err := time.LoadLocation(server.timeZone)
 	if err != nil {
@@ -284,6 +347,15 @@ func buildVibeCrewDaily(crew Crew, sessionID string, today, judge, result VibeBo
 	response.Judge = buildJudgeView(judge, currentMember.MemberID, judgeSubmissions, votesForBoard(snapshot.Votes, judge.ID))
 	response.Result = buildResultView(result, currentMember.MemberID, resultSubmissions, votesForBoard(snapshot.Votes, result.ID))
 	return response
+}
+
+func snapshotHasSession(snapshot VibeCrewSnapshot, sessionID string) bool {
+	for _, member := range snapshot.Members {
+		if member.SessionID == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 func buildJudgeView(board VibeBoard, currentMemberID string, submissions []VibeSubmission, votes []VibeVote) *vibeJudgeView {
@@ -396,11 +468,15 @@ func votesForBoard(votes []VibeVote, boardID string) []VibeVote {
 }
 
 func validateVibeSelection(board VibeBoard, selected []string) bool {
+	return validateVibeTileIDs(board.Tiles, selected)
+}
+
+func validateVibeTileIDs(tiles []Tile, selected []string) bool {
 	if len(selected) != VibeCardTileCount {
 		return false
 	}
-	available := make(map[string]struct{}, len(board.Tiles))
-	for _, tile := range board.Tiles {
+	available := make(map[string]struct{}, len(tiles))
+	for _, tile := range tiles {
 		available[tile.ID] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(selected))

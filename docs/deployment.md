@@ -156,9 +156,14 @@ only when the environment explicitly has no database; production must not skip.
 Manual checklist:
 
 - `/` completes make → house judge → practice reveal on 320px and desktop.
-- `/api/vibes/today` returns one prompt, 12 unique `{id,text}` fragments, UTC
+- `/api/vibes/today` returns one prompt, 16 unique `{id,text}` fragments in a
+  4×4 practice projection, UTC
   date, and no groups/answers/difficulty/mistake fields.
+- `/api/vibes/practice/0` and `/api/vibes/practice/12` return distinct,
+  deterministic 4×4 Unlimited deals with immutable public cache headers.
 - Create a crew, join from two isolated browser profiles, and submit three cards.
+- With 4 members verify 3×4; join a fifth before a new dated board opens and
+  verify 4×4; join again after open and verify the frozen count does not change.
 - Use backdated fixtures or a test clock to verify blind authors on judge and
   named authors/ties/quiet labels on reveal.
 - Rotate invite: old link fails for a newcomer; existing member access remains.

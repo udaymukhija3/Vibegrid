@@ -20,7 +20,7 @@ VIBEGRID_BASE_URL=https://vibegrid.onrender.com npm run smoke:deploy
 ```
 
 Also spot-check `https://vibegrid.onrender.com/api/vibes/today` returns one
-prompt and exactly twelve fragments, then run the mutating smoke against a
+prompt and exactly 16 fragments in four columns, then run the mutating smoke against a
 database-backed environment to prove card replay.
 
 ## Rollback
@@ -34,4 +34,13 @@ After either, re-run the smoke check above.
 
 ## Migration policy (what makes rollback safe)
 
-Migrations are goose, forward-only, and must stay **additive** (new tables/columns/indexes only — never drop or rename something the previous release reads). That way old code always runs against new schema, and a code rollback never needs a schema rollback. If a destructive migration is ever unavoidable, take a manual backup first (run the **backup** workflow via workflow_dispatch) and split it across two releases: release N stops using the object, release N+1 drops it.
+Migrations are goose, forward-only, and must stay **additive** (new
+tables/columns/indexes only—never drop or rename something the previous release
+reads). Migration `00019` follows that rule: the original 12 fragments remain in
+`vibe_daily_boards`, while expansions and crew-size snapshots live in new
+tables. The prior binary can boot against the migrated schema. However, once a
+card selects an expansion fragment, rolling back would render that fragment
+without text in the old UI; use a roll-forward unless the database is confirmed
+to contain no such cards. If a destructive migration is ever unavoidable, take
+a manual backup first and split it across two releases: release N stops using
+the object, release N+1 drops it.

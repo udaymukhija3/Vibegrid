@@ -16,7 +16,7 @@ export default function PrivacyPage() {
           title: "Browser identity",
           body: [
             "VibeGrid does not require a public account. An HttpOnly guest session cookie identifies one browser so it can create or join crews and return to its own cards and votes.",
-            "The public practice round runs in the browser and is not submitted to the server."
+            "Daily and Unlimited practice boards are fetched from the public service, but your practice selections, titles, and tutorial votes stay in the browser and are not submitted. The browser also remembers that its first-visit introduction was dismissed; that preference contains no card or crew content."
           ]
         },
         {

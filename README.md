@@ -6,9 +6,10 @@
 
 <p align="center"><strong>Make the vibe. Let the crew decide.</strong></p>
 
-VibeGrid is a daily asynchronous social game. Everyone receives the same prompt
-and twelve human-written fragments. Each person chooses four, gives the
-combination a title, and submits one “vibe card” to a private crew. The next day,
+VibeGrid is a daily asynchronous social game. Everyone in a crew receives the
+same four-column palette, sized from 3–7 rows when that dated round first opens.
+Each person chooses four, gives the combination a title, and submits one “vibe
+card” to a private crew. The next day,
 people who played judge the cards without seeing the authors. The day after that,
 the result reveals who made what.
 
@@ -19,15 +20,23 @@ the room—is the product.
 
 ```text
 DAY D · MAKE                 DAY D+1 · JUDGE             DAY D+2 · REVEAL
-12 shared fragments   ───▶  authors hidden        ───▶  author + votes shown
+3–7 rows, 4 columns   ───▶  authors hidden        ───▶  author + votes shown
 pick exactly 4              one non-self vote           ties stay ties
 write one title             makers only can vote        ≥3 cards + ≥2 votes = official
 ```
 
 - The daily board is a creative constraint, not a puzzle with a concealed
   partition.
-- A private crew is the primary product. The public homepage is a complete
-  practice round that teaches the make → judge → reveal loop without signup.
+- 1–4 members receive 12 fragments; each additional four-person band adds one
+  row, up to 28 at the 20-member cap. The crew/date size freezes on first member
+  open, so membership changes cannot rewrite an active round. Public practice is
+  deliberately 4×4.
+- A private crew is the primary product. The public homepage opens directly on
+  a complete practice round; a dismissible first-visit dialog teaches the make
+  → judge → reveal loop without becoming a signup or landing-page gate.
+- Unlimited practice deals another local 4×4 round on demand. It has no score,
+  timer, lives, persistence, or effect on the daily crew loop; finite curated
+  master palettes eventually cycle rather than masquerading as new editorial.
 - Submission and vote authorship are enforced inside database transactions.
 - A member sees only their own card during the make phase. Eligible judges see
   cards without authors. Results reveal authors to current crew members.
@@ -67,7 +76,8 @@ created this distinction. The mechanic had to change.
 
 ### Product and UI
 
-- A complete browser-only public practice round.
+- Complete browser-only daily and Unlimited practice rounds; the server deals
+  deterministic cacheable palettes, while authored practice state stays local.
 - Private crew creation, join links, rotatable invites, owner removal, leaving,
   and ownership transfer.
 - Staged make, blind judge, and reveal surfaces with a 30-second visible-tab
@@ -76,9 +86,9 @@ created this distinction. The mechanic had to change.
   directions: deep-ink ground, cream physical cards, hard offset shadows,
   Bricolage Grotesque, IBM Plex Mono, and a restrained lime/amber/coral/violet
   palette.
-- A raster 1200×630 social card plus a new 12-fragment brand mark.
-- An authenticated board room for freezing one prompt and twelve unique
-  fragments for a future date.
+- A raster 1200×630 social card plus a new fragment-stack brand mark.
+- An authenticated board room for freezing one prompt and 28 unique fragments
+  for a future date, including material for every crew-size breakpoint.
 
 ### Correctness and security
 
@@ -127,7 +137,8 @@ Go HTTP binary
           │
           ▼
 Postgres
-  ├─ vibe_daily_boards
+	├─ vibe_daily_boards
+	├─ vibe_board_expansions / vibe_crew_boards
   ├─ vibe_submissions
   ├─ vibe_votes
   ├─ crews / crew_members
@@ -136,14 +147,16 @@ Postgres
 
 Important implementation entry points:
 
-- `backend/internal/vibegrid/vibe_boards.go` — deterministic fallback board bank
-  and strict 12-fragment validation.
+- `backend/internal/vibegrid/vibe_boards.go` — deterministic 28-fragment fallback
+  masters, row-band formula, projection, and validation.
 - `backend/internal/vibegrid/vibe_rounds.go` — transactional store and replay
   rules.
 - `backend/internal/vibegrid/vibe_round_handlers.go` — stage projection and
   privacy boundary.
 - `backend/internal/vibegrid/vibe_board_admin.go` — immutable dated authoring.
 - `backend/db/migrations/00018_vibe_rounds.sql` — durable schema and constraints.
+- `backend/db/migrations/00019_variable_vibe_boards.sql` — additive master
+  expansion plus immutable per-crew size snapshots.
 - `src/components/VibeGridApp.tsx` — public practice loop.
 - `src/components/CrewRoom.tsx` — make, judge, result, membership, and invite UX.
 - `src/components/VibeComposer.tsx` and `VibeCard.tsx` — core interaction atoms.
@@ -188,6 +201,7 @@ See [`.env.example`](.env.example) for runtime configuration.
 Primary APIs:
 
 - `GET /api/vibes/today`
+- `GET /api/vibes/practice/<sequence>`
 - `GET /api/crews/<invite>/daily`
 - `POST /api/crews/<invite>/submissions`
 - `POST /api/crews/<invite>/votes`

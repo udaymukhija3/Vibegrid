@@ -87,6 +87,7 @@ type VibeCrewSnapshot struct {
 // a check-then-write authorization sequence.
 type VibeRoundStore interface {
 	EnsureBoard(ctx context.Context, board VibeBoard) (VibeBoard, error)
+	EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error)
 	CrewSnapshot(ctx context.Context, crewID string, boardIDs []string) (VibeCrewSnapshot, error)
 	SubmitVibe(ctx context.Context, crewID, sessionID string, request VibeSubmissionRequest, now time.Time) (VibeSubmission, error)
 	CastVibeVote(ctx context.Context, crewID, sessionID string, request VibeVoteRequest, now time.Time) (VibeVote, error)
@@ -117,9 +118,11 @@ func (store *PostgresVibeRoundStore) ListVibeBoards(ctx context.Context, limit i
 	defer cancel()
 
 	rows, err := store.db.QueryContext(ctx,
-		`select id, board_number, publish_date::text, prompt, tiles
-		 from vibe_daily_boards
-		 order by publish_date desc
+		`select b.id, b.board_number, b.publish_date::text, b.prompt, b.tiles,
+		        coalesce(e.tiles, '[]'::jsonb)
+		 from vibe_daily_boards b
+		 left join vibe_board_expansions e on e.board_id = b.id
+		 order by b.publish_date desc
 		 limit $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list vibe boards: %w", err)
@@ -129,14 +132,11 @@ func (store *PostgresVibeRoundStore) ListVibeBoards(ctx context.Context, limit i
 	boards := make([]VibeBoard, 0)
 	for rows.Next() {
 		var board VibeBoard
-		var tiles []byte
-		if err := rows.Scan(&board.ID, &board.BoardNumber, &board.PublishDate, &board.Prompt, &tiles); err != nil {
+		var baseTiles, expansionTiles []byte
+		if err := rows.Scan(&board.ID, &board.BoardNumber, &board.PublishDate, &board.Prompt, &baseTiles, &expansionTiles); err != nil {
 			return nil, fmt.Errorf("scan vibe board: %w", err)
 		}
-		if err := json.Unmarshal(tiles, &board.Tiles); err != nil {
-			return nil, fmt.Errorf("decode vibe board: %w", err)
-		}
-		if err := validateVibeBoard(board); err != nil {
+		if err := decodeStoredVibeBoard(&board, baseTiles, expansionTiles); err != nil {
 			return nil, fmt.Errorf("stored vibe board: %w", err)
 		}
 		boards = append(boards, board)
@@ -151,23 +151,40 @@ func (store *PostgresVibeRoundStore) CreateVibeBoard(ctx context.Context, board 
 	if err := validateVibeBoard(board); err != nil {
 		return VibeBoard{}, err
 	}
+	if len(board.Tiles) != VibeBoardMaxTileCount {
+		return VibeBoard{}, ErrVibeBoardInvalid
+	}
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	tiles, err := json.Marshal(board.Tiles)
+	baseTiles, expansionTiles, err := marshalStoredVibeBoard(board)
 	if err != nil {
 		return VibeBoard{}, fmt.Errorf("marshal vibe board: %w", err)
 	}
-	if _, err := store.db.ExecContext(ctx,
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return VibeBoard{}, fmt.Errorf("begin create vibe board: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
 		`insert into vibe_daily_boards (id, publish_date, board_number, prompt, tiles)
 		 values ($1, $2, $3, $4, $5)`,
-		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(tiles),
+		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(baseTiles),
 	); err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
 			return VibeBoard{}, ErrVibeBoardExists
 		}
 		return VibeBoard{}, fmt.Errorf("create vibe board: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`insert into vibe_board_expansions (board_id, tiles) values ($1, $2)`,
+		board.ID, string(expansionTiles),
+	); err != nil {
+		return VibeBoard{}, fmt.Errorf("create vibe board expansion: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return VibeBoard{}, fmt.Errorf("commit create vibe board: %w", err)
 	}
 	return board, nil
 }
@@ -179,34 +196,125 @@ func (store *PostgresVibeRoundStore) EnsureBoard(ctx context.Context, board Vibe
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	tiles, err := json.Marshal(board.Tiles)
+	baseTiles, expansionTiles, err := marshalStoredVibeBoard(board)
 	if err != nil {
 		return VibeBoard{}, fmt.Errorf("marshal vibe board: %w", err)
 	}
-	if _, err := store.db.ExecContext(ctx,
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return VibeBoard{}, fmt.Errorf("begin persist vibe board: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx,
 		`insert into vibe_daily_boards (id, publish_date, board_number, prompt, tiles)
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (publish_date) do nothing`,
-		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(tiles),
-	); err != nil {
+		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(baseTiles),
+	)
+	if err != nil {
 		return VibeBoard{}, fmt.Errorf("persist vibe board: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return VibeBoard{}, fmt.Errorf("inspect persisted vibe board: %w", err)
+	}
+	if inserted == 1 && len(expansionTiles) > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`insert into vibe_board_expansions (board_id, tiles) values ($1, $2)`,
+			board.ID, string(expansionTiles),
+		); err != nil {
+			return VibeBoard{}, fmt.Errorf("persist vibe board expansion: %w", err)
+		}
 	}
 
 	var stored VibeBoard
-	var storedTiles []byte
-	if err := store.db.QueryRowContext(ctx,
-		`select id, board_number, publish_date::text, prompt, tiles
-		 from vibe_daily_boards where publish_date = $1`, board.PublishDate,
-	).Scan(&stored.ID, &stored.BoardNumber, &stored.PublishDate, &stored.Prompt, &storedTiles); err != nil {
+	var storedBaseTiles, storedExpansionTiles []byte
+	if err := tx.QueryRowContext(ctx,
+		`select b.id, b.board_number, b.publish_date::text, b.prompt, b.tiles,
+		        coalesce(e.tiles, '[]'::jsonb)
+		 from vibe_daily_boards b
+		 left join vibe_board_expansions e on e.board_id = b.id
+		 where b.publish_date = $1`, board.PublishDate,
+	).Scan(&stored.ID, &stored.BoardNumber, &stored.PublishDate, &stored.Prompt, &storedBaseTiles, &storedExpansionTiles); err != nil {
 		return VibeBoard{}, fmt.Errorf("load vibe board: %w", err)
 	}
-	if err := json.Unmarshal(storedTiles, &stored.Tiles); err != nil {
-		return VibeBoard{}, fmt.Errorf("decode vibe board: %w", err)
-	}
-	if err := validateVibeBoard(stored); err != nil {
+	if err := decodeStoredVibeBoard(&stored, storedBaseTiles, storedExpansionTiles); err != nil {
 		return VibeBoard{}, fmt.Errorf("stored vibe board: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return VibeBoard{}, fmt.Errorf("commit persist vibe board: %w", err)
+	}
 	return stored, nil
+}
+
+// EnsureCrewBoard freezes one crew's palette size for one dated board. The
+// crew row lock is shared with joins and leaves, which gives membership changes
+// and first-open sizing one deterministic order. The unique key makes two
+// members opening at once converge on the same snapshot.
+func (store *PostgresVibeRoundStore) EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error) {
+	if err := validateVibeBoard(board); err != nil {
+		return VibeBoard{}, err
+	}
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return VibeBoard{}, fmt.Errorf("begin crew board freeze: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var lockedCrewID string
+	if err := tx.QueryRowContext(ctx,
+		`select id from crews where id = $1 for update`, crewID,
+	).Scan(&lockedCrewID); errors.Is(err, sql.ErrNoRows) {
+		return VibeBoard{}, ErrCrewNotFound
+	} else if err != nil {
+		return VibeBoard{}, fmt.Errorf("lock crew for board freeze: %w", err)
+	}
+
+	var memberCount int
+	if err := tx.QueryRowContext(ctx,
+		`select count(*) from crew_members where crew_id = $1 and session_id = $2`,
+		crewID, sessionID,
+	).Scan(&memberCount); err != nil {
+		return VibeBoard{}, fmt.Errorf("authorize crew board freeze: %w", err)
+	}
+	if memberCount != 1 {
+		return VibeBoard{}, ErrNotCrewMember
+	}
+	if err := tx.QueryRowContext(ctx,
+		`select count(*) from crew_members where crew_id = $1`, crewID,
+	).Scan(&memberCount); err != nil {
+		return VibeBoard{}, fmt.Errorf("count crew for board freeze: %w", err)
+	}
+
+	tileCount := vibeBoardRowsForMembers(memberCount) * VibeBoardColumns
+	if tileCount > len(board.Tiles) {
+		tileCount = len(board.Tiles) - len(board.Tiles)%VibeBoardColumns
+	}
+	if _, err := tx.ExecContext(ctx,
+		`insert into vibe_crew_boards (crew_id, board_id, member_count_snapshot, tile_count)
+		 values ($1, $2, $3, $4)
+		 on conflict (crew_id, board_id) do nothing`,
+		crewID, board.ID, memberCount, tileCount,
+	); err != nil {
+		return VibeBoard{}, fmt.Errorf("freeze crew board: %w", err)
+	}
+
+	if err := tx.QueryRowContext(ctx,
+		`select tile_count from vibe_crew_boards where crew_id = $1 and board_id = $2`,
+		crewID, board.ID,
+	).Scan(&tileCount); err != nil {
+		return VibeBoard{}, fmt.Errorf("load frozen crew board: %w", err)
+	}
+	if !validVibeBoardTileCount(tileCount) || tileCount > len(board.Tiles) {
+		return VibeBoard{}, fmt.Errorf("frozen crew board: %w", ErrVibeBoardInvalid)
+	}
+	if err := tx.Commit(); err != nil {
+		return VibeBoard{}, fmt.Errorf("commit crew board freeze: %w", err)
+	}
+	return projectVibeBoard(board, tileCount), nil
 }
 
 func (store *PostgresVibeRoundStore) CrewSnapshot(ctx context.Context, crewID string, boardIDs []string) (VibeCrewSnapshot, error) {
@@ -298,7 +406,7 @@ func (store *PostgresVibeRoundStore) SubmitVibe(ctx context.Context, crewID, ses
 	if replayed, ok, err := loadSubmissionByReplayKey(ctx, tx, crewID, memberID, request.ClientSubmissionID); err != nil {
 		return VibeSubmission{}, err
 	} else if ok {
-		if replayed.BoardID != request.BoardID || replayed.Title != request.Title || !slices.Equal(replayed.SelectedTileIDs, request.SelectedTileIDs) {
+		if !submissionMatchesRequest(replayed, request) {
 			return VibeSubmission{}, ErrVibeReplayConflict
 		}
 		return replayed, nil
@@ -314,7 +422,24 @@ func (store *PostgresVibeRoundStore) SubmitVibe(ctx context.Context, crewID, ses
 		return VibeSubmission{}, fmt.Errorf("check existing vibe submission: %w", err)
 	}
 	if exists {
+		// The original request may have committed between the replay lookup and
+		// this statement. Re-read the key before reporting a distinct-action
+		// conflict so an overlapping network retry still receives the winner.
+		if replayed, ok, err := loadSubmissionByReplayKey(ctx, tx, crewID, memberID, request.ClientSubmissionID); err != nil {
+			return VibeSubmission{}, err
+		} else if ok {
+			if !submissionMatchesRequest(replayed, request) {
+				return VibeSubmission{}, ErrVibeReplayConflict
+			}
+			return replayed, nil
+		}
 		return VibeSubmission{}, ErrVibeAlreadySubmitted
+	}
+
+	if valid, err := frozenCrewBoardContainsSelection(ctx, tx, crewID, request.BoardID, request.SelectedTileIDs); err != nil {
+		return VibeSubmission{}, err
+	} else if !valid {
+		return VibeSubmission{}, ErrVibeRequestInvalid
 	}
 
 	submission := VibeSubmission{
@@ -339,9 +464,27 @@ func (store *PostgresVibeRoundStore) SubmitVibe(ctx context.Context, crewID, ses
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) {
 			switch postgresError.ConstraintName {
-			case "vibe_submissions_one_card":
-				return VibeSubmission{}, ErrVibeAlreadySubmitted
-			case "vibe_submissions_replay_key":
+			case "vibe_submissions_one_card", "vibe_submissions_replay_key":
+				// The insert may have waited for an identical request in another
+				// transaction to commit. PostgreSQL aborts this transaction after
+				// the uniqueness error, so release it and read the winner on a fresh
+				// connection before deciding whether this is a replay or a conflict.
+				if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+					return VibeSubmission{}, fmt.Errorf("rollback raced vibe submission: %w", rollbackErr)
+				}
+				replayed, ok, replayErr := loadSubmissionByReplayKey(ctx, store.db, crewID, memberID, request.ClientSubmissionID)
+				if replayErr != nil {
+					return VibeSubmission{}, replayErr
+				}
+				if ok {
+					if !submissionMatchesRequest(replayed, request) {
+						return VibeSubmission{}, ErrVibeReplayConflict
+					}
+					return replayed, nil
+				}
+				if postgresError.ConstraintName == "vibe_submissions_one_card" {
+					return VibeSubmission{}, ErrVibeAlreadySubmitted
+				}
 				return VibeSubmission{}, ErrVibeReplayConflict
 			}
 		}
@@ -373,21 +516,13 @@ func (store *PostgresVibeRoundStore) CastVibeVote(ctx context.Context, crewID, s
 		return VibeVote{}, fmt.Errorf("authorize vibe vote: %w", err)
 	}
 
-	var replayed VibeVote
-	err = tx.QueryRowContext(ctx,
-		`select id, crew_id, board_id, voter_member_id, submission_id, client_vote_id, created_at
-		 from vibe_votes
-		 where crew_id = $1 and voter_member_id = $2 and client_vote_id = $3`,
-		crewID, voterMemberID, request.ClientVoteID,
-	).Scan(&replayed.ID, &replayed.CrewID, &replayed.BoardID, &replayed.VoterMemberID, &replayed.SubmissionID, &replayed.ClientVoteID, &replayed.CreatedAt)
-	if err == nil {
-		if replayed.BoardID != request.BoardID || replayed.SubmissionID != request.SubmissionID {
+	if replayed, ok, err := loadVoteByReplayKey(ctx, tx, crewID, voterMemberID, request.ClientVoteID); err != nil {
+		return VibeVote{}, err
+	} else if ok {
+		if !voteMatchesRequest(replayed, request) {
 			return VibeVote{}, ErrVibeReplayConflict
 		}
 		return replayed, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return VibeVote{}, fmt.Errorf("load replayed vibe vote: %w", err)
 	}
 
 	var ownSubmissionID string
@@ -425,6 +560,14 @@ func (store *PostgresVibeRoundStore) CastVibeVote(ctx context.Context, crewID, s
 		return VibeVote{}, fmt.Errorf("check existing vibe vote: %w", err)
 	}
 	if alreadyVoted {
+		if replayed, ok, err := loadVoteByReplayKey(ctx, tx, crewID, voterMemberID, request.ClientVoteID); err != nil {
+			return VibeVote{}, err
+		} else if ok {
+			if !voteMatchesRequest(replayed, request) {
+				return VibeVote{}, ErrVibeReplayConflict
+			}
+			return replayed, nil
+		}
 		return VibeVote{}, ErrVibeAlreadyVoted
 	}
 
@@ -446,9 +589,23 @@ func (store *PostgresVibeRoundStore) CastVibeVote(ctx context.Context, crewID, s
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) {
 			switch postgresError.ConstraintName {
-			case "vibe_votes_one_ballot":
-				return VibeVote{}, ErrVibeAlreadyVoted
-			case "vibe_votes_replay_key":
+			case "vibe_votes_one_ballot", "vibe_votes_replay_key":
+				if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+					return VibeVote{}, fmt.Errorf("rollback raced vibe vote: %w", rollbackErr)
+				}
+				replayed, ok, replayErr := loadVoteByReplayKey(ctx, store.db, crewID, voterMemberID, request.ClientVoteID)
+				if replayErr != nil {
+					return VibeVote{}, replayErr
+				}
+				if ok {
+					if !voteMatchesRequest(replayed, request) {
+						return VibeVote{}, ErrVibeReplayConflict
+					}
+					return replayed, nil
+				}
+				if postgresError.ConstraintName == "vibe_votes_one_ballot" {
+					return VibeVote{}, ErrVibeAlreadyVoted
+				}
 				return VibeVote{}, ErrVibeReplayConflict
 			}
 		}
@@ -510,6 +667,72 @@ type submissionScanner interface {
 	Scan(dest ...any) error
 }
 
+type vibeQueryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func frozenCrewBoardContainsSelection(ctx context.Context, queryer vibeQueryer, crewID, boardID string, selected []string) (bool, error) {
+	var rawBaseTiles, rawExpansionTiles []byte
+	var tileCount int
+	if err := queryer.QueryRowContext(ctx,
+		`select b.tiles, coalesce(e.tiles, '[]'::jsonb), cb.tile_count
+		 from vibe_crew_boards cb
+		 join vibe_daily_boards b on b.id = cb.board_id
+		 left join vibe_board_expansions e on e.board_id = b.id
+		 where cb.crew_id = $1 and cb.board_id = $2`,
+		crewID, boardID,
+	).Scan(&rawBaseTiles, &rawExpansionTiles, &tileCount); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("load frozen crew board selection: %w", err)
+	}
+	var baseTiles, expansionTiles []Tile
+	if err := json.Unmarshal(rawBaseTiles, &baseTiles); err != nil {
+		return false, fmt.Errorf("decode frozen crew board selection: %w", err)
+	}
+	if err := json.Unmarshal(rawExpansionTiles, &expansionTiles); err != nil {
+		return false, fmt.Errorf("decode frozen crew board expansion selection: %w", err)
+	}
+	tiles := append(baseTiles, expansionTiles...)
+	if !validVibeBoardTileCount(tileCount) || tileCount > len(tiles) {
+		return false, fmt.Errorf("frozen crew board selection: %w", ErrVibeBoardInvalid)
+	}
+	return validateVibeTileIDs(tiles[:tileCount], selected), nil
+}
+
+func marshalStoredVibeBoard(board VibeBoard) ([]byte, []byte, error) {
+	if len(board.Tiles) != VibeBoardMinTileCount && len(board.Tiles) != VibeBoardMaxTileCount {
+		return nil, nil, ErrVibeBoardInvalid
+	}
+	baseTiles, err := json.Marshal(board.Tiles[:VibeBoardMinTileCount])
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(board.Tiles) == VibeBoardMinTileCount {
+		return baseTiles, nil, nil
+	}
+	expansionTiles, err := json.Marshal(board.Tiles[VibeBoardMinTileCount:])
+	if err != nil {
+		return nil, nil, err
+	}
+	return baseTiles, expansionTiles, nil
+}
+
+func decodeStoredVibeBoard(board *VibeBoard, rawBaseTiles, rawExpansionTiles []byte) error {
+	var baseTiles, expansionTiles []Tile
+	if err := json.Unmarshal(rawBaseTiles, &baseTiles); err != nil {
+		return fmt.Errorf("decode base tiles: %w", err)
+	}
+	if err := json.Unmarshal(rawExpansionTiles, &expansionTiles); err != nil {
+		return fmt.Errorf("decode expansion tiles: %w", err)
+	}
+	if len(baseTiles) != VibeBoardMinTileCount || (len(expansionTiles) != 0 && len(expansionTiles) != VibeBoardMaxTileCount-VibeBoardMinTileCount) {
+		return ErrVibeBoardInvalid
+	}
+	board.Tiles = append(baseTiles, expansionTiles...)
+	return validateVibeBoard(*board)
+}
+
 func scanVibeSubmission(scanner submissionScanner, submission *VibeSubmission) error {
 	if err := scanner.Scan(
 		&submission.ID, &submission.CrewID, &submission.BoardID, &submission.MemberID,
@@ -521,9 +744,9 @@ func scanVibeSubmission(scanner submissionScanner, submission *VibeSubmission) e
 	return nil
 }
 
-func loadSubmissionByReplayKey(ctx context.Context, tx *sql.Tx, crewID, memberID, clientID string) (VibeSubmission, bool, error) {
+func loadSubmissionByReplayKey(ctx context.Context, queryer vibeQueryer, crewID, memberID, clientID string) (VibeSubmission, bool, error) {
 	var submission VibeSubmission
-	err := scanVibeSubmission(tx.QueryRowContext(ctx,
+	err := scanVibeSubmission(queryer.QueryRowContext(ctx,
 		`select id, crew_id, board_id, submitted_by_member, display_name, title,
 		        selected_tile_ids, client_submission_id, created_at
 		 from vibe_submissions
@@ -537,6 +760,32 @@ func loadSubmissionByReplayKey(ctx context.Context, tx *sql.Tx, crewID, memberID
 		return VibeSubmission{}, false, fmt.Errorf("load replayed vibe submission: %w", err)
 	}
 	return submission, true, nil
+}
+
+func loadVoteByReplayKey(ctx context.Context, queryer vibeQueryer, crewID, memberID, clientID string) (VibeVote, bool, error) {
+	var vote VibeVote
+	err := queryer.QueryRowContext(ctx,
+		`select id, crew_id, board_id, voter_member_id, submission_id, client_vote_id, created_at
+		 from vibe_votes
+		 where crew_id = $1 and voter_member_id = $2 and client_vote_id = $3`,
+		crewID, memberID, clientID,
+	).Scan(&vote.ID, &vote.CrewID, &vote.BoardID, &vote.VoterMemberID, &vote.SubmissionID, &vote.ClientVoteID, &vote.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return VibeVote{}, false, nil
+	}
+	if err != nil {
+		return VibeVote{}, false, fmt.Errorf("load replayed vibe vote: %w", err)
+	}
+	return vote, true, nil
+}
+
+func submissionMatchesRequest(submission VibeSubmission, request VibeSubmissionRequest) bool {
+	return submission.BoardID == request.BoardID && submission.Title == request.Title &&
+		slices.Equal(submission.SelectedTileIDs, request.SelectedTileIDs)
+}
+
+func voteMatchesRequest(vote VibeVote, request VibeVoteRequest) bool {
+	return vote.BoardID == request.BoardID && vote.SubmissionID == request.SubmissionID
 }
 
 func normalizeVibeTitle(raw string) (string, error) {

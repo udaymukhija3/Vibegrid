@@ -1,6 +1,6 @@
 # VibeGrid recruiter evidence map
 
-**Updated:** 21 August 2026
+**Updated:** 23 August 2026
 **Read with:** [`product-vision.md`](product-vision.md) and
 [`production-readiness.md`](production-readiness.md)
 
@@ -29,9 +29,11 @@ Status meanings:
 | Capability | Product reason | Code evidence | Verification | Status | Honest next proof |
 | --- | --- | --- | --- | --- | --- |
 | Differentiated product contract | Avoid shipping a clone with cosmetic novelty | `docs/product-vision.md`, public/crew UI, legacy boundary | Active routes no longer expose solve mechanics; smoke checks new board shape | **PROVEN** | Controlled-beta behavior, not more features |
+| Honest Unlimited sandbox | Repeat play should teach authorship without counterfeiting social activity or daily editorial | deterministic coherent-master deals, local make/judge/reveal state, explicit mode boundary | max-sequence/determinism plus in-process HTTP/cache tests; runtime schema; release smoke assertion checked in | **CREDIBLE** | Rerun embedded E2E, then measure whether it helps completion or cannibalizes crew creation |
 | Immutable daily constraint | Every crew must interpret the same historical palette | `vibe_boards.go`, `vibe_rounds.go`, `vibe_daily_boards` | Deterministic/validation tests; strict dated insert | **PROVEN** | UTC rollover soak on deployed DB |
-| Transactional authorship | One member cannot race two cards into a round | `SubmitVibe`, unique `(crew,board,member)` constraint | Real-Postgres integration when `TEST_DATABASE_URL` exists | **CREDIBLE** | Record CI run with Postgres service |
-| Replay-safe mutations | A timeout retry must not duplicate a card or ballot | client ids in API/store; frontend idempotency headers and cold-start replay | Go replay/conflict tests; smoke repeats a submission | **PROVEN** | Browser test that aborts the first response |
+| Concurrent crew-sized palettes | Larger rooms need more material without letting membership races resize a live round | additive expansions, `vibe_crew_boards`, crew-lock first-open projection, transactional selection check | row-band unit matrix; 32 concurrent opens; 20 concurrent members/cards/votes; post-freeze join and join/freeze race on Postgres | **PROVEN** | Multi-browser trace over deployed Postgres |
+| Transactional authorship | One member cannot race two cards into a round | `SubmitVibe`, unique `(crew,board,member)` constraint | Real-Postgres distinct-client contention plus Go race detector | **PROVEN** | Retain a CI artifact for each release SHA |
+| Replay-safe mutations | A timeout retry must not duplicate a card or ballot | client ids in API/store; loser reloads the committed winner | Sequential conflict tests, 16-way identical card/vote replay, durable smoke replay | **PROVEN** | Browser test that aborts the first response |
 | Fair blind ballot | Makers vote once, not for themselves, without author leakage | `CastVibeVote`, `buildJudgeView` | Eligibility/self-vote/one-vote integration and disclosure unit tests | **PROVEN** | Multi-browser E2E over real DB |
 | Staged privacy | Outsiders and premature phases must not receive crew content | `buildVibeCrewDaily`, capability crew routes | Unit test asserts outsider, make, blind judge, reveal views | **PROVEN** | Security review with hostile HTTP cases |
 | Honest result semantics | Quiet rounds and ties must not invent significance | `buildResultView`, `CrewStreak` | Unit tie test; Postgres official-streak test | **PROVEN** | Product validation of thresholds |
@@ -40,12 +42,12 @@ Status meanings:
 | Runtime contract validation | Backend drift should fail visibly in the client | Zod schemas in `api.ts`/`adminApi.ts` | Typecheck and frontend unit suite | **CREDIBLE** | Component tests for all phase states |
 | No-DB honesty | A social persistence feature must not pretend to work in memory | public fallback plus explicit crew `503` | E2E smoke covers practice and skip reason | **PROVEN** | None; preserve boundary |
 | Admin security | Board publishing is privileged | hash-only opaque sessions, CSRF, revocation, rate-limited login | Go auth/hardening tests and security contract | **PROVEN** | Named MFA identity before multiple operators |
-| Abuse boundaries | Public capability links and text writes are attack surfaces | body/id caps, validation, blocklist, rate limits, safe proxy identity | hardening/security tests | **CREDIBLE** | Load/abuse test and crew-card report flow |
-| Observability | A daily phased product needs detectable failures | route metrics, operation metrics, logs, health/readiness, pool/cache/outbox gauges | endpoint tests, bounded-label security test | **CREDIBLE** | External scrape, dashboard, and routed alert |
+| Abuse boundaries | Public capability links and text writes are attack surfaces | body/id caps, validation, blocklist, rate limits, safe proxy identity, private no-store crew APIs | hardening/security/cache tests | **CREDIBLE** | Load/abuse test and crew-card report flow |
+| Observability | A daily phased product needs detectable failures without leaking invite capabilities | route metrics, normalized request logs, health/readiness, pool/cache/outbox gauges | endpoint, bounded-label, and secret-redaction tests | **CREDIBLE** | External scrape, dashboard, and routed alert |
 | Single-binary deployment | Same-origin cookies and a small ops surface | Dockerfile, embedded static Next export/migrations, Go server | build, backend tests, local E2E smoke | **PROVEN** | Public SHA-linked deploy smoke |
 | Recovery | Crew history is durable only if data can be restored | backup workflow/runbook scaffolding | no completed provider restore artifact | **MANUAL** | Managed PITR plus timed restore drill |
 | Product validation | Originality is not the same as demand | metrics are defined in product vision | no privacy-reviewed event store or user cohort | **PARTIAL** | 5–10 controlled crews; make→judge→reveal funnel |
-| Accessibility | Selection, ballot, and focus must work beyond pointer use | semantic buttons, `aria-pressed`, labels, focus/reduced motion | lint/type checks; limited automated coverage | **PARTIAL** | Playwright + axe + keyboard/screen-reader pass |
+| Accessibility | Selection, ballot, onboarding, and focus must work beyond pointer use | semantic buttons, one page landmark, `aria-pressed`, labels, focus-managed first-visit dialog, reduced motion, Mobile Safari toolbar clearance | keyboard browser QA at 390px and desktop plus iPhone 17 Pro simulator touch flow through practice/reveal and durable crew join; lint/type checks | **PARTIAL** | Playwright + axe + screen-reader pass |
 
 ## Verification ladder
 
@@ -75,12 +77,15 @@ An E2E run in no-database mode proves the practice/runtime path, not crews.
 
 ## Demo path for an interview
 
-1. Open `/` and make one practice card. Explain that there is no correct set.
-2. Show the blind house ballot and reveal.
+1. Open `/`: dismiss the concise introduction and make one practice card from
+   the composer already underneath it. Explain that there is no correct set.
+2. Show the blind house ballot and reveal, then deal an Unlimited round; explain
+   why its authored state is local and why daily crews remain separate.
 3. Open a real three-member crew across browser profiles if a test DB is
    available: make on day D fixtures, judge D-1, reveal D-2.
 4. Show `vibe_rounds.go` and migration constraints, then the disclosure test.
-5. Show `/admin`: one prompt, 12 fragments, immutable date.
+5. Show `/admin`: one prompt, 28 ordered fragments, immutable date; explain
+   nested 12/16/20/24/28 editorial QA.
 6. Run the smoke script and explain which paths require Postgres.
 7. State the manual gaps before the interviewer has to ask.
 

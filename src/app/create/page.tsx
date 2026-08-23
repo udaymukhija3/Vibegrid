@@ -16,7 +16,7 @@ export default function CreatePage() {
           <p className="vg-meta text-lime">The creation moved into the game</p>
           <h1 className="mt-3 text-4xl font-black text-cream sm:text-6xl">You make the answer now.</h1>
           <p className="mt-5 max-w-2xl font-semibold leading-8 text-cream/[.62]">
-            There are no hidden categories to author. VibeGrid supplies twelve human-written
+            There are no hidden categories to author. VibeGrid supplies a crew-sized, human-written
             fragments; every player chooses four and names the interpretation their crew will judge.
           </p>
           <div className="mt-7 flex flex-wrap gap-3">

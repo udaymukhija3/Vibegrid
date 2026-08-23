@@ -7,7 +7,7 @@ remaining work should reduce uncertainty, not expand scope.
 
 **Outcome:** complete in code.
 
-- Replaced hidden-group solving with 12-fragment card authorship.
+- Replaced hidden-group solving with crew-sized four-column card authorship.
 - Defined make D / judge D+1 / reveal D+2.
 - Locked reciprocal makers-only ballot, no self-votes, ties, and official-round
   threshold.
@@ -22,7 +22,8 @@ longer exposes groups, answers, difficulty, mistakes, or a 4×4 board.
 
 **Outcome:** implemented; production-shaped evidence still required.
 
-- Immutable board/card/vote migration.
+- Immutable board/card/vote migration plus additive master expansions and
+  frozen crew/date row counts.
 - Transaction-internal membership checks.
 - One-card, replay, makers-only, no-self, one-ballot invariants.
 - Member-aware stage projections.
@@ -63,7 +64,7 @@ Exit proof: video or CI trace plus Playwright report for Chromium and WebKit.
 - Author and freeze seven future boards in `/admin`.
 - For each board, make at least six titled cards in an internal sheet.
 - Reject a palette if one quartet dominates or fragments secretly form groups.
-- Preview 320px mobile, desktop, and 1200×630 social card.
+- Preview 320px mobile at 3/4/7 rows, desktop, and 1200×630 social card.
 - Run a UTC rollover with open clients and confirm the prior board stays
   historically stable.
 - Record who owns daily board QA and what happens if tomorrow is not authored.
