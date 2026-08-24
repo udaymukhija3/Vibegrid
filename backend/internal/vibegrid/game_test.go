@@ -922,8 +922,12 @@ func TestAttemptEndpointReturnsGuessHistory(t *testing.T) {
 
 // TestDocumentRequestEnsuresSessionCookie proves a document navigation mints the
 // session cookie up front (so two tabs opened together share one session and
-// cannot diverge), a request already carrying a valid cookie is not re-minted,
-// and static assets do not get one.
+// cannot diverge), a request already carrying a valid cookie keeps that id while
+// having its expiry pushed out, and static assets do not get one.
+//
+// The renewal half matters as much as the minting half: the cookie is the only
+// identity behind crew membership, so stamping it once at mint time expired
+// every active player exactly sessionTTL after their first visit.
 func TestDocumentRequestEnsuresSessionCookie(t *testing.T) {
 	doc := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -953,13 +957,31 @@ func TestDocumentRequestEnsuresSessionCookie(t *testing.T) {
 		t.Fatalf("expected a valid %s cookie on document load, got %#v", sessionCookieName, rec.Result().Cookies())
 	}
 
-	// Second load carrying that cookie: must not re-mint.
+	// Second load carrying that cookie: the id survives, but the expiry slides
+	// forward so an active player never ages out of their own crews.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(minted)
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req)
-	if reminted := sessionCookie(rec2); reminted != nil {
-		t.Fatalf("a valid session must not be re-minted, got Set-Cookie %q", reminted.String())
+	renewed := sessionCookie(rec2)
+	if renewed == nil {
+		t.Fatalf("expected the session cookie to be renewed, got %#v", rec2.Result().Cookies())
+	}
+	if renewed.Value != minted.Value {
+		t.Fatalf("a valid session must not be re-minted: had %q, got %q", minted.Value, renewed.Value)
+	}
+	if renewed.MaxAge != int(sessionTTL.Seconds()) {
+		t.Fatalf("expected renewal to restore the full %s window, got Max-Age %d", sessionTTL, renewed.MaxAge)
+	}
+	// One response must not carry the same cookie twice.
+	var setCookies int
+	for _, c := range rec2.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			setCookies++
+		}
+	}
+	if setCookies != 1 {
+		t.Fatalf("expected exactly one %s Set-Cookie, got %d", sessionCookieName, setCookies)
 	}
 
 	// A static asset is not a document route and must not get a session cookie.

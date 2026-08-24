@@ -79,15 +79,22 @@ func (server *Server) crewsEnabled(w http.ResponseWriter) bool {
 
 // allowCrewWrite throttles crew mutations per client. Crew creation is the
 // expensive one (it makes rows), so it gets the tighter budget.
+//
+// The budget is charged per session first, then per network. Keying on address
+// alone put a whole crew into one bucket whenever they played from one uplink —
+// the exact situation this product is designed for, a group of friends in one
+// room — and turned an undeclared platform proxy into a global cap.
 func (server *Server) allowCrewWrite(w http.ResponseWriter, r *http.Request, keyPrefix string, limit int, window time.Duration, message string) bool {
-	decision, err := server.checkRateLimit(r.Context(), keyPrefix+server.clientIP(r), limit, window, server.createLimiter)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
-		return false
-	}
-	if !decision.allowed {
-		writeRateLimit(w, message, decision.retryAfter)
-		return false
+	for _, scope := range server.rateLimitScopes(r, keyPrefix, limit) {
+		decision, err := server.checkRateLimit(r.Context(), scope.key, scope.limit, window, server.createLimiter)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Could not check request limits.")
+			return false
+		}
+		if !decision.allowed {
+			writeRateLimit(w, message, decision.retryAfter)
+			return false
+		}
 	}
 	return true
 }

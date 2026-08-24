@@ -571,3 +571,102 @@ func adminLoginRequest(body string) *http.Request {
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
+
+// TestRateLimitScopesSeparateSessionsBehindOneAddress covers the shared-address
+// case this product actually lives in: a crew is usually friends in one room on
+// one uplink, and metering them as a single client meant the fourth person to
+// join a party could be told to come back in an hour.
+func TestRateLimitScopesSeparateSessionsBehindOneAddress(t *testing.T) {
+	server := &Server{clientIdentity: newClientIdentity(nil), clock: fixedClock}
+
+	request := func(sessionID string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/crews", nil)
+		req.RemoteAddr = "203.0.113.7:5555"
+		if sessionID != "" {
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+		}
+		return req
+	}
+	first := randomSessionID()
+	second := randomSessionID()
+
+	firstScopes := server.rateLimitScopes(request(first), "crew-join:", crewJoinRateLimit)
+	secondScopes := server.rateLimitScopes(request(second), "crew-join:", crewJoinRateLimit)
+	if firstScopes[0].key == secondScopes[0].key {
+		t.Fatalf("two sessions on one address must not share a bucket, both got %q", firstScopes[0].key)
+	}
+	if firstScopes[0].limit != crewJoinRateLimit {
+		t.Fatalf("session bucket must keep the tight limit, got %d", firstScopes[0].limit)
+	}
+
+	// The address is still charged, so one browser cannot flood from one link.
+	if len(firstScopes) != 2 {
+		t.Fatalf("expected a session and a network bucket, got %d", len(firstScopes))
+	}
+	if firstScopes[1].key != secondScopes[1].key {
+		t.Fatal("both sessions must share one network bucket")
+	}
+	if want := crewJoinRateLimit * networkRateLimitFactor; firstScopes[1].limit != want {
+		t.Fatalf("network bucket should be widened to %d, got %d", want, firstScopes[1].limit)
+	}
+}
+
+// TestRateLimitScopesDoNotRewardDroppingTheCookie is the guard on the dangerous
+// half of session-scoped limits: if a cookie-less request were handed a freshly
+// minted session, discarding the cookie would buy a brand new budget on every
+// request and defeat every limit in the product.
+func TestRateLimitScopesDoNotRewardDroppingTheCookie(t *testing.T) {
+	server := &Server{clientIdentity: newClientIdentity(nil), clock: fixedClock}
+
+	anonymous := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/crews", nil)
+		req.RemoteAddr = "203.0.113.7:5555"
+		return req
+	}
+	first := server.rateLimitScopes(anonymous(), "crew-join:", crewJoinRateLimit)
+	second := server.rateLimitScopes(anonymous(), "crew-join:", crewJoinRateLimit)
+
+	if len(first) != 1 {
+		t.Fatalf("an anonymous request must be charged one bucket, got %d", len(first))
+	}
+	if first[0].key != second[0].key {
+		t.Fatalf("cookie-less requests must share a bucket, got %q and %q", first[0].key, second[0].key)
+	}
+	if first[0].limit != crewJoinRateLimit {
+		t.Fatalf("anonymous traffic must keep the tight limit, got %d", first[0].limit)
+	}
+}
+
+// TestRateLimitScopesIgnoreUndeclaredProxyAddresses covers the deploy-shaped
+// failure: render.yaml ships VIBEGRID_TRUSTED_PROXY_CIDRS unset, so every
+// request arrives from the platform proxy's private address. Charging that
+// address metered the whole internet into one bucket.
+func TestRateLimitScopesIgnoreUndeclaredProxyAddresses(t *testing.T) {
+	server := &Server{clientIdentity: newClientIdentity(nil), clock: fixedClock}
+
+	for _, peer := range []string{"10.0.0.5:4444", "192.168.1.9:4444", "[::1]:4444", "127.0.0.1:4444"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/vibes/today", nil)
+		req.RemoteAddr = peer
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: randomSessionID()})
+
+		scopes := server.rateLimitScopes(req, "read-puzzle:", readRateLimit)
+		if len(scopes) != 1 {
+			t.Fatalf("peer %s must contribute no network bucket, got %d scopes", peer, len(scopes))
+		}
+		if !strings.HasPrefix(scopes[0].key, "read-puzzle:session:") {
+			t.Fatalf("peer %s should fall back to session metering, got %q", peer, scopes[0].key)
+		}
+	}
+
+	// A declared proxy still resolves the real client address behind it.
+	trusted := &Server{clientIdentity: newClientIdentity([]string{"10.0.0.0/8"}), clock: fixedClock}
+	req := httptest.NewRequest(http.MethodGet, "/api/vibes/today", nil)
+	req.RemoteAddr = "10.0.0.5:4444"
+	req.Header.Set("X-Forwarded-For", "198.51.100.22")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: randomSessionID()})
+
+	scopes := trusted.rateLimitScopes(req, "read-puzzle:", readRateLimit)
+	if len(scopes) != 2 || scopes[1].key != "read-puzzle:net:198.51.100.22" {
+		t.Fatalf("a declared proxy must still meter the forwarded client, got %#v", scopes)
+	}
+}
