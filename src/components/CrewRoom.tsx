@@ -17,6 +17,7 @@ import {
   Users
 } from "lucide-react";
 import { toast } from "sonner";
+import { ReminderToggle } from "@/components/ReminderToggle";
 import { VibeCard } from "@/components/VibeCard";
 import { VibeComposer } from "@/components/VibeComposer";
 import { VibeHeader } from "@/components/VibeHeader";
@@ -212,6 +213,7 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
             {copied ? <Check aria-hidden size={17} /> : <Send aria-hidden size={17} />}
             {copied ? "Copied" : "Nudge the crew"}
           </button>
+          {daily.isMember && <ReminderToggle />}
           {daily.isMember && (
             <button type="button" onClick={() => setManaging((value) => !value)} className="vg-secondary-button">
               <ShieldCheck aria-hidden size={17} />
