@@ -996,12 +996,61 @@ func (server *Server) clientIP(r *http.Request) string {
 	return server.clientIdentity.clientIP(r)
 }
 
+// networkRateLimitFactor widens the per-network budget relative to the
+// per-session one. The network bucket exists to cap a single abusive network,
+// not to ration a household, an office, or a cafe whose occupants are playing
+// together — which is the normal case for this product, since a crew is usually
+// people in one room sharing one uplink.
+const networkRateLimitFactor = 10
+
+// rateLimitScope is one bucket a request is charged against.
+type rateLimitScope struct {
+	key   string
+	limit int
+}
+
+// rateLimitScopes returns the buckets a request is charged against.
+//
+// A request that already carries a session is metered on that session, because
+// the session is the only thing that tells two people behind one address apart
+// — and one shared address is the normal case for this product, not the
+// exception: a crew is usually friends in one room on one uplink. Such a
+// request is also charged to its network on a budget widened by
+// networkRateLimitFactor, so a browser that keeps its cookie still cannot flood
+// from one connection.
+//
+// A request with no session cannot be told apart from any other, so it is
+// metered on its address at the full tight limit, exactly as before. That is
+// the load-bearing half: minting a session here instead would give every
+// cookie-less request a private budget and make "discard the cookie" a complete
+// bypass of every limit in the product.
+func (server *Server) rateLimitScopes(r *http.Request, prefix string, limit int) []rateLimitScope {
+	network := server.clientIdentity.networkKey(r)
+	sessionID, ok := existingSessionID(r)
+	if !ok {
+		// Fall back to the raw peer address when networkKey rejected it: an
+		// anonymous client behind an undeclared proxy still has to be metered
+		// somewhere, and a shared bucket is the safe direction to fail.
+		if network == "" {
+			network = server.clientIP(r)
+		}
+		return []rateLimitScope{{key: prefix + "net:" + network, limit: limit}}
+	}
+
+	scopes := []rateLimitScope{{key: prefix + "session:" + sessionID, limit: limit}}
+	if network != "" {
+		scopes = append(scopes, rateLimitScope{key: prefix + "net:" + network, limit: limit * networkRateLimitFactor})
+	}
+	return scopes
+}
+
 func (server *Server) allowPuzzleRead(w http.ResponseWriter, r *http.Request) bool {
-	key := "read-puzzle:" + server.clientIP(r)
-	decision := server.readLimiter.check(key, server.clock())
-	if !decision.allowed {
-		writeRateLimit(w, "You're requesting puzzle data too quickly. Try again shortly.", decision.retryAfter)
-		return false
+	for _, scope := range server.rateLimitScopes(r, "read-puzzle:", readRateLimit) {
+		decision := server.readLimiter.checkLimit(scope.key, scope.limit, server.clock())
+		if !decision.allowed {
+			writeRateLimit(w, "You're requesting puzzle data too quickly. Try again shortly.", decision.retryAfter)
+			return false
+		}
 	}
 	return true
 }

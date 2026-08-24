@@ -108,6 +108,53 @@ func (identity clientIdentity) clientIP(r *http.Request) string {
 	return "unknown"
 }
 
+// networkKey returns the address to meter a request against, or "" when the
+// address distinguishes nobody.
+//
+// clientIP always returns something so logs and bot checks have a value, but
+// that value is only an identity when it is a globally routable address. Behind
+// a proxy whose network has not been declared in VIBEGRID_TRUSTED_PROXY_CIDRS,
+// every request in the world arrives from the same private or loopback peer;
+// charging a shared rate-limit bucket for it meters the entire internet as one
+// client. That is not hypothetical — the checked-in deploy config ships those
+// CIDRs unset, so a fresh install would have allowed thirty crew joins per hour
+// in total. An unroutable peer therefore contributes no network key and callers
+// fall back to metering the session alone.
+func (identity clientIdentity) networkKey(r *http.Request) string {
+	peer := remoteAddressIP(r.RemoteAddr)
+	if peer.IsValid() && identity.isTrustedProxy(peer) {
+		for _, value := range []string{
+			r.Header.Get("Fly-Client-IP"),
+			r.Header.Get("X-Real-IP"),
+			strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0],
+		} {
+			if forwarded, ok := parseClientIP(value); ok {
+				if routableClientAddress(forwarded) {
+					return forwarded.String()
+				}
+				return ""
+			}
+		}
+	}
+	if peer.IsValid() && routableClientAddress(peer) {
+		return peer.String()
+	}
+	return ""
+}
+
+// routableClientAddress reports whether an address identifies a client network
+// on the public internet. Loopback, private, link-local, and unspecified
+// addresses all mean "this request reached us through something we are not
+// reading through", so they carry no information about who sent it.
+func routableClientAddress(address netip.Addr) bool {
+	return address.IsValid() &&
+		!address.IsLoopback() &&
+		!address.IsPrivate() &&
+		!address.IsLinkLocalUnicast() &&
+		!address.IsLinkLocalMulticast() &&
+		!address.IsUnspecified()
+}
+
 func (identity clientIdentity) isTrustedProxy(peer netip.Addr) bool {
 	for _, prefix := range identity.trustedProxies {
 		if prefix.Contains(peer) {

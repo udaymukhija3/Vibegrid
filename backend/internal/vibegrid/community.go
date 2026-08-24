@@ -86,12 +86,27 @@ func (server *Server) checkRateLimit(ctx context.Context, key string, limit int,
 		return server.rateLimits.Check(ctx, key, limit, window, server.clock())
 	}
 	if fallback != nil {
+		// The fallback limiter carries its own ceiling on purpose: it is the seam
+		// tests use to inject a tight limiter and prove throttling still happens
+		// when the shared store is gone. Crew writes never reach here anyway —
+		// crewsEnabled refuses them outright without a database.
 		return fallback.check(key, server.clock()), nil
 	}
 	return rateLimitDecision{allowed: true}, nil
 }
 
 func (limiter *rateLimiter) check(key string, now time.Time) rateLimitDecision {
+	return limiter.checkLimit(key, limiter.limit, now)
+}
+
+// checkLimit meters one key against a caller-supplied ceiling. Callers that
+// charge the same limiter for both a session and its network need two different
+// ceilings over one set of counters, so the limit cannot live only on the
+// limiter (see Server.rateLimitScopes).
+func (limiter *rateLimiter) checkLimit(key string, limit int, now time.Time) rateLimitDecision {
+	if limit < 1 {
+		limit = limiter.limit
+	}
 	cutoff := now.Add(-limiter.window)
 
 	limiter.mu.Lock()
@@ -112,7 +127,7 @@ func (limiter *rateLimiter) check(key string, now time.Time) rateLimitDecision {
 		}
 	}
 
-	if len(recent) >= limiter.limit {
+	if len(recent) >= limit {
 		limiter.hits[key] = recent
 		return rateLimitDecision{retryAfter: recent[0].Add(limiter.window).Sub(now)}
 	}
