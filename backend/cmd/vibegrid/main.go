@@ -94,6 +94,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	vapidKeys := vibegrid.VAPIDKeys{
+		Public:  strings.TrimSpace(os.Getenv("VIBEGRID_VAPID_PUBLIC_KEY")),
+		Private: strings.TrimSpace(os.Getenv("VIBEGRID_VAPID_PRIVATE_KEY")),
+		Subject: strings.TrimSpace(os.Getenv("VIBEGRID_VAPID_SUBJECT")),
+	}
+	pushDigestHour, err := intEnv("VIBEGRID_PUSH_DIGEST_HOUR_UTC", vibegrid.DefaultPushDigestHourUTC)
+	if err != nil {
+		return err
+	}
 	trustedProxyCIDRs := splitCommaList(os.Getenv("VIBEGRID_TRUSTED_PROXY_CIDRS"))
 	if err := validateTrustedProxyCIDRs(trustedProxyCIDRs); err != nil {
 		return err
@@ -171,10 +180,33 @@ func run(logger *slog.Logger) error {
 	startRetentionPruner(ctx, logger, deps.pruneExpired)
 	startDailyGenerator(ctx, logger, deps.bankSource)
 	startRateLimitPruner(ctx, logger, deps.rateLimits)
-	if operatorWebhookURL != "" {
-		vibegrid.RunNotificationOutbox(ctx, logger, deps.outbox, vibegrid.NewWebhookNotificationDeliverer(operatorWebhookURL))
+	// Reminders are the only way this product can bring a crew back: there are no
+	// accounts and no address to reach anyone at, and the round does not pay out
+	// until two days after you play it. Missing VAPID keys therefore degrade to
+	// "no reminders" with a warning rather than refusing to boot — a bricked
+	// deploy is the worse failure, and this codebase has already paid for that
+	// lesson twice.
+	pushReady := deps.pushSubs != nil && vapidKeys.Public != "" && vapidKeys.Private != "" && vapidKeys.Subject != ""
+	routes := map[string]vibegrid.NotificationDeliverer{}
+	if pushReady {
+		routes[vibegrid.CrewDigestTopic] = vibegrid.NewWebPushDeliverer(
+			vapidKeys, deps.pushSubs, deps.crewByID, deps.digestBoard, publicBaseURL, time.Now, logger,
+		)
+		sweeper := vibegrid.NewPushDigestSweeper(deps.pushSubs, deps.pushOutbox, time.Now, pushDigestHour, logger)
+		go sweeper.Run(ctx)
+		logger.Info("crew reminders enabled", "digest_hour_utc", pushDigestHour)
 	} else if production {
-		logger.Warn("VIBEGRID_OPERATOR_WEBHOOK_URL is not set: notification events remain pending in the transactional outbox")
+		logger.Warn("VIBEGRID_VAPID_PUBLIC_KEY/PRIVATE_KEY/SUBJECT are not all set: crew reminders stay disabled until they are")
+	}
+
+	var fallback vibegrid.NotificationDeliverer
+	if operatorWebhookURL != "" {
+		fallback = vibegrid.NewWebhookNotificationDeliverer(operatorWebhookURL)
+	} else if production {
+		logger.Warn("VIBEGRID_OPERATOR_WEBHOOK_URL is not set: operator notification events remain pending in the transactional outbox")
+	}
+	if fallback != nil || len(routes) > 0 {
+		vibegrid.RunNotificationOutbox(ctx, logger, deps.outbox, vibegrid.NewRoutedDeliverer(fallback, routes))
 	}
 
 	if deps.adminPuzzles == nil {
@@ -221,6 +253,8 @@ func run(logger *slog.Logger) error {
 		DBStats:            deps.dbStats,
 		PuzzleCacheStats:   deps.puzzleCacheStats,
 		OutboxStats:        deps.outboxStats,
+		PushSubscriptions:  deps.pushSubs,
+		VAPIDKeys:          vapidKeys,
 	})
 
 	server := &http.Server{
@@ -290,6 +324,10 @@ type deps struct {
 	idempotency      vibegrid.IdempotencyStore
 	moderation       vibegrid.ModerationStore
 	outbox           vibegrid.NotificationOutbox
+	pushOutbox       vibegrid.PushDigestEnqueuer
+	pushSubs         vibegrid.PushSubscriptionStore
+	crewByID         vibegrid.CrewDigestSource
+	digestBoard      func(context.Context, string) (vibegrid.VibeBoard, error)
 	ready            func(context.Context) error
 	dbStats          func() sql.DBStats
 	puzzleCacheStats func() vibegrid.CacheStats
@@ -297,6 +335,33 @@ type deps struct {
 	pruneExpired     func(context.Context) (int64, error)
 	close            func()
 	bankSource       *vibegrid.BankPuzzleSource
+}
+
+// crewDigestSource joins the two stores a reminder needs: who the crew is, and
+// what its round currently looks like.
+type crewDigestSource struct {
+	crews  *vibegrid.PostgresCrewStore
+	rounds *vibegrid.PostgresVibeRoundStore
+}
+
+func (source crewDigestSource) CrewByID(ctx context.Context, crewID string) (vibegrid.Crew, error) {
+	return source.crews.CrewByID(ctx, crewID)
+}
+
+func (source crewDigestSource) CrewSnapshot(ctx context.Context, crewID string, boardIDs []string) (vibegrid.VibeCrewSnapshot, error) {
+	return source.rounds.CrewSnapshot(ctx, crewID, boardIDs)
+}
+
+// digestBoardLoader mirrors how the request path resolves a dated board, so a
+// reminder describes exactly the board the room will show.
+func digestBoardLoader(rounds *vibegrid.PostgresVibeRoundStore) func(context.Context, string) (vibegrid.VibeBoard, error) {
+	return func(ctx context.Context, date string) (vibegrid.VibeBoard, error) {
+		board, err := vibegrid.VibeBoardForDate(date)
+		if err != nil {
+			return vibegrid.VibeBoard{}, err
+		}
+		return rounds.EnsureBoard(ctx, board)
+	}
 }
 
 // buildDeps wires the durable Postgres stores when DATABASE_URL is set and
@@ -352,12 +417,14 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 	idempotency := vibegrid.NewPostgresIdempotencyStore(database)
 	outbox := vibegrid.NewPostgresNotificationOutbox(database)
 	vibeRoundStore := vibegrid.NewPostgresVibeRoundStore(database)
+	crewStore := vibegrid.NewPostgresCrewStore(database)
+	pushSubs := vibegrid.NewPostgresPushSubscriptionStore(database)
 	return deps{
 		attempts:         attempts,
 		puzzles:          publicPuzzles,
 		adminPuzzles:     cached,
 		community:        cached,
-		crews:            vibegrid.NewPostgresCrewStore(database),
+		crews:            crewStore,
 		vibeRounds:       vibeRoundStore,
 		adminVibeBoards:  vibeRoundStore,
 		adminSessions:    adminSessions,
@@ -367,6 +434,10 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 		idempotency:      idempotency,
 		moderation:       vibegrid.NewPostgresModerationStore(database),
 		outbox:           outbox,
+		pushOutbox:       outbox,
+		pushSubs:         pushSubs,
+		crewByID:         crewDigestSource{crews: crewStore, rounds: vibeRoundStore},
+		digestBoard:      digestBoardLoader(vibeRoundStore),
 		outboxStats:      outbox.Stats,
 		ready:            database.PingContext,
 		dbStats:          database.Stats,
@@ -411,6 +482,21 @@ func boolEnv(key string, fallback bool) (bool, error) {
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	return value, nil
+}
+
+// intEnv reads a whole-number setting. An unparseable value is fatal because it
+// is a typo in deployment config, not an absence; an absent one takes the
+// fallback so a deploy never dies for a setting it never had.
+func intEnv(key string, fallback int) (int, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a whole number", key)
 	}
 	return value, nil
 }

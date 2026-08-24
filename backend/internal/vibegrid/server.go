@@ -55,6 +55,8 @@ type ServerConfig struct {
 	Community          CommunityPuzzleStore
 	Crews              CrewStore
 	VibeRounds         VibeRoundStore
+	PushSubscriptions  PushSubscriptionStore
+	VAPIDKeys          VAPIDKeys
 	AdminVibeBoards    VibeBoardAdminStore
 	Stats              StatsStore
 	RateLimits         RateLimitStore
@@ -91,6 +93,8 @@ type Server struct {
 	community          CommunityPuzzleStore
 	crews              CrewStore
 	vibeRounds         VibeRoundStore
+	pushSubscriptions  PushSubscriptionStore
+	vapidKeys          VAPIDKeys
 	adminVibeBoards    VibeBoardAdminStore
 	stats              StatsStore
 	rateLimits         RateLimitStore
@@ -139,6 +143,8 @@ func NewServer(config ServerConfig) http.Handler {
 		community:          config.Community,
 		crews:              config.Crews,
 		vibeRounds:         config.VibeRounds,
+		pushSubscriptions:  config.PushSubscriptions,
+		vapidKeys:          config.VAPIDKeys,
 		adminVibeBoards:    config.AdminVibeBoards,
 		stats:              config.Stats,
 		rateLimits:         config.RateLimits,
@@ -226,6 +232,9 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("POST /api/reports", server.handleCreateReport)
 	mux.HandleFunc("POST /api/appeals", server.handleCreateAppeal)
 	mux.HandleFunc("POST /api/client-errors", server.handleClientError)
+	mux.HandleFunc("GET /api/push/config", server.handlePushConfig)
+	mux.HandleFunc("POST /api/push/subscribe", server.handlePushSubscribe)
+	mux.HandleFunc("POST /api/push/unsubscribe", server.handlePushUnsubscribe)
 
 	mux.HandleFunc("GET /api/admin/session", server.handleAdminSessionStatus)
 	mux.HandleFunc("POST /api/admin/session", server.handleAdminSession)

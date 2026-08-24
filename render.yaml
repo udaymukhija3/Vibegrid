@@ -51,3 +51,11 @@ services:
         sync: false
       - key: VIBEGRID_TRUSTED_PROXY_CIDRS
         sync: false
+      # Crew reminders. Without all three the app boots and warns; there is
+      # simply no way to bring a crew back until they are set.
+      - key: VIBEGRID_VAPID_PUBLIC_KEY
+        sync: false
+      - key: VIBEGRID_VAPID_PRIVATE_KEY
+        sync: false
+      - key: VIBEGRID_VAPID_SUBJECT
+        sync: false
