@@ -266,19 +266,23 @@ function ResultSection({ daily }: { daily: VibeCrewDaily }) {
   if (!result) {
     return null;
   }
-  const winners = result.cards.filter((card) => card.winner);
   return (
     <section aria-labelledby="latest-result">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="vg-meta text-lime">Latest result · {result.board.publishDate}</p>
           <h2 id="latest-result" className="mt-2 text-3xl font-black text-cream sm:text-4xl">
-            {result.official
-              ? winners.length > 1
-                ? "The crew called it a tie."
-                : "The crew picked a winner."
-              : "A quiet round, revealed."}
+            {!result.official
+              ? "A quiet round, revealed."
+              : result.tied
+                ? "The crew split the vote."
+                : "The crew picked a winner."}
           </h2>
+          {result.tied && (
+            <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-cream/[.58]">
+              Nobody takes it outright — the ballots landed level across the top.
+            </p>
+          )}
         </div>
         <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
           {result.submissionCount} cards · {result.voteCount} votes
@@ -289,7 +293,7 @@ function ResultSection({ daily }: { daily: VibeCrewDaily }) {
       </div>
       {!result.official && (
         <p className="mt-4 rounded-xl border-2 border-amber/60 bg-amber/[.1] px-4 py-3 text-sm font-bold text-cream">
-          Official wins need at least three cards and two ballots. The cards still belong to the crew.
+          A round counts once two people have made a card and two have judged. The cards still belong to the crew.
         </p>
       )}
     </section>

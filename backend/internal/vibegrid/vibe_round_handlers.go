@@ -40,6 +40,7 @@ type vibeJudgeView struct {
 type vibeResultView struct {
 	Board           VibeBoard      `json:"board"`
 	Official        bool           `json:"official"`
+	Tied            bool           `json:"tied"`
 	SubmissionCount int            `json:"submissionCount"`
 	VoteCount       int            `json:"voteCount"`
 	Cards           []vibeCardView `json:"cards"`
@@ -75,8 +76,13 @@ func (server *Server) handleTodayVibeBoard(w http.ResponseWriter, r *http.Reques
 	// extended in-memory from the canonical bank; durable crew history remains
 	// untouched and continues to use its original frozen palette.
 	board = practiceVibeBoard(board)
+	templateIndex, err := VibeTemplateIndexForDate(board.PublishDate)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load today's fragments.")
+		return
+	}
 	w.Header().Set("Cache-Control", server.dailyCacheControl())
-	writeJSON(w, http.StatusOK, board)
+	writeJSON(w, http.StatusOK, VibePracticeBoard{VibeBoard: board, HouseCards: vibeHouseCardsFor(templateIndex)})
 }
 
 func (server *Server) handleUnlimitedVibeBoard(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +102,10 @@ func (server *Server) handleUnlimitedVibeBoard(w http.ResponseWriter, r *http.Re
 	// A sequence always maps to the same local-practice deal. It contains no
 	// identity or crew state and is safe for shared immutable caching.
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	writeJSON(w, http.StatusOK, board)
+	writeJSON(w, http.StatusOK, VibePracticeBoard{
+		VibeBoard:  board,
+		HouseCards: vibeHouseCardsFor(vibeTemplateIndex(int(sequence % uint64(len(vibeBoardTemplates))))),
+	})
 }
 
 func (server *Server) handleCrewDaily(w http.ResponseWriter, r *http.Request) {
@@ -140,22 +149,28 @@ func (server *Server) handleCrewDaily(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not load this crew's daily.")
 		return
 	}
-	if snapshotHasSession(snapshot, sessionID) {
-		today, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, today)
-		if err == nil {
-			judge, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, judge)
+	// Opening the room is a read. It used to freeze the palette for all three
+	// boards, which meant the size was decided by whoever looked first — and the
+	// natural order is to make the crew, glance at today's board, and only then
+	// send the invite. A twelve-person crew formed that way played all of day one
+	// on the three-row board sized for the one person who had arrived.
+	//
+	// The size is now locked by the first card submitted (see handleSubmitVibe),
+	// so it tracks the crew right up until the round actually starts. Boards the
+	// crew already started keep their locked size, which is also what keeps an old
+	// result rendering the palette its cards were made from rather than one
+	// reprojected for whoever is left in the crew today.
+	frozen, err := server.vibeRounds.FrozenCrewBoards(r.Context(), crew.ID, []string{today.ID, judge.ID, result.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load this crew's boards.")
+		return
+	}
+	for _, board := range []*VibeBoard{&today, &judge, &result} {
+		if tileCount, locked := frozen[board.ID]; locked {
+			*board = projectVibeBoard(*board, tileCount)
+			continue
 		}
-		if err == nil {
-			result, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, result)
-		}
-		if err != nil {
-			writeVibeRoundError(w, err)
-			return
-		}
-	} else {
-		// Invite previews may reflect the current room size, but only a member can
-		// freeze it. Joining and the ensuing member refresh perform the freeze.
-		today = projectVibeBoardForMembers(today, len(snapshot.Members))
+		*board = projectVibeBoardForMembers(*board, len(snapshot.Members))
 	}
 	response := buildVibeCrewDaily(crew, sessionID, today, judge, result, snapshot)
 	if response.IsMember {
@@ -394,23 +409,33 @@ func buildResultView(board VibeBoard, currentMemberID string, submissions []Vibe
 	for _, vote := range votes {
 		counts[vote.SubmissionID]++
 	}
-	maxVotes := 0
+	maxVotes, cardsAtMax := 0, 0
 	for _, count := range counts {
-		if count > maxVotes {
-			maxVotes = count
+		switch {
+		case count > maxVotes:
+			maxVotes, cardsAtMax = count, 1
+		case count == maxVotes:
+			cardsAtMax++
 		}
 	}
-	official := len(submissions) >= 3 && len(votes) >= 2
+	// A crown is only meaningful when the crew actually converged on one card.
+	// Marking every card at the top as a winner made the most natural voting
+	// pattern there is — everyone backing someone else, one vote each — hand out
+	// a crown to all of them, which is the opposite of a result. A tie is now
+	// reported as a tie and nobody is crowned.
+	official := len(submissions) >= minOfficialVibeCards && len(votes) >= minOfficialVibeBallots
+	soleWinner := official && maxVotes > 0 && cardsAtMax == 1
 	view := &vibeResultView{
 		Board:           board,
 		Official:        official,
+		Tied:            official && maxVotes > 0 && cardsAtMax > 1,
 		SubmissionCount: len(submissions),
 		VoteCount:       len(votes),
 		Cards:           make([]vibeCardView, 0, len(submissions)),
 	}
 	for _, submission := range submissions {
 		votesForCard := counts[submission.ID]
-		winner := official && maxVotes > 0 && votesForCard == maxVotes
+		winner := soleWinner && votesForCard == maxVotes
 		view.Cards = append(view.Cards, toVibeCardView(submission, board, currentMemberID, true, votesForCard, winner))
 	}
 	sort.SliceStable(view.Cards, func(left, right int) bool {

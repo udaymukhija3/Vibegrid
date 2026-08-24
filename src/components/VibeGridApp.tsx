@@ -9,7 +9,8 @@ import { VibeHeader } from "@/components/VibeHeader";
 import { VibeIntroDialog } from "@/components/VibeIntroDialog";
 import { fetchTodayVibeBoard, fetchUnlimitedVibeBoard } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
-import type { VibeBoard, VibeCard as VibeCardType } from "@/types/vibe";
+import type { Tile } from "@/types/puzzle";
+import type { VibeCard as VibeCardType, VibePracticeBoard } from "@/types/vibe";
 
 type PracticeStep = "make" | "judge" | "result";
 type PracticeMode = "daily" | "unlimited";
@@ -34,7 +35,7 @@ export function VibeGridApp() {
   return <VibeGridHome board={boardState.data} />;
 }
 
-function VibeGridHome({ board }: { board: VibeBoard }) {
+function VibeGridHome({ board }: { board: VibePracticeBoard }) {
   const practiceRef = useRef<HTMLElement | null>(null);
   const [activeBoard, setActiveBoard] = useState(board);
   const [mode, setMode] = useState<PracticeMode>("daily");
@@ -147,7 +148,7 @@ function PracticeRound({
   dealing,
   onNext
 }: {
-  board: VibeBoard;
+  board: VibePracticeBoard;
   mode: PracticeMode;
   dealing: boolean;
   onNext: () => void;
@@ -167,7 +168,7 @@ function PracticeRound({
           onSubmit={({ title, selectedTileIds }) => {
             const selected = selectedTileIds
               .map((id) => board.tiles.find((tile) => tile.id === id))
-              .filter((tile): tile is VibeBoard["tiles"][number] => Boolean(tile));
+              .filter((tile): tile is Tile => Boolean(tile));
             setYourCard({ id: "practice-you", title, tiles: selected, isYours: true });
             setStep("judge");
           }}
@@ -210,21 +211,16 @@ function PracticeRound({
     );
   }
 
-  const revealed = ballot
-    .map((card, index) => ({
-      ...card,
-      authorName: card.isYours ? "You" : `House card ${index + 1}`,
-      votes: card.id === vote ? 3 : card.isYours ? 1 : 0,
-      winner: card.id === vote
-    }))
-    .sort((left, right) => (right.votes ?? 0) - (left.votes ?? 0));
+  const { cards: revealed, tied, youWon } = practiceBallot(ballot, yourCard!, vote);
 
   return (
     <div className="vg-dark-panel">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="vg-meta text-lime">Result</p>
-          <h3 className="mt-2 text-3xl font-black text-cream sm:text-4xl">That is the whole game.</h3>
+          <h3 className="mt-2 text-3xl font-black text-cream sm:text-4xl">
+            {youWon ? "Your card took it." : tied ? "The room split the vote." : "The room went the other way."}
+          </h3>
           <p className="mt-3 max-w-2xl font-semibold leading-7 text-cream/[.62]">
             In a real crew, yesterday&apos;s cards appear here, everybody gets one non-self vote, and
             the revealed result becomes part of your crew&apos;s history.
@@ -248,16 +244,61 @@ function PracticeRound({
   );
 }
 
-function practiceHouseCards(board: VibeBoard): VibeCardType[] {
-  const recipes = [
-    { id: "house-one", title: "Still technically fine", indices: [0, 5, 8, 11] },
-    { id: "house-two", title: "The soft launch", indices: [2, 4, 7, 10] },
-    { id: "house-three", title: "Quietly unraveling", indices: [1, 3, 6, 9] }
-  ];
-  return recipes.map((recipe) => ({
-    id: recipe.id,
-    title: recipe.title,
+function practiceHouseCards(board: VibePracticeBoard): VibeCardType[] {
+  return board.houseCards.map((houseCard, index) => ({
+    id: `house-${index + 1}`,
+    title: houseCard.title,
     isYours: false,
-    tiles: recipe.indices.map((index) => board.tiles[index])
+    tiles: houseCard.tileIndices
+      .map((tileIndex) => board.tiles[tileIndex])
+      .filter((tile): tile is Tile => Boolean(tile))
   }));
+}
+
+// fnv1a gives the practice round a stable seed. The same card always draws the
+// same reaction, so the result cannot be rerolled by replaying the round — and
+// a different card genuinely draws a different one.
+function fnv1a(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+// practiceBallot plays out the round the way a four-person crew would: every
+// house card casts one vote, for someone other than itself, and so do you.
+//
+// It replaces a reveal that awarded three votes to whatever the player picked
+// and exactly one to the player, every time — so the only round a newcomer ever
+// saw was one they lost to a bot. Here the house reads your card and sometimes
+// backs it, so practice can be won, tied, or lost, which is the actual range of
+// the game it is selling.
+function practiceBallot(ballot: VibeCardType[], yourCard: VibeCardType, yourVote: string) {
+  const seed = fnv1a(`${yourCard.title}|${yourCard.tiles.map((tile) => tile.id).join(",")}`);
+  const votes = new Map<string, number>(ballot.map((card) => [card.id, 0]));
+  const award = (id: string) => votes.set(id, (votes.get(id) ?? 0) + 1);
+
+  ballot.forEach((voter, index) => {
+    if (voter.isYours) {
+      return;
+    }
+    const choices = ballot.filter((card) => card.id !== voter.id);
+    award(choices[(seed >>> (index * 5)) % choices.length].id);
+  });
+  award(yourVote);
+
+  const top = Math.max(...votes.values());
+  const cardsAtTop = [...votes.values()].filter((count) => count === top).length;
+  const cards = ballot
+    .map((card) => ({
+      ...card,
+      authorName: card.isYours ? "You" : "House card",
+      votes: votes.get(card.id) ?? 0,
+      winner: cardsAtTop === 1 && (votes.get(card.id) ?? 0) === top
+    }))
+    .sort((left, right) => right.votes - left.votes || left.title.localeCompare(right.title));
+
+  return { cards, tied: cardsAtTop > 1, youWon: cards.some((card) => card.isYours && card.winner) };
 }

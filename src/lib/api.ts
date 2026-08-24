@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ApiError, apiFetch, idempotencyHeaders } from "@/lib/http";
 import type { DraftPuzzleInput, EasyHintResponse, PublicPuzzle, PuzzleTemplate, VibeHint } from "@/types/puzzle";
-import type { VibeBoard, VibeCard, VibeCrewDaily } from "@/types/vibe";
+import type { VibeBoard, VibeCard, VibeCrewDaily, VibePracticeBoard } from "@/types/vibe";
 
 // Runtime schemas for the public API surface. Validating responses at the
 // boundary means a contract drift between the Go backend and the UI fails loudly
@@ -368,6 +368,17 @@ const vibeBoardSchema = z.object({
     .refine((tiles) => tiles.length % 4 === 0, "Vibe boards must have complete four-column rows")
 }) satisfies z.ZodType<VibeBoard>;
 
+// Practice boards carry the cards the round is played against. Crew boards
+// never do — there the other cards belong to real people.
+const vibePracticeBoardSchema = vibeBoardSchema.extend({
+  houseCards: z.array(
+    z.object({
+      title: z.string(),
+      tileIndices: z.array(z.number().int().nonnegative()).length(4)
+    })
+  )
+}) satisfies z.ZodType<VibePracticeBoard>;
+
 const vibeCardSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -402,6 +413,7 @@ const vibeCrewDailySchema = z.object({
     .object({
       board: vibeBoardSchema,
       official: z.boolean(),
+      tied: z.boolean(),
       submissionCount: z.number(),
       voteCount: z.number(),
       cards: z.array(vibeCardSchema)
@@ -419,15 +431,15 @@ const vibeCrewDailySchema = z.object({
     .optional()
 }) satisfies z.ZodType<VibeCrewDaily>;
 
-export async function fetchTodayVibeBoard(): Promise<VibeBoard> {
-  return vibeBoardSchema.parse(await getJSON("/api/vibes/today"));
+export async function fetchTodayVibeBoard(): Promise<VibePracticeBoard> {
+  return vibePracticeBoardSchema.parse(await getJSON("/api/vibes/today"));
 }
 
-export async function fetchUnlimitedVibeBoard(sequence: number): Promise<VibeBoard> {
+export async function fetchUnlimitedVibeBoard(sequence: number): Promise<VibePracticeBoard> {
   if (!Number.isSafeInteger(sequence) || sequence < 0) {
     throw new ApiError("Unlimited practice sequence is invalid.", 400);
   }
-  return vibeBoardSchema.parse(await getJSON(`/api/vibes/practice/${sequence}`));
+  return vibePracticeBoardSchema.parse(await getJSON(`/api/vibes/practice/${sequence}`));
 }
 
 export async function fetchCrewDaily(inviteCode: string): Promise<VibeCrewDaily> {
