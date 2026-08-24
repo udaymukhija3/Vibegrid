@@ -8,6 +8,17 @@ export type VibeBoard = {
   tiles: Tile[];
 };
 
+/** One opponent in the practice round, dealt from the board's own template. */
+export type VibeHouseCard = {
+  title: string;
+  tileIndices: number[];
+};
+
+/** A board plus the cards to play it against. Practice endpoints only. */
+export type VibePracticeBoard = VibeBoard & {
+  houseCards: VibeHouseCard[];
+};
+
 export type VibeCard = {
   id: string;
   title: string;
@@ -37,6 +48,8 @@ export type VibeJudge = {
 export type VibeResult = {
   board: VibeBoard;
   official: boolean;
+  /** The crew split its ballots across the top, so no card is crowned. */
+  tied: boolean;
   submissionCount: number;
   voteCount: number;
   cards: VibeCard[];

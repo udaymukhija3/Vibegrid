@@ -20,6 +20,10 @@ const (
 	VibeCardTileCount     = 4
 	MaxVibePromptRunes    = 140
 	MaxVibeTileRunes      = 28
+
+	// vibePracticeHouseCards is how many cards the practice round deals against
+	// the player, standing in for a three-friend crew.
+	vibePracticeHouseCards = 3
 )
 
 var ErrVibeBoardInvalid = errors.New("vibe board is invalid")
@@ -37,12 +41,82 @@ type VibeBoard struct {
 
 type vibeBoardTemplate struct {
 	prompt string
-	tiles  [VibeBoardMaxTileCount]string
+	// houseTitles are the interpretations the practice round plays against.
+	// They belong to the template, not to a fixed set of fragments: a title is
+	// a read on the prompt, and every fragment in a deal comes from this same
+	// template, so any four of them sit under it the way a real crew's title
+	// sits over whatever four they picked. One global trio of titles used to be
+	// reused on every board forever, which is what made practice feel canned.
+	houseTitles [vibePracticeHouseCards]string
+	tiles       [VibeBoardMaxTileCount]string
+}
+
+// VibeHouseCard is one opponent in the practice round. Tiles are sent as
+// indices into the dealt board so the client renders the same fragments it is
+// already showing, without the server restating them.
+type VibeHouseCard struct {
+	Title       string `json:"title"`
+	TileIndices []int  `json:"tileIndices"`
+}
+
+// VibePracticeBoard is a board plus the cards to play it against. Only the
+// practice endpoints return it — a crew's board must never carry house cards,
+// because in a crew the other cards are real people's.
+type VibePracticeBoard struct {
+	VibeBoard
+	HouseCards []VibeHouseCard `json:"houseCards"`
+}
+
+// vibeHouseCardTiles are the fragment positions each house card claims. They
+// overlap deliberately: in a real crew several people reach for the same
+// fragment, and a practice round where the opponents never collide with the
+// player would misrepresent the game.
+var vibeHouseCardTiles = [vibePracticeHouseCards][VibeCardTileCount]int{
+	{0, 5, 10, 15},
+	{2, 4, 9, 11},
+	{1, 6, 8, 13},
+}
+
+// vibeTemplateIndex maps any offset, including a negative one, onto the bank.
+func vibeTemplateIndex(offset int) int {
+	index := offset % len(vibeBoardTemplates)
+	if index < 0 {
+		index += len(vibeBoardTemplates)
+	}
+	return index
+}
+
+// VibeTemplateIndexForDate reports which editorial template a dated board was
+// built from, so the practice endpoints can deal that template's house cards.
+func VibeTemplateIndexForDate(date string) (int, error) {
+	parsed, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return 0, ErrVibeBoardInvalid
+	}
+	launch, _ := time.Parse("2006-01-02", "2026-08-19")
+	return vibeTemplateIndex(int(parsed.Sub(launch).Hours() / 24)), nil
+}
+
+func vibeHouseCardsFor(templateIndex int) []VibeHouseCard {
+	template := vibeBoardTemplates[templateIndex]
+	cards := make([]VibeHouseCard, 0, vibePracticeHouseCards)
+	for index, title := range template.houseTitles {
+		cards = append(cards, VibeHouseCard{
+			Title:       title,
+			TileIndices: append([]int(nil), vibeHouseCardTiles[index][:]...),
+		})
+	}
+	return cards
 }
 
 var vibeBoardTemplates = []vibeBoardTemplate{
 	{
 		prompt: "Build a week that is technically under control.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Technically on track",
+			"The system is holding",
+			"Colour-coded chaos",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"meal prep", "unread emails", "3pm nap", "open laptop",
 			"clean sheets", "monday dread", "leftover pizza", "five tabs",
@@ -55,6 +129,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build a first impression that will not survive the evening.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Peaked at hello",
+			"Still going great",
+			"The opening act",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"noise-cancelling", "nervous laugh", "you're muted", "two-hour latte",
 			"third refill", "shared scone", "circle back", "no you go",
@@ -67,6 +146,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build the person every group chat eventually creates.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Seen it, not replying",
+			"Chief vibes officer",
+			"Muted with love",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"who's in", "thumbs up", "long voice note", "random meme",
 			"sent a poll", "seen 2pm", "three paragraphs", "wrong chat",
@@ -79,6 +163,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build an airport personality you would deny having.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Boarding group denial",
+			"Terminal confidence",
+			"Gate nine energy",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"hovers early", "testing perfume", "gate change", "one carry-on",
 			"group nine", "giant toblerone", "floor outlet", "priority lane",
@@ -91,6 +180,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build the 2am version of a reasonable person.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Fully rational actually",
+			"The ceiling knows",
+			"Tomorrow's problem",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"that text", "learn french", "heat death", "is there cheese",
 			"said what", "5am club", "are we real", "quiet fridge",
@@ -103,6 +197,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build a workday with no measurable output.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Status: green",
+			"Busy adjacent",
+			"Circling back forever",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"alt-tab", "synergy", "whose milk", "camera off",
 			"walk with mug", "circle back", "passive note", "slow replies",
@@ -115,6 +214,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build a text conversation that is definitely fine.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Everything's fine",
+			"Tone unclear",
+			"Read at 2:14",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"lowercase hey", "period.", "typing dots", "nine texts",
 			"haha", "k.", "drafted twice", "all caps",
@@ -127,6 +231,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build a wellness era with a short expiry date.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Day three of forever",
+			"Peak wellness",
+			"The rebrand",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"bought shoes", "own towel", "flex check", "podcast on",
 			"day three", "nods only", "tank top", "incline walk",
@@ -139,6 +248,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build the person quietly controlling the party.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Runs the whole thing",
+			"Master of the aux",
+			"Gone without a trace",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"near the dip", "have you met", "irish exit", "helps clean",
 			"deep talk", "pulls you in", "suddenly gone", "one more song",
@@ -151,6 +265,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build an online purchase you will defend in public.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Worth every penny",
+			"Basket therapy",
+			"Needed it actually",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"added twelve", "70% off", "out for delivery", "didn't fit",
 			"removed eleven", "basket full", "where's the van", "repack it",
@@ -163,6 +282,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build the full emotional arc of a wedding guest.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"Table nine forever",
+			"Peaked at the toast",
+			"Shoes off, all in",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"pacing myself", "cha cha slide", "how do you know", "seating chart",
 			"third drink", "heels off", "lovely venue", "shuttle time",
@@ -175,6 +299,11 @@ var vibeBoardTemplates = []vibeBoardTemplate{
 	},
 	{
 		prompt: "Build a home that has given up on categories.",
+		houseTitles: [vibePracticeHouseCards]string{
+			"The pile has a system",
+			"Domestic entropy",
+			"It's organised actually",
+		},
 		tiles: [VibeBoardMaxTileCount]string{
 			"deep clean", "worn once", "dead batteries", "paid the bill",
 			"reorganize shelf", "not dirty", "mystery key", "watered plant",
@@ -197,10 +326,7 @@ func VibeBoardForDate(date string) (VibeBoard, error) {
 	}
 	launch, _ := time.Parse("2006-01-02", "2026-08-19")
 	days := int(parsed.Sub(launch).Hours() / 24)
-	index := days % len(vibeBoardTemplates)
-	if index < 0 {
-		index += len(vibeBoardTemplates)
-	}
+	index := vibeTemplateIndex(days)
 	number := 47 + days
 	if number < 1 {
 		number = int(parsed.Unix()/86400) + 1

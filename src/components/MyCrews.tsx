@@ -50,7 +50,7 @@ export function MyCrews() {
     try {
       const crew = await createCrew(name, member);
       writeStoredValue(DISPLAY_NAME_KEY, member);
-      toast.success("Crew created. Now bring in two people.");
+      toast.success("Crew created. Bring in at least one more person.");
       router.push(crew.joinPath);
     } catch (error) {
       if (error instanceof CrewsUnavailableError) {
@@ -80,7 +80,7 @@ export function MyCrews() {
         <p className="vg-meta text-lime">Start a private ritual</p>
         <h2 className="mt-2 text-3xl font-black text-cream">Make a crew.</h2>
         <p className="mt-3 text-sm font-semibold leading-6 text-cream/[.58]">
-          One link, no accounts. Three people are enough for an official daily result.
+          One link, no accounts. Two people are enough for a round that counts.
         </p>
         <form className="mt-5 grid gap-4" onSubmit={submit}>
           <label className="grid gap-2">

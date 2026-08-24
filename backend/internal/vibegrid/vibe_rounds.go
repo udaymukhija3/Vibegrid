@@ -21,6 +21,20 @@ import (
 const (
 	MaxVibeTitleRunes = 40
 	maxVibeClientID   = 96
+
+	// minOfficialVibeCards and minOfficialVibeBallots are what it takes for a
+	// round to count: enough cards to be a choice, and enough ballots to be a
+	// judgement.
+	//
+	// Cards used to be three, which quietly excluded the most common private
+	// group there is. Two people who both make a card and both judge have run
+	// the ritual exactly as designed, but the round was permanently unofficial
+	// and their streak was pinned at zero forever, with nothing in the product
+	// explaining why. Two is the honest floor — below it there is nobody to
+	// judge, and at two the vote is forced and the round ties, which the reveal
+	// now says plainly instead of crowning both cards.
+	minOfficialVibeCards   = 2
+	minOfficialVibeBallots = 2
 )
 
 var (
@@ -88,6 +102,10 @@ type VibeCrewSnapshot struct {
 type VibeRoundStore interface {
 	EnsureBoard(ctx context.Context, board VibeBoard) (VibeBoard, error)
 	EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error)
+	// FrozenCrewBoards reports the palette size already locked for each board,
+	// omitting boards this crew has never started. It is the read half of
+	// EnsureCrewBoard: opening the room must not decide the size.
+	FrozenCrewBoards(ctx context.Context, crewID string, boardIDs []string) (map[string]int, error)
 	CrewSnapshot(ctx context.Context, crewID string, boardIDs []string) (VibeCrewSnapshot, error)
 	SubmitVibe(ctx context.Context, crewID, sessionID string, request VibeSubmissionRequest, now time.Time) (VibeSubmission, error)
 	CastVibeVote(ctx context.Context, crewID, sessionID string, request VibeVoteRequest, now time.Time) (VibeVote, error)
@@ -315,6 +333,36 @@ func (store *PostgresVibeRoundStore) EnsureCrewBoard(ctx context.Context, crewID
 		return VibeBoard{}, fmt.Errorf("commit crew board freeze: %w", err)
 	}
 	return projectVibeBoard(board, tileCount), nil
+}
+
+func (store *PostgresVibeRoundStore) FrozenCrewBoards(ctx context.Context, crewID string, boardIDs []string) (map[string]int, error) {
+	frozen := map[string]int{}
+	if len(boardIDs) == 0 {
+		return frozen, nil
+	}
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	rows, err := store.db.QueryContext(ctx,
+		`select board_id, tile_count from vibe_crew_boards
+		 where crew_id = $1 and board_id = any($2)`, crewID, pq.Array(boardIDs))
+	if err != nil {
+		return nil, fmt.Errorf("load frozen crew boards: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var boardID string
+		var tileCount int
+		if err := rows.Scan(&boardID, &tileCount); err != nil {
+			return nil, fmt.Errorf("scan frozen crew board: %w", err)
+		}
+		if !validVibeBoardTileCount(tileCount) {
+			return nil, fmt.Errorf("frozen crew board %s: %w", boardID, ErrVibeBoardInvalid)
+		}
+		frozen[boardID] = tileCount
+	}
+	return frozen, rows.Err()
 }
 
 func (store *PostgresVibeRoundStore) CrewSnapshot(ctx context.Context, crewID string, boardIDs []string) (VibeCrewSnapshot, error) {
@@ -632,9 +680,9 @@ func (store *PostgresVibeRoundStore) CrewStreak(ctx context.Context, crewID, thr
 		 left join vibe_votes v on v.board_id = b.id and v.crew_id = $1
 		 where b.publish_date <= $2
 		 group by b.publish_date
-		 having count(distinct s.id) >= 3 and count(distinct v.voter_member_id) >= 2
+		 having count(distinct s.id) >= $3 and count(distinct v.voter_member_id) >= $4
 		 order by b.publish_date desc
-		 limit 366`, crewID, throughDate)
+		 limit 366`, crewID, throughDate, minOfficialVibeCards, minOfficialVibeBallots)
 	if err != nil {
 		return 0, fmt.Errorf("load vibe crew streak: %w", err)
 	}

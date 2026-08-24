@@ -228,8 +228,78 @@ func TestCrewDailyDisclosureAndTieRules(t *testing.T) {
 			winners++
 		}
 	}
-	if winners != 2 {
-		t.Fatalf("tie should preserve both winners, got %d", winners)
+	// Ari and Bea each drew one ballot. Crowning both of them was the old
+	// behaviour and it made the most natural voting pattern in the game —
+	// everyone backing someone else, one vote each — hand a crown to the whole
+	// crew. A split is reported as a split and nobody is crowned.
+	if winners != 0 {
+		t.Fatalf("a split vote must crown nobody, got %d winners", winners)
+	}
+	if !member.Result.Tied {
+		t.Fatalf("a split vote must report as tied: %#v", member.Result)
+	}
+
+	// One extra ballot for Ari breaks the split, and the crown reappears.
+	decided := snapshot
+	decided.Votes = append(append([]VibeVote(nil), snapshot.Votes...),
+		VibeVote{BoardID: result.ID, VoterMemberID: "member-c", SubmissionID: "result-a"})
+	settled := buildVibeCrewDaily(crew, "owner-session", today, judge, result, decided)
+	if settled.Result.Tied {
+		t.Fatalf("a clear plurality must not report as tied: %#v", settled.Result)
+	}
+	crowned := []string{}
+	for _, card := range settled.Result.Cards {
+		if card.Winner {
+			crowned = append(crowned, card.Title)
+		}
+	}
+	if len(crowned) != 1 || crowned[0] != "Soft launch" {
+		t.Fatalf("expected Ari's card alone to be crowned, got %v", crowned)
+	}
+}
+
+// TestTwoPersonCrewRoundCounts covers the group the official thresholds used to
+// exclude. Two people who both make a card and both judge have run the ritual
+// exactly as designed, but three cards were required, so the round was
+// permanently unofficial and the streak was pinned at zero with nothing in the
+// product explaining why.
+func TestTwoPersonCrewRoundCounts(t *testing.T) {
+	today, _ := VibeBoardForDate("2026-08-21")
+	judge, _ := VibeBoardForDate("2026-08-20")
+	result, _ := VibeBoardForDate("2026-08-19")
+	crew := Crew{ID: "crew-internal", InviteCode: "crew_public", Name: "Two Up", OwnerID: "session-a"}
+	card := func(id, memberID, name, title string) VibeSubmission {
+		return VibeSubmission{ID: id, BoardID: result.ID, MemberID: memberID, DisplayName: name, Title: title,
+			SelectedTileIDs: []string{result.Tiles[0].ID, result.Tiles[1].ID, result.Tiles[2].ID, result.Tiles[3].ID}}
+	}
+	snapshot := VibeCrewSnapshot{
+		Members: []VibeRoundMember{
+			{MemberID: "member-a", SessionID: "session-a", DisplayName: "Ari"},
+			{MemberID: "member-b", SessionID: "session-b", DisplayName: "Bea"},
+		},
+		Submissions: []VibeSubmission{
+			card("result-a", "member-a", "Ari", "Soft launch"),
+			card("result-b", "member-b", "Bea", "Barely operational"),
+		},
+		// With two people neither can vote for themselves, so the round is always
+		// a one-all split. It still counts; it just never crowns anyone.
+		Votes: []VibeVote{
+			{BoardID: result.ID, VoterMemberID: "member-a", SubmissionID: "result-b"},
+			{BoardID: result.ID, VoterMemberID: "member-b", SubmissionID: "result-a"},
+		},
+	}
+
+	view := buildVibeCrewDaily(crew, "session-a", today, judge, result, snapshot)
+	if view.Result == nil || !view.Result.Official {
+		t.Fatalf("a two-person round with two cards and two ballots must count: %#v", view.Result)
+	}
+	if !view.Result.Tied {
+		t.Fatalf("a forced two-person split must report as tied: %#v", view.Result)
+	}
+	for _, card := range view.Result.Cards {
+		if card.Winner {
+			t.Fatalf("a forced split must crown nobody, got %q", card.Title)
+		}
 	}
 }
 
@@ -766,5 +836,118 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 					exitKind, len(exitOutcome.board.Tiles), len(afterExit.Tiles), freezeErr)
 			}
 		})
+	}
+}
+
+// TestPostgresCrewBoardLocksOnPlayNotOnLook covers the ordering that made the
+// crew-sized palette useless on the day it mattered. The natural sequence is to
+// make a crew, glance at today's board, then send the invite — and because the
+// glance froze the size, a crew that filled up afterwards spent all of day one
+// on the three-row board sized for the one person who had arrived.
+func TestPostgresCrewBoardLocksOnPlayNotOnLook(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping Postgres vibe-round integration test")
+	}
+	ctx := context.Background()
+	if err := MigrateDB(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	database, err := OpenDB(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if _, err := database.Exec(`truncate vibe_votes, vibe_submissions, vibe_daily_boards, crew_members, crews restart identity cascade`); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	crewStore := NewPostgresCrewStore(database)
+	rounds := NewPostgresVibeRoundStore(database)
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	crew, err := crewStore.CreateCrew(ctx, "Slow Fill", "Ari", "session-a", now)
+	if err != nil {
+		t.Fatalf("create crew: %v", err)
+	}
+	board, _ := VibeBoardForDate("2026-08-21")
+	if _, err := rounds.EnsureBoard(ctx, board); err != nil {
+		t.Fatalf("persist board: %v", err)
+	}
+
+	// The owner looks at the board alone. Nothing may be locked yet.
+	frozen, err := rounds.FrozenCrewBoards(ctx, crew.ID, []string{board.ID})
+	if err != nil {
+		t.Fatalf("read frozen boards: %v", err)
+	}
+	if len(frozen) != 0 {
+		t.Fatalf("opening the room must not lock a size, got %#v", frozen)
+	}
+
+	// Eleven more people arrive before anybody plays.
+	for index := 0; index < 11; index++ {
+		name := fmt.Sprintf("P%02d", index)
+		if _, err := crewStore.JoinCrew(ctx, crew.InviteCode, name, "session-"+name, now); err != nil {
+			t.Fatalf("join %s: %v", name, err)
+		}
+	}
+
+	// The first card locks the palette, and it is sized for the full room:
+	// twelve members is five rows, not the three the owner would have frozen.
+	locked, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-a", board)
+	if err != nil {
+		t.Fatalf("lock board on submit: %v", err)
+	}
+	if want := vibeBoardRowsForMembers(12) * VibeBoardColumns; len(locked.Tiles) != want {
+		t.Fatalf("expected a %d-fragment palette for twelve members, got %d", want, len(locked.Tiles))
+	}
+
+	frozen, err = rounds.FrozenCrewBoards(ctx, crew.ID, []string{board.ID})
+	if err != nil {
+		t.Fatalf("read frozen boards after play: %v", err)
+	}
+	if frozen[board.ID] != len(locked.Tiles) {
+		t.Fatalf("frozen size %d does not match the dealt palette %d", frozen[board.ID], len(locked.Tiles))
+	}
+
+	// Once play has started the size is settled, even as the room keeps changing.
+	if _, err := crewStore.JoinCrew(ctx, crew.InviteCode, "Late", "session-late", now); err != nil {
+		t.Fatalf("late join: %v", err)
+	}
+	stable, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-late", board)
+	if err != nil {
+		t.Fatalf("late member board: %v", err)
+	}
+	if len(stable.Tiles) != len(locked.Tiles) {
+		t.Fatalf("a started round must not resize: had %d, got %d", len(locked.Tiles), len(stable.Tiles))
+	}
+}
+
+// TestPracticeHouseCardsAreOnPromptAndVaried guards the acquisition surface. A
+// single trio of titles used to be reused on every board forever, so the only
+// round a newcomer ever saw was the same three canned opponents.
+func TestPracticeHouseCardsAreOnPromptAndVaried(t *testing.T) {
+	seen := map[string]string{}
+	for index, template := range vibeBoardTemplates {
+		cards := vibeHouseCardsFor(index)
+		if len(cards) != vibePracticeHouseCards {
+			t.Fatalf("template %d dealt %d house cards", index, len(cards))
+		}
+		for _, card := range cards {
+			if !validVibeText(card.Title, MaxVibeTitleRunes) {
+				t.Fatalf("template %d has an unusable house title %q", index, card.Title)
+			}
+			if owner, exists := seen[card.Title]; exists {
+				t.Fatalf("house title %q is shared by %q and %q", card.Title, owner, template.prompt)
+			}
+			seen[card.Title] = template.prompt
+			if len(card.TileIndices) != VibeCardTileCount {
+				t.Fatalf("house card %q claims %d fragments", card.Title, len(card.TileIndices))
+			}
+			for _, tileIndex := range card.TileIndices {
+				if tileIndex < 0 || tileIndex >= VibePracticeTileCount {
+					t.Fatalf("house card %q reaches fragment %d, outside the practice board", card.Title, tileIndex)
+				}
+			}
+		}
 	}
 }
