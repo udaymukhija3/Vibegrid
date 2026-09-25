@@ -256,10 +256,12 @@ func TestLeaveAndRejoinCannotStuffBallotsOrSelfVote(t *testing.T) {
 	}
 }
 
-// EDGE-003: a result is "official" only with >= 3 cards and >= 2 ballots, and
-// only official rounds extend the crew streak. One browser cycling identities
-// used to be able to manufacture both. It must now fail at the first extra card,
-// so the round stays honestly small and the streak stays at zero.
+// EDGE-003: a result is "official" only with minOfficialVibeCards cards and
+// minOfficialVibeBallots ballots (two each), and only official rounds extend the
+// crew streak. One browser cycling identities used to be able to manufacture
+// both; with the floor at two, a single extra identity would be enough. It must
+// now fail at the first extra card, so the round stays honestly small and the
+// streak stays at zero.
 func TestOneBrowserCannotManufactureAnOfficialResult(t *testing.T) {
 	fixture := newAdversarialFixture(t, "2026-08-21")
 	fixture.createCrew(t, "Solo", "Keeper", "session-keeper")
@@ -485,9 +487,10 @@ func TestJudgeBallotIgnoresCreationOrderWhenItDiffersFromIDOrder(t *testing.T) {
 	}
 }
 
-// EDGE-005: the crew board size must freeze on first member open and must not be
-// rewritten by later joins. Two members opening simultaneously while a third
-// joins must converge on exactly one frozen size.
+// EDGE-005: the crew board size must freeze once (EnsureCrewBoard, which the
+// first card submission calls) and must not be rewritten by later joins. Two
+// members freezing simultaneously while a third joins must converge on exactly
+// one frozen size.
 func TestConcurrentFirstOpenAndJoinFreezeOneSize(t *testing.T) {
 	fixture := newAdversarialFixture(t, "2026-08-21")
 	fixture.createCrew(t, "Night Shift", "Ari", "session-a")

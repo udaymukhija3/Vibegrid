@@ -87,14 +87,14 @@ is configured.
 | --- | --- | --- | --- |
 | 28 unique master fragments, no answer mapping | strict master validation and additive expansion storage | unit + smoke | nested editorial ambiguity checklist is manual |
 | Unlimited is isolated from durable play | public deterministic 4×4 deal endpoint; cards/ballots remain component state | determinism/max-sequence and in-process HTTP/cache tests; E2E assertion checked in | updated embedded E2E rerun and product cannibalization evidence |
-| Crew-sized rows stay stable | crew-lock first-open snapshot + `(crew,board)` key; selection revalidated in transaction | row-band unit matrix; real-Postgres 32-open convergence, max-crew writes, post-freeze join, and join/freeze race | multi-browser join/open trace |
+| Crew-sized rows stay stable | opening is a read; crew-lock snapshot on first card submission + `(crew,board)` key; selection revalidated in transaction | row-band unit matrix; real-Postgres lock-on-play-not-on-look, 32-way freeze convergence, max-crew writes, post-freeze join, and join/freeze race | multi-browser join/submit trace |
 | One card per stable member/round | durable `(crew,identity) → member` mapping + transaction + unique constraint | leave/rejoin exploit regression and distinct-client contention under the Go race detector | retained release CI artifact needed |
 | Exact retry is safe | content-stable client id plus server `Idempotency-Key`; changed input conflicts; concurrent callers replay one response | sequential replay, changed-body conflict, concurrent create, 16-way identical card/vote races, durable E2E smoke | browser timeout E2E |
 | Makers-only blind vote | transaction checks own submission and target | integration tests | multi-browser E2E |
 | No self-vote / one ballot | transaction, stable member id, unique constraint, composite target FK, no-self check | application, direct-SQL, identity-churn, and concurrent race tests | sustained load profile |
 | Outsider privacy | member-aware response projection | unit test | hostile HTTP matrix |
 | Author hidden then revealed | judge/result views | unit test | screen-reader/browser QA |
-| Official threshold and ties | result builder/streak query | unit + integration | validate with real crews |
+| Official threshold and crown | shared 2-card/2-ballot constants read by result builder and streak query; crown only on sole plurality, `tied` flag on a level top | two-person-round unit test; round-robin split and clear-plurality cases | validate with real crews |
 | Frozen dated board | insert-once store + strict admin create | unit/store code | admin HTTP integration |
 | UTC stage rollover | code/deploy/defaults set UTC | deterministic clock tests | deployed midnight soak |
 

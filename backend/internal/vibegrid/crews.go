@@ -376,7 +376,7 @@ func (store *PostgresCrewStore) RemoveMember(ctx context.Context, crewID, member
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	// The crew lock serializes removals with joins, leaves, and first-open board
+	// The crew lock serializes removals with joins, leaves, and first-card board
 	// sizing. Whichever transaction owns the lock first defines whether the
 	// departing member belongs to that dated board's frozen size.
 	tx, ownsTransaction, err := store.crewTransaction(ctx)

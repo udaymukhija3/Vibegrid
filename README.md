@@ -7,7 +7,8 @@
 <p align="center"><strong>Make the vibe. Let the crew decide.</strong></p>
 
 VibeGrid is a daily asynchronous social game. Everyone in a crew receives the
-same four-column palette, sized from 3–7 rows when that dated round first opens.
+same four-column palette, sized from 3–7 rows by membership and frozen when the
+crew's first card for that date is made.
 Each person chooses four, gives the combination a title, and submits one “vibe
 card” to a private crew. The next day,
 people who played judge the cards without seeing the authors. The day after that,
@@ -21,16 +22,17 @@ the room—is the product.
 ```text
 DAY D · MAKE                 DAY D+1 · JUDGE             DAY D+2 · REVEAL
 3–7 rows, 4 columns   ───▶  authors hidden        ───▶  author + votes shown
-pick exactly 4              one non-self vote           ties stay ties
-write one title             makers only can vote        ≥3 cards + ≥2 votes = official
+pick exactly 4              one non-self vote           sole plurality crowned
+write one title             makers only can vote        ≥2 cards + ≥2 votes = official
 ```
 
 - The daily board is a creative constraint, not a puzzle with a concealed
   partition.
 - 1–4 members receive 12 fragments; each additional four-person band adds one
-  row, up to 28 at the 20-member cap. The crew/date size freezes on first member
-  open, so membership changes cannot rewrite an active round. Public practice is
-  deliberately 4×4.
+  row, up to 28 at the 20-member cap. Opening the room never decides the size;
+  the crew's first card on a board freezes it, so a crew that fills up before
+  anyone plays gets the larger palette and later membership changes cannot
+  rewrite an active round. Public practice is deliberately 4×4.
 - A private crew is the primary product. The public homepage opens directly on
   a complete practice round; a dismissible first-visit dialog teaches the make
   → judge → reveal loop without becoming a signup or landing-page gate.
@@ -44,8 +46,11 @@ write one title             makers only can vote        ≥3 cards + ≥2 votes 
   replay ids and server-enforced idempotency keys make timed-out retries safe.
 - Leaving and rejoining restores the same durable crew identity, so membership
   churn cannot reset card, ballot, or self-vote rules.
-- A result is “official” only with at least three cards and two ballots. Small
-  or quiet rounds still reveal honestly but do not extend the crew streak.
+- A result is “official” only with at least two cards and two ballots, so a
+  two-person crew that both makes and judges has a round that counts. Quiet
+  rounds still reveal honestly but do not extend the crew streak.
+- A crown needs a sole plurality. When the top is level, the reveal says the
+  crew split the vote and nobody is crowned.
 - VibeGrid uses one global UTC rollover. Open tabs are never forcibly replaced;
   the next fetch reconciles the current stage.
 

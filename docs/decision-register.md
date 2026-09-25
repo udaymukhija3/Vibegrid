@@ -1,7 +1,8 @@
 # VibeGrid decision register
 
 **Ratified:** 21 August 2026; variable-row amendment 23 August 2026;
-adversarial identity/session amendment 27 August 2026. A row
+adversarial identity/session amendment 27 August 2026; round-counting amendment
+24 August 2026 (PR #39, recorded here 25 September 2026). A row
 changes only when product behavior, tests, and this document change together.
 
 ## Locked product decisions
@@ -12,17 +13,18 @@ changes only when product behavior, tests, and this document change together.
 | Primary unit | One private crew of 3–8 known people | Meaning and reveal suspense depend on relationship context. System cap remains 20. |
 | Daily input | One prompt plus an immutable 28-fragment editorial master; no grouping metadata | Supports every crew-size projection without generating content at request time. |
 | Crew board size | Four columns; 1–4 members = 3 rows, 5–8 = 4, 9–12 = 5, 13–16 = 6, 17–20 = 7 | More participants receive a wider creative palette while the core act remains choosing four. |
-| Size snapshot | Freeze membership band on the first member open for each crew/date; later joins, leaves, and removals do not resize it | Cards, retries, and open clients must refer to one stable palette. Crew locks linearize membership changes against the first open. |
+| Size snapshot | Opening the room is a read that projects an unstarted board from current membership; a member's first card submission for a crew/date freezes the band, and later joins, leaves, and removals do not resize it | Cards, retries, and open clients must refer to one stable palette once play starts. Freezing on first open let whoever looked first (usually the founder, before sending the invite) size the round for a crew of one. Crew locks linearize membership changes against the first submission. |
 | Player output | Exactly 4 fragments plus a 1–40 rune title | Four creates a memorable card; the title makes the selection an authored interpretation. |
 | Answer model | No answer key, category mapping, correctness, difficulty, timer, or mistake count | The crew evaluates resonance, not editor intent. |
 | Phases | Day D make; D+1 blind judge; D+2 reveal | Delayed stages create return behavior and fit an async group-chat tempo. |
 | Judge eligibility | Only members who made a card in that round | Voting is reciprocal participation, not spectator influence. |
 | Ballot | One vote for another member’s card; no self-vote | Simple, legible, and resistant to self-promotion. |
 | Reveal | Author names and final counts reveal to current crew members | The social recognition is the payoff; blind authorship is temporary. |
-| Official result | At least 3 cards and 2 votes | Below that, reveal honestly as a quiet round and do not extend streak. |
-| Ties | Preserve every top tie | No arbitrary tiebreaker or earliest-submit advantage. |
+| Official result | At least 2 cards and 2 votes (`minOfficialVibeCards`, `minOfficialVibeBallots`, read by both the result view and the streak query) | Two people who both make and judge have run the ritual as designed; a three-card floor pinned the most common private group at a zero streak. Below the floor, reveal honestly as a quiet round and do not extend streak. |
+| Crown and ties | A crown requires a sole plurality; a level top is reported as a split (`tied`) and nobody is crowned | No arbitrary tiebreaker or earliest-submit advantage, and no crowning the whole crew when everyone backs someone else once. Two-person rounds always split and say so. |
 | Streak | Consecutive official crew results through the latest revealed date; a quiet revealed date resets rather than pauses it | Measures uninterrupted group recurrence, not one person opening the app. This hard-reset behavior was explicitly retained after adversarial review. |
 | Public experience | The homepage opens directly on complete local practice: make, house ballot, immediate reveal | The playable board is the front door; a dismissible, remembered first-visit dialog teaches the loop without becoming a landing-page gate. No fake people, signup, or durable public content. |
+| Practice ballot | House titles come from the editorial template; every card casts one non-self vote, the house reading the player's card through a stable hash | The previous reveal gave three votes to the player's pick and one to the player every time, so a newcomer could only lose to a bot. Practice can now be won, tied, or lost, and an identical card always replays to the identical result. |
 | Unlimited practice | A clearly labeled local 4×4 sandbox can deal another deterministic palette after every reveal | It satisfies repeat play without adding correctness, scores, persistence, or a second fake community. The finite curated masters may cycle; Unlimited never changes crew stages or streaks. |
 | Identity | A revocable HttpOnly browser bearer maps server-side to a stable anonymous identity; per-crew display name | A leaked cookie can be replaced without rewriting membership/history, while the product keeps no-account onboarding. Token hashes—not bearer values—are stored. Browser-data loss still has no recovery. |
 | Invite security | Rotatable capability code separate from internal crew id | A leaked link can be revoked without destroying history. |
@@ -77,7 +79,7 @@ changes only when product behavior, tests, and this document change together.
 | Crew-size formula | Controlled crews show scan cost or card quality is materially worse in a membership band; measure overlap, time-to-submit, completion, and abandonment by frozen row count | Keep the ratified 3–7 row bands. Change formula only with a migration and historical compatibility plan. |
 | Notifications | Crews make but fail to return for judge/reveal | No push/email. Test an optional calendar or web-push reminder only after funnel instrumentation. |
 | Phase duration | Multi-timezone crews miss 24-hour stages | Keep daily UTC stages; consider a 36-hour grace only with missed-stage data. |
-| Crew-size guidance | Official-round rate is poor below a measured size | UI says invite at least three; system cap 20. |
+| Crew-size guidance | Official-round rate is poor below a measured size | UI says two people are enough for a round that counts; system cap 20. |
 | Result archive navigation | Crews complete enough rounds to need browsing | Show only latest reveal now; add private pagination when history exists. |
 | Accounts/cross-device recovery | Browser loss or multi-device use is a measured retention problem | Guest session remains primary. |
 | Realtime delivery | Poll delay appears in user complaints or interaction data | Keep 30-second visible polling. |

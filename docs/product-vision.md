@@ -1,7 +1,9 @@
 # VibeGrid product vision
 
 **Ratified:** 21 August 2026; crew-sized board contract ratified 23 August 2026;
-adversarial identity/session amendment ratified 27 August 2026
+adversarial identity/session amendment ratified 27 August 2026; first-card
+size lock, two-card official floor, sole-plurality crown, and honest practice
+ballot amended 24 August 2026 (PR #39) and recorded here 25 September 2026
 
 **Status:** source of truth for product, design, content, and engineering
 **Supersedes:** the hidden-category daily puzzle described by the launch report
@@ -42,9 +44,10 @@ Every date has one immutable editorial master:
 - no categories, group ids, difficulty, timer, mistakes, or answer key.
 
 Every crew sees a nested, four-column projection of that master. The number of
-rows is based on membership when a member first opens that dated round:
+rows follows current membership until the crew's first card on that dated board
+is submitted, and is frozen at that moment:
 
-| Members at first open | Rows | Fragments |
+| Members at first card | Rows | Fragments |
 | --- | --- | --- |
 | 1–4 | 3 | 12 |
 | 5–8 | 4 | 16 |
@@ -52,9 +55,13 @@ rows is based on membership when a member first opens that dated round:
 | 13–16 | 6 | 24 |
 | 17–20 | 7 | 28 |
 
-That choice is then frozen for the crew and date. A join, leave, removal,
-refresh, retry, or second server opening the round cannot resize the palette
-under existing cards. Different crews may therefore receive different amounts
+Opening the room is a read and never decides the size. The natural order is to
+make a crew, glance at today's board, and then send the invite; freezing on
+first open would lock a crew that fills to twelve before anyone plays onto the
+three-row board sized for its founder. Once the first card exists the choice is
+frozen for the crew and date: a join, leave, removal, refresh, retry, or second
+server cannot resize the palette under existing cards. Because every size is a
+prefix of the same master, a selection drafted before a join stays valid. Different crews may therefore receive different amounts
 of material on the same date; every member inside one crew receives exactly the
 same historical projection. The first 12, 16, 20, 24, and 28 fragments must each
 stand as an intentionally edited palette—not padding exposed only at scale.
@@ -79,7 +86,7 @@ VibeGrid deliberately spans three days:
 | --- | --- | --- | --- |
 | Day D · Make | Choose four and title one card | Everyone else’s cards | Private authorship |
 | Day D+1 · Judge | Eligible makers cast one vote for another card | Authors and live tally | Social inference |
-| Day D+2 · Reveal | See authors, votes, winner or tie | Nothing in that result | Recognition and conversation |
+| Day D+2 · Reveal | See authors, votes, and a sole winner or a split | Nothing in that result | Recognition and conversation |
 
 The daily crew page stacks these stages: latest reveal first, yesterday’s
 ballot second, today’s make third. That creates a reason to return that is not
@@ -113,10 +120,16 @@ Consequences:
 
 ## Thresholds and quiet rounds
 
-An official result needs at least three cards and two ballots from distinct,
-stable crew identities. With fewer, VibeGrid still reveals the cards and the
+An official result needs at least two cards and two ballots from distinct,
+stable crew identities. Two is the honest floor: below it there is nothing to
+choose between, and a two-person crew that both makes and judges has run the
+ritual exactly as designed. An earlier floor of three cards left that most
+common private group permanently unofficial with a streak pinned at zero. With fewer, VibeGrid still reveals the cards and the
 actual votes but labels the round quiet and ends the current consecutive crew
 streak; a quiet day does not pause a streak.
+
+The floor is held in one pair of constants that the result view and the streak
+query both read, so the two cannot drift apart.
 
 This rule prevents one active membership from manufacturing a “winner,” avoids
 fake activity, and makes the streak a measure of recurring group participation
@@ -126,8 +139,13 @@ browsers can create several anonymous identities. Private-crew trust and owner
 controls remain part of the v1 boundary; the UI and documentation must never
 describe the threshold as identity verification.
 
-Ties are preserved. A social game should not invent a secondary ranking rule
-just to force a crown.
+A crown requires a sole plurality. When two or more cards share the top, the
+reveal reports a split, sets `tied`, and crowns nobody; a social game should not
+invent a secondary ranking rule just to force a crown, and crowning every tied
+card would hand the whole crew a crown for the most natural voting pattern
+(everyone backing someone else once). At two people the vote is forced and
+always splits, so those crews get a round that counts and an honest “nobody took
+it outright.”
 
 ## The public practice round
 
@@ -139,6 +157,13 @@ The homepage must teach the full promise without requiring friends or a signup:
 4. create a crew if the loop felt good.
 
 House cards are tutorial fixtures, never presented as real people or activity.
+Their titles belong to the editorial template alongside the prompt and
+fragments. The practice ballot plays out like a four-person crew: every card
+casts one non-self vote, the house reading the player's card through a stable
+hash of its title and fragments. Practice can therefore be won, tied, or lost,
+and replaying an identical card always gives the identical result, so the
+outcome cannot be rerolled. It must never be rigged toward the player's pick or
+against the player.
 Public practice state is local and disposable. This avoids a hollow landing
 page while keeping the private crew as the only durable social product.
 
@@ -281,8 +306,11 @@ concurrency, removed members, leaked links, and partial participation.
   its key budget cannot turn the key ceiling into a global first-visitor outage.
 - Dated board rows are immutable snapshots. Editorial fallback code may evolve
   without rewriting history.
-- Per-crew row count is inserted once under the same crew lock used by joins and
-  leaves. The database uniqueness key is the final arbiter for concurrent opens.
+- Per-crew row count is inserted once, when a member first submits a card for
+  that board, under the same crew lock used by joins and leaves. The freeze runs
+  before title and selection validation, so a rejected first attempt still fixes
+  the size. Opening the room only reads the lock. The database uniqueness key is
+  the final arbiter for concurrent submits.
 - The original 12-fragment row and its 16-fragment expansion are stored
   separately so the schema migration is additive and the prior binary can still
   boot during rollback. A roll-forward is required after cards use expansion ids.

@@ -45,8 +45,8 @@ is no canonical grouping and no correct solution. The creative and social output
 of the crew is the content.
 
 Every daily board contains one human-written prompt and a 28-fragment editorial
-master. A crew receives a frozen four-column projection sized when a member
-first opens that date: 1–4 members see 12 fragments, 5–8 see 16, 9–12 see 20,
+master. A crew receives a four-column projection sized from membership and
+frozen by its first card on that date: 1–4 members see 12 fragments, 5–8 see 16, 9–12 see 20,
 13–16 see 24, and 17–20 see 28. Public practice is deliberately 4×4. The row
 count changes the amount of creative material, not the answer model—there is
 still no partition, intended quartet, correctness, timer, or mistakes. A round
@@ -59,9 +59,10 @@ unfolds across three UTC dates:
    cards without authors and cast exactly one non-self vote. They cannot revise
    the ballot or vote twice.
 3. **Reveal — day D+2.** Authors, vote totals, ties, and crew history become
-   visible. Ties remain ties; the product does not manufacture a winner.
+   visible. Only a sole plurality is crowned; a level top is reported as a
+   split, and the product does not manufacture a winner.
 
-A result is official only when at least three cards and two ballots exist.
+A result is official only when at least two cards and two ballots exist.
 Undersized rounds end quietly and do not extend the crew streak. This makes the
 streak evidence of a continuing group ritual, not individual compulsion.
 

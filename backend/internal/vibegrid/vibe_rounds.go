@@ -268,8 +268,9 @@ func (store *PostgresVibeRoundStore) EnsureBoard(ctx context.Context, board Vibe
 
 // EnsureCrewBoard freezes one crew's palette size for one dated board. The
 // crew row lock is shared with joins and leaves, which gives membership changes
-// and first-open sizing one deterministic order. The unique key makes two
-// members opening at once converge on the same snapshot.
+// and first-card sizing one deterministic order. The unique key makes two
+// members submitting at once converge on the same snapshot. Opening the room
+// never calls this; it reads FrozenCrewBoards instead.
 func (store *PostgresVibeRoundStore) EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error) {
 	if err := validateVibeBoard(board); err != nil {
 		return VibeBoard{}, err
