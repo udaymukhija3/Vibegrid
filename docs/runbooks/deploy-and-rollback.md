@@ -3,8 +3,9 @@
 ## How a change reaches production
 
 1. Merge to `main` through a branch-protected PR.
-2. GitHub Actions runs CI: Go race tests against Postgres, security/vulnerability
-   checks, lint, typecheck, unit tests, and build.
+2. GitHub Actions runs CI: Go race tests against Postgres,
+   database-backed single-binary E2E, security/vulnerability checks, lint,
+   typecheck, unit tests, and build.
 3. After green CI, `.github/workflows/deploy.yml` calls the Render Deploy Hook.
    `render.yaml` has `autoDeploy: false`, so a red main cannot deploy.
 4. Render builds the Dockerfile, applies boot migrations on the single free
@@ -34,7 +35,7 @@ After either, re-run the smoke check above.
 
 ## Migration policy (what makes rollback safe)
 
-Migrations are goose, forward-only, and must stay **additive** (new
+Migrations are goose and forward-only. Prefer **additive** changes (new
 tables/columns/indexes only—never drop or rename something the previous release
 reads). Migration `00019` follows that rule: the original 12 fragments remain in
 `vibe_daily_boards`, while expansions and crew-size snapshots live in new
@@ -44,3 +45,10 @@ without text in the old UI; use a roll-forward unless the database is confirmed
 to contain no such cards. If a destructive migration is ever unavoidable, take
 a manual backup first and split it across two releases: release N stops using
 the object, release N+1 drops it.
+
+Migration `00020` is an intentional compatibility boundary: it removes automatic
+member-id minting and requires every active membership to reference the durable
+identity mapping. Deploy migration 20 and a supporting binary together. After
+it applies, do not restore a pre-20 binary; roll forward, because old create/join
+writes cannot satisfy the new invariant. Migration `00021` is additive, but its
+hash-only guest-session store is required for cookie revocation guarantees.

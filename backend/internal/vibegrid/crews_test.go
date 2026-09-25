@@ -30,6 +30,9 @@ func crewRequest(t *testing.T, handler http.Handler, method, path string, cookie
 	request.Header.Set("Content-Type", "application/json")
 	if cookie != nil {
 		request.AddCookie(cookie)
+		if method != http.MethodGet && method != http.MethodHead {
+			request.Header.Set(guestCSRFHeader, guestCSRFToken(cookie.Value))
+		}
 	}
 
 	response := httptest.NewRecorder()
@@ -505,7 +508,7 @@ func TestOwnerLeavingTransfersTheCrew(t *testing.T) {
 		t.Fatalf("join failed: %d %s", response.Code, response.Body.String())
 	}
 
-	if response := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", owner, nil); response.Code != http.StatusOK {
+	if response := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", owner, crewLeaveRequest{}); response.Code != http.StatusOK {
 		t.Fatalf("owner leave failed: %d %s", response.Code, response.Body.String())
 	}
 
@@ -526,7 +529,15 @@ func TestLastMemberLeavingDeletesTheCrew(t *testing.T) {
 	owner := newCrewSession(t, handler)
 	crew := createCrew(t, handler, owner, "Solo", "Only")
 
-	if response := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", owner, nil); response.Code != http.StatusOK {
+	unconfirmed := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", owner, crewLeaveRequest{})
+	if unconfirmed.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed destructive leave should return 409, got %d: %s", unconfirmed.Code, unconfirmed.Body.String())
+	}
+	if board := crewRequest(t, handler, http.MethodGet, "/api/crews/"+crew.InviteCode, owner, nil); board.Code != http.StatusOK {
+		t.Fatalf("unconfirmed destructive leave changed crew state, got %d", board.Code)
+	}
+
+	if response := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", owner, crewLeaveRequest{ConfirmDelete: true}); response.Code != http.StatusOK {
 		t.Fatalf("leave failed: %d %s", response.Code, response.Body.String())
 	}
 	if board := crewRequest(t, handler, http.MethodGet, "/api/crews/"+crew.InviteCode, owner, nil); board.Code != http.StatusNotFound {
@@ -542,7 +553,7 @@ func TestLeavingRequiresMembership(t *testing.T) {
 	crew := createCrew(t, handler, owner, "Members Only", "Owner")
 
 	stranger := newCrewSession(t, handler)
-	if response := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", stranger, nil); response.Code != http.StatusForbidden {
+	if response := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/leave", stranger, crewLeaveRequest{}); response.Code != http.StatusForbidden {
 		t.Fatalf("a non-member leaving should be refused, got %d: %s", response.Code, response.Body.String())
 	}
 }

@@ -17,13 +17,14 @@ import (
 )
 
 var (
-	ErrCrewNotFound      = errors.New("crew not found")
-	ErrCrewFull          = errors.New("crew is full")
-	ErrCrewNameInvalid   = errors.New("crew name is invalid")
-	ErrDisplayNameTaken  = errors.New("display name is already used in this crew")
-	ErrNotCrewOwner      = errors.New("only the crew owner can do that")
-	ErrNotCrewMember     = errors.New("not a member of this crew")
-	ErrCrewMemberUnknown = errors.New("crew member not found")
+	ErrCrewNotFound                   = errors.New("crew not found")
+	ErrCrewFull                       = errors.New("crew is full")
+	ErrCrewNameInvalid                = errors.New("crew name is invalid")
+	ErrDisplayNameTaken               = errors.New("display name is already used in this crew")
+	ErrNotCrewOwner                   = errors.New("only the crew owner can do that")
+	ErrNotCrewMember                  = errors.New("not a member of this crew")
+	ErrCrewMemberUnknown              = errors.New("crew member not found")
+	ErrCrewDeleteConfirmationRequired = errors.New("deleting the last crew membership requires confirmation")
 )
 
 const (
@@ -99,7 +100,7 @@ type CrewStore interface {
 	RemoveMember(ctx context.Context, crewID, memberID, sessionID string) error
 	// LeaveCrew removes the caller. If the owner leaves, ownership passes to the
 	// longest-standing remaining member; the last member out deletes the crew.
-	LeaveCrew(ctx context.Context, crewID, sessionID string) error
+	LeaveCrew(ctx context.Context, crewID, sessionID string, confirmDelete bool) error
 }
 
 // normalizeCrewName trims and validates a crew or display name. Names are shown
@@ -117,7 +118,10 @@ func normalizeCrewName(raw string, limit int) (string, error) {
 		if r == '\n' || r == '\r' || r == '\t' {
 			return "", ErrCrewNameInvalid
 		}
-		if unicode.IsControl(r) {
+		// Format characters include bidi overrides/isolates and zero-width joiners.
+		// React escapes markup, but these code points can still reorder or disguise
+		// the human-readable names that owner controls and reveals rely on.
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return "", ErrCrewNameInvalid
 		}
 	}
@@ -170,11 +174,13 @@ func (store *PostgresCrewStore) CreateCrew(ctx context.Context, name, displayNam
 		return Crew{}, err
 	}
 
-	tx, err := store.db.BeginTx(ctx, nil)
+	tx, ownsTransaction, err := store.crewTransaction(ctx)
 	if err != nil {
 		return Crew{}, fmt.Errorf("begin crew create: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	if ownsTransaction {
+		defer func() { _ = tx.Rollback() }()
+	}
 
 	crew := Crew{
 		ID:         newCrewID(),
@@ -190,23 +196,36 @@ func (store *PostgresCrewStore) CreateCrew(ctx context.Context, name, displayNam
 	); err != nil {
 		return Crew{}, fmt.Errorf("insert crew: %w", err)
 	}
+	var memberID string
+	if err := tx.QueryRowContext(ctx,
+		`insert into crew_member_identities (crew_id, session_id, first_joined_at)
+		 values ($1, $2, $3)
+		 returning member_id`,
+		crew.ID, sessionID, now.UTC(),
+	).Scan(&memberID); err != nil {
+		return Crew{}, fmt.Errorf("insert founding member identity: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx,
-		`insert into crew_members (crew_id, session_id, display_name, joined_at)
-		 values ($1, $2, $3, $4)`,
-		crew.ID, sessionID, member, now.UTC(),
+		`insert into crew_members (crew_id, session_id, member_id, display_name, joined_at)
+		 values ($1, $2, $3, $4, $5)`,
+		crew.ID, sessionID, memberID, member, now.UTC(),
 	); err != nil {
 		return Crew{}, fmt.Errorf("insert founding member: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return Crew{}, fmt.Errorf("commit crew create: %w", err)
+	if ownsTransaction {
+		if err := tx.Commit(); err != nil {
+			return Crew{}, fmt.Errorf("commit crew create: %w", err)
+		}
 	}
 	return crew, nil
 }
 
 // JoinCrew adds the session to the crew, or updates its display name if it is
-// already a member, so a repeated link click is never an error. The member
-// count is checked inside the transaction with the crew row locked, so two
-// simultaneous joins cannot both slip past the cap.
+// already a member, so a repeated link click is never an error. A durable
+// crew_member_identities row survives leave/removal, which means rejoining
+// restores the same member id and cannot reset per-round card or ballot rules.
+// The member count is checked inside the transaction with the crew row locked,
+// so two simultaneous joins cannot both slip past the cap.
 func (store *PostgresCrewStore) JoinCrew(ctx context.Context, inviteCode, displayName, sessionID string, now time.Time) (Crew, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
@@ -216,11 +235,13 @@ func (store *PostgresCrewStore) JoinCrew(ctx context.Context, inviteCode, displa
 		return Crew{}, err
 	}
 
-	tx, err := store.db.BeginTx(ctx, nil)
+	tx, ownsTransaction, err := store.crewTransaction(ctx)
 	if err != nil {
 		return Crew{}, fmt.Errorf("begin crew join: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	if ownsTransaction {
+		defer func() { _ = tx.Rollback() }()
+	}
 
 	// Joining is gated on the *current* invite code, so a rotated-away link
 	// cannot be replayed to get back in.
@@ -274,16 +295,33 @@ func (store *PostgresCrewStore) JoinCrew(ctx context.Context, inviteCode, displa
 		return Crew{}, ErrDisplayNameTaken
 	}
 
+	// The no-op conflict update is intentional: unlike DO NOTHING it returns the
+	// existing durable id, while preserving first_joined_at. The crew row lock
+	// above serializes this with leave/removal and the active member cap.
+	var memberID string
+	if err := tx.QueryRowContext(ctx,
+		`insert into crew_member_identities (crew_id, session_id, first_joined_at)
+		 values ($1, $2, $3)
+		 on conflict (crew_id, session_id) do update
+		 set session_id = excluded.session_id
+		 returning member_id`,
+		crewID, sessionID, now.UTC(),
+	).Scan(&memberID); err != nil {
+		return Crew{}, fmt.Errorf("resolve crew member identity: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx,
-		`insert into crew_members (crew_id, session_id, display_name, joined_at)
-		 values ($1, $2, $3, $4)
+		`insert into crew_members (crew_id, session_id, member_id, display_name, joined_at)
+		 values ($1, $2, $3, $4, $5)
 		 on conflict (crew_id, session_id) do update set display_name = excluded.display_name`,
-		crewID, sessionID, member, now.UTC(),
+		crewID, sessionID, memberID, member, now.UTC(),
 	); err != nil {
 		return Crew{}, fmt.Errorf("insert crew member: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return Crew{}, fmt.Errorf("commit crew join: %w", err)
+	if ownsTransaction {
+		if err := tx.Commit(); err != nil {
+			return Crew{}, fmt.Errorf("commit crew join: %w", err)
+		}
 	}
 	return crew, nil
 }
@@ -314,7 +352,11 @@ func (store *PostgresCrewStore) RotateInvite(ctx context.Context, crewID, sessio
 	defer cancel()
 
 	var crew Crew
-	err := store.db.QueryRowContext(ctx,
+	queryer := crewQueryer(store.db)
+	if tx := transactionFromContext(ctx); tx != nil {
+		queryer = tx
+	}
+	err := queryer.QueryRowContext(ctx,
 		`update crews
 		 set invite_code = $3
 		 where id = $1 and created_by_session = $2
@@ -337,11 +379,13 @@ func (store *PostgresCrewStore) RemoveMember(ctx context.Context, crewID, member
 	// The crew lock serializes removals with joins, leaves, and first-open board
 	// sizing. Whichever transaction owns the lock first defines whether the
 	// departing member belongs to that dated board's frozen size.
-	tx, err := store.db.BeginTx(ctx, nil)
+	tx, ownsTransaction, err := store.crewTransaction(ctx)
 	if err != nil {
 		return fmt.Errorf("begin crew member removal: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	if ownsTransaction {
+		defer func() { _ = tx.Rollback() }()
+	}
 
 	var ownerID string
 	if err := tx.QueryRowContext(ctx,
@@ -372,21 +416,23 @@ func (store *PostgresCrewStore) RemoveMember(ctx context.Context, crewID, member
 	if affected == 0 {
 		return ErrCrewMemberUnknown
 	}
-	return commitCrewTx(tx, "member removal")
+	return commitCrewTx(tx, ownsTransaction, "member removal")
 }
 
 // LeaveCrew removes the caller and keeps the crew owned. Succession is by join
 // order so the crew does not end up ownerless and unrotatable, and an empty crew
 // is deleted rather than left as an orphan row holding a name.
-func (store *PostgresCrewStore) LeaveCrew(ctx context.Context, crewID, sessionID string) error {
+func (store *PostgresCrewStore) LeaveCrew(ctx context.Context, crewID, sessionID string, confirmDelete bool) error {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	tx, err := store.db.BeginTx(ctx, nil)
+	tx, ownsTransaction, err := store.crewTransaction(ctx)
 	if err != nil {
 		return fmt.Errorf("begin crew leave: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	if ownsTransaction {
+		defer func() { _ = tx.Rollback() }()
+	}
 
 	var ownerID string
 	err = tx.QueryRowContext(ctx,
@@ -413,7 +459,7 @@ func (store *PostgresCrewStore) LeaveCrew(ctx context.Context, crewID, sessionID
 	}
 
 	if ownerID != sessionID {
-		return commitCrewTx(tx, "leave")
+		return commitCrewTx(tx, ownsTransaction, "leave")
 	}
 
 	var successor string
@@ -425,10 +471,16 @@ func (store *PostgresCrewStore) LeaveCrew(ctx context.Context, crewID, sessionID
 		crewID,
 	).Scan(&successor)
 	if errors.Is(err, sql.ErrNoRows) {
+		// Deleting the last membership cascades through the crew's cards, ballots,
+		// frozen boards, and durable identity tombstones. Keep that irreversible
+		// effect inside this locked transaction and require an explicit acknowledgement.
+		if !confirmDelete {
+			return ErrCrewDeleteConfirmationRequired
+		}
 		if _, err := tx.ExecContext(ctx, `delete from crews where id = $1`, crewID); err != nil {
 			return fmt.Errorf("delete empty crew: %w", err)
 		}
-		return commitCrewTx(tx, "leave")
+		return commitCrewTx(tx, ownsTransaction, "leave")
 	}
 	if err != nil {
 		return fmt.Errorf("find crew successor: %w", err)
@@ -438,10 +490,25 @@ func (store *PostgresCrewStore) LeaveCrew(ctx context.Context, crewID, sessionID
 	); err != nil {
 		return fmt.Errorf("transfer crew ownership: %w", err)
 	}
-	return commitCrewTx(tx, "leave")
+	return commitCrewTx(tx, ownsTransaction, "leave")
 }
 
-func commitCrewTx(tx *sql.Tx, action string) error {
+func (store *PostgresCrewStore) crewTransaction(ctx context.Context) (*sql.Tx, bool, error) {
+	if tx := transactionFromContext(ctx); tx != nil {
+		return tx, false, nil
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	return tx, true, err
+}
+
+type crewQueryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func commitCrewTx(tx *sql.Tx, ownsTransaction bool, action string) error {
+	if !ownsTransaction {
+		return nil
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit crew %s: %w", action, err)
 	}
@@ -450,8 +517,12 @@ func commitCrewTx(tx *sql.Tx, action string) error {
 
 // requireOwner reports why an owner-only write matched nothing.
 func (store *PostgresCrewStore) requireOwner(ctx context.Context, crewID, sessionID string) error {
+	queryer := crewQueryer(store.db)
+	if tx := transactionFromContext(ctx); tx != nil {
+		queryer = tx
+	}
 	var ownerID string
-	err := store.db.QueryRowContext(ctx,
+	err := queryer.QueryRowContext(ctx,
 		`select created_by_session from crews where id = $1`, crewID,
 	).Scan(&ownerID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -467,8 +538,12 @@ func (store *PostgresCrewStore) requireOwner(ctx context.Context, crewID, sessio
 }
 
 func (store *PostgresCrewStore) ownershipError(ctx context.Context, crewID string) error {
+	queryer := crewQueryer(store.db)
+	if tx := transactionFromContext(ctx); tx != nil {
+		queryer = tx
+	}
 	var exists bool
-	if err := store.db.QueryRowContext(ctx,
+	if err := queryer.QueryRowContext(ctx,
 		`select exists (select 1 from crews where id = $1)`, crewID,
 	).Scan(&exists); err != nil {
 		return fmt.Errorf("check crew exists: %w", err)
@@ -619,4 +694,28 @@ func crewRank(entry CrewBoardEntry) int {
 	default:
 		return 3
 	}
+}
+
+// validMemberID screens the opaque membership handle before it reaches a uuid
+// column. Postgres rejects a malformed uuid with a type error, which the crew
+// error mapper can only report as an internal failure; a bad handle from a
+// client is a 404, not a 500.
+func validMemberID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, r := range value {
+		switch index {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+			if !isHex {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -41,7 +41,9 @@ write one title             makers only can vote        ≥3 cards + ≥2 votes 
 - A member sees only their own card during the make phase. Eligible judges see
   cards without authors. Results reveal authors to current crew members.
 - One card and one ballot are allowed per member per board. Client-generated
-  replay ids make timed-out retries safe.
+  replay ids and server-enforced idempotency keys make timed-out retries safe.
+- Leaving and rejoining restores the same durable crew identity, so membership
+  churn cannot reset card, ballot, or self-vote rules.
 - A result is “official” only with at least three cards and two ballots. Small
   or quiet rounds still reveal honestly but do not extend the crew streak.
 - VibeGrid uses one global UTC rollover. Open tabs are never forcibly replaced;
@@ -95,7 +97,18 @@ created this distinction. The mechanic had to change.
 - Go owns membership checks, one-card/one-vote invariants, no-self-vote rules,
   replay semantics, result thresholds, ties, and staged disclosure.
 - Postgres stores immutable dated board snapshots, card author snapshots, and
-  ballots with uniqueness constraints and cascade/restrict behavior.
+  ballots with uniqueness, same-round target, no-self-vote, and stable-member
+  constraints.
+- Guest cookies are revocable bearer keys mapped to stable anonymous identities;
+  only hashes are stored. The crew UI can replace a suspected leaked key without
+  losing memberships or history.
+- Public document views do not create session rows. First API bootstrap keeps a
+  new bearer distinct from its durable identity, is network-limited before any
+  write, and refreshes an active Postgres session at most hourly rather than on
+  every 30-second crew poll.
+- Every cookie-authenticated crew write requires explicit CSRF protection. A
+  last-member leave requires an explicit acknowledgement of permanent crew
+  deletion.
 - Public identifiers and JSON bodies are capped and validated before storage
   work. Public reads and anonymous writes are rate-limited.
 - Production guardrails require Postgres, secure cookies, an exact HTTPS public
@@ -137,12 +150,12 @@ Go HTTP binary
           │
           ▼
 Postgres
-	├─ vibe_daily_boards
-	├─ vibe_board_expansions / vibe_crew_boards
+  ├─ vibe_daily_boards
+  ├─ vibe_board_expansions / vibe_crew_boards
   ├─ vibe_submissions
   ├─ vibe_votes
-  ├─ crews / crew_members
-  └─ admin, idempotency, moderation, legacy attempt tables
+  ├─ crews / active members / durable member identities
+  └─ hash-only guest/admin sessions, idempotency, moderation, legacy attempts
 ```
 
 Important implementation entry points:
@@ -157,6 +170,10 @@ Important implementation entry points:
 - `backend/db/migrations/00018_vibe_rounds.sql` — durable schema and constraints.
 - `backend/db/migrations/00019_variable_vibe_boards.sql` — additive master
   expansion plus immutable per-crew size snapshots.
+- `backend/db/migrations/00020_stable_crew_identity.sql` — stable rejoin identity
+  plus database-enforced vote targets and no-self-vote.
+- `backend/db/migrations/00021_revocable_guest_sessions.sql` — hash-only,
+  revocable anonymous browser bearers.
 - `src/components/VibeGridApp.tsx` — public practice loop.
 - `src/components/CrewRoom.tsx` — make, judge, result, membership, and invite UX.
 - `src/components/VibeComposer.tsx` and `VibeCard.tsx` — core interaction atoms.
@@ -205,6 +222,7 @@ Primary APIs:
 - `GET /api/crews/<invite>/daily`
 - `POST /api/crews/<invite>/submissions`
 - `POST /api/crews/<invite>/votes`
+- `POST /api/session/rotate`
 - `GET|POST /api/admin/vibe-boards`
 
 ## Verification
@@ -215,16 +233,20 @@ npm run lint
 npm test
 npm run test:security
 npm run test:backend
+TEST_DATABASE_URL="postgres://..." npm run test:backend:postgres
 go vet ./backend/...
-go test -race ./backend/...
+TEST_DATABASE_URL="postgres://..." go test -race ./backend/...
 npm run build
+DATABASE_URL="postgres://..." VIBEGRID_MIGRATE_ON_BOOT=true npm run test:e2e
 git diff --check
 ```
 
-Set `TEST_DATABASE_URL` to exercise the real transactional crew integration
-tests. `npm run test:e2e` builds the exported frontend and Go binary, starts the
-single-container path, and runs the smoke contract; local port binding may need
-an unrestricted environment.
+Without `TEST_DATABASE_URL`, `npm run test:backend` emits an explicit warning
+that the transactional tests skipped. The strict Postgres command fails instead
+of producing partial green evidence. `npm run test:e2e` requires `DATABASE_URL`,
+builds the exported frontend and Go binary, starts the single-container path,
+and mutates a durable crew; local port binding may need an unrestricted
+environment.
 
 ## Deliberate boundaries
 

@@ -1,6 +1,7 @@
 # VibeGrid product vision
 
-**Ratified:** 21 August 2026; crew-sized board contract ratified 23 August 2026
+**Ratified:** 21 August 2026; crew-sized board contract ratified 23 August 2026;
+adversarial identity/session amendment ratified 27 August 2026
 
 **Status:** source of truth for product, design, content, and engineering
 **Supersedes:** the hidden-category daily puzzle described by the launch report
@@ -112,13 +113,18 @@ Consequences:
 
 ## Thresholds and quiet rounds
 
-An official result needs at least three cards and two ballots. With fewer,
-VibeGrid still reveals the cards and the actual votes but labels the round quiet
-and does not extend the crew streak.
+An official result needs at least three cards and two ballots from distinct,
+stable crew identities. With fewer, VibeGrid still reveals the cards and the
+actual votes but labels the round quiet and ends the current consecutive crew
+streak; a quiet day does not pause a streak.
 
-This rule prevents a one-person or two-person room from manufacturing a
-“winner,” avoids fake activity, and makes the streak a measure of recurring
-group participation rather than one dedicated user’s habit.
+This rule prevents one active membership from manufacturing a “winner,” avoids
+fake activity, and makes the streak a measure of recurring group participation
+rather than one dedicated browser’s habit. It is not proof of unique humans:
+VibeGrid has no accounts, so an invited attacker controlling several fresh
+browsers can create several anonymous identities. Private-crew trust and owner
+controls remain part of the v1 boundary; the UI and documentation must never
+describe the threshold as identity verification.
 
 Ties are preserved. A social game should not invent a secondary ranking rule
 just to force a crown.
@@ -246,8 +252,33 @@ concurrency, removed members, leaked links, and partial participation.
 
 - The server, not the client, owns phase projection and disclosure.
 - Membership is checked inside each mutation transaction.
-- Database uniqueness constraints mirror one-card and one-ballot rules.
+- A durable `(crew, anonymous identity) → member id` mapping survives leave and
+  removal. Rejoining restores the same round identity, card, and ballot limits;
+  deleting the crew removes the mapping.
+- Database constraints mirror one-card and one-ballot rules and make cross-round
+  vote targets and self-votes impossible even outside the application path.
 - Client-generated replay ids survive timeouts; changed replay input is rejected.
+  Every crew mutation also honors `Idempotency-Key`, so a network retry replays
+  one stored response instead of treating the header as decoration.
+- Blind ballot order is stable but derived from cryptographically random card
+  ids, never submission time or live roster activity.
+- The browser cookie is a revocable bearer, not the durable identity itself.
+  Postgres stores only its SHA-256 hash; a member can replace a suspected leaked
+  browser key without losing crew history.
+- A public document view may mint the browser cookie but does not create a
+  database row. First API bootstrap maps new bearers to a separate one-way-
+  derived identity; only cookies proven to own pre-migration rows retain their
+  legacy value. Active session rows refresh at most hourly, so a 30-second crew
+  poll is a read rather than 2,880 writes per idle tab per day. Unknown-session
+  creation also has a source-network ceiling before it can write.
+- Every cookie-authenticated crew mutation requires an explicit same-origin CSRF
+  token in addition to JSON/CORS framing.
+- Last-member leave is an acknowledged destructive operation because it deletes
+  the crew, cards, ballots, results, invite, and durable member mappings.
+- Untrusted display names and titles reject control, bidi, and invisible Unicode
+  format characters that could disguise owner controls or blind cards.
+- In-process public-read rate-limit state is bounded with eviction; exhausting
+  its key budget cannot turn the key ceiling into a global first-visitor outage.
 - Dated board rows are immutable snapshots. Editorial fallback code may evolve
   without rewriting history.
 - Per-crew row count is inserted once under the same crew lock used by joins and
@@ -262,6 +293,11 @@ concurrency, removed members, leaked links, and partial participation.
 - Unlimited deals are deterministic public reads; selections and tutorial votes
   never enter Postgres or operational logs as authored content.
 - New product claims need a test, a runtime check, or a documented manual gap.
+
+The guest-session recovery boundary is intentionally narrow. Replacing a live
+browser key revokes a copied cookie while preserving identity; clearing all
+browser data or losing the only device still loses the anonymous account. That
+is an honest v1 limitation, not cross-device recovery.
 
 ## Success criteria
 

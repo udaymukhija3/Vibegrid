@@ -120,7 +120,7 @@ func (server *Server) handleCrewDaily(w http.ResponseWriter, r *http.Request) {
 	if !server.allowPuzzleRead(w, r) {
 		return
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	crew, err := server.crews.CrewByInviteCode(r.Context(), inviteCode)
 	if err != nil {
 		writeCrewError(w, err)
@@ -267,7 +267,7 @@ func (server *Server) vibeCrewWriteRequest(w http.ResponseWriter, r *http.Reques
 		writeCrewError(w, err)
 		return Crew{}, "", false
 	}
-	return crew, EnsureSessionID(w, r, server.secureCookies), true
+	return crew, server.ensureSessionID(w, r), true
 }
 
 func (server *Server) vibeRoundsEnabled(w http.ResponseWriter) bool {
@@ -394,8 +394,18 @@ func buildJudgeView(board VibeBoard, currentMemberID string, submissions []VibeS
 			break
 		}
 	}
-	view.Cards = make([]vibeCardView, 0, len(submissions))
-	for _, submission := range submissions {
+	// The ballot is blind, so its ORDER must not encode authorship. Cards arrive
+	// in created_at order, and during the make phase every member watches each
+	// other member's "submittedToday" flag flip in that same order — so serving
+	// the ballot in creation order hands every judge a positional map from card
+	// to author. Ordering by the crypto-random submission id keeps one stable
+	// ballot for the whole crew while decorrelating it from submission time.
+	ordered := append([]VibeSubmission(nil), submissions...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return ordered[left].ID < ordered[right].ID
+	})
+	view.Cards = make([]vibeCardView, 0, len(ordered))
+	for _, submission := range ordered {
 		view.Cards = append(view.Cards, toVibeCardView(submission, board, currentMemberID, false, 0, false))
 	}
 	return view

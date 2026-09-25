@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-20
 **Decision update:** 2026-08-23
+**Security/correctness update:** 2026-08-27
 **Status:** **OVERRULED as a product strategy. Retained only as a record of the
 pre-pivot audit.**
 **Scope:** content audit, design audit, new design direction, and go-to-market for a real product launch
@@ -128,6 +129,23 @@ The data model stores that crew/date decision once, and the submission
 transaction rejects master fragments outside the frozen projection. This is not
 a return to Connections: the player still authors and titles one interpretation,
 other players judge it, and no correct grouping exists.
+
+### 0.5 Adversarial audit amendment
+
+The 26 August audit found one genuine P1 in the superseding product: leaving and
+rejoining minted a new member id, allowing one browser to author extra cards,
+cast extra ballots, self-vote through its former identity, and manufacture an
+official result. That is now closed by a durable crew identity mapping that
+survives membership churn. Rejoin restores the prior card/ballot limits.
+
+The same amendment makes anonymous browser bearers hash-only and revocable,
+adds an in-product key replacement flow, requires explicit CSRF on every crew
+write, enforces same-round/no-self vote targets in Postgres, makes all crew
+mutation idempotency headers real, randomizes blind ballot order independently
+of submission timing, bounds the read limiter with eviction, rejects disguised
+Unicode formatting, and requires confirmation before the final member deletes a
+crew. These are engineering consequences of the new private social product;
+they do not revive any hidden-group mechanic below.
 
 ---
 
