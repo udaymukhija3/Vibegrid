@@ -81,7 +81,9 @@ export async function rotateGuestSession(): Promise<void> {
   guestCSRFTokenPromise = Promise.resolve(rotated.csrfToken);
 }
 
-async function guestMutationHeaders(initial?: HeadersInit): Promise<Headers> {
+// Every cookie-authenticated guest write needs the CSRF token derived from the
+// current browser key, so non-crew writers such as reminders use this too.
+export async function guestMutationHeaders(initial?: HeadersInit): Promise<Headers> {
   if (!guestCSRFTokenPromise) {
     guestCSRFTokenPromise = getJSON("/api/session")
       .then((payload) => sessionStatusSchema.parse(payload).guest.csrfToken)

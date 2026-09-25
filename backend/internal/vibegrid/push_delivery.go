@@ -238,9 +238,11 @@ func crewDigestFor(
 		if len(votes) >= minOfficialVibeBallots {
 			return pushNotification{
 				Title: crew.Name,
-				Body:  "The result is in. See which card the crew picked.",
-				URL:   crewURL,
-				Tag:   "vibegrid-result-" + result.PublishDate,
+				// Not "see which card won": a level top crowns nobody, and a
+				// two-person round always splits.
+				Body: "The result is in. See how the crew voted.",
+				URL:  crewURL,
+				Tag:  "vibegrid-result-" + result.PublishDate,
 			}, true
 		}
 	}

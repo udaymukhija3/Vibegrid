@@ -240,8 +240,8 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("POST /api/appeals", server.handleCreateAppeal)
 	mux.HandleFunc("POST /api/client-errors", server.handleClientError)
 	mux.HandleFunc("GET /api/push/config", server.handlePushConfig)
-	mux.HandleFunc("POST /api/push/subscribe", server.handlePushSubscribe)
-	mux.HandleFunc("POST /api/push/unsubscribe", server.handlePushUnsubscribe)
+	mux.HandleFunc("POST /api/push/subscribe", server.requireGuestCSRF(server.handlePushSubscribe))
+	mux.HandleFunc("POST /api/push/unsubscribe", server.requireGuestCSRF(server.handlePushUnsubscribe))
 
 	mux.HandleFunc("GET /api/admin/session", server.handleAdminSessionStatus)
 	mux.HandleFunc("POST /api/admin/session", server.handleAdminSession)
@@ -1188,6 +1188,7 @@ func isPrivateRoute(route string) bool {
 		strings.HasPrefix(route, "/api/crews/") ||
 		strings.HasPrefix(route, "/api/attempts/") ||
 		strings.HasPrefix(route, "/api/admin/") ||
+		strings.HasPrefix(route, "/api/push/") ||
 		strings.HasSuffix(route, "/easy-hint")
 }
 

@@ -1,8 +1,11 @@
 -- +goose Up
--- A browser's push endpoint, tied to the same anonymous session that carries
--- crew membership. There are no accounts in this product, so the session is the
--- only identity a reminder can be addressed to; a member who clears cookies
--- loses the subscription along with the crew, which is the existing bargain.
+-- A browser's push endpoint, keyed by the stable anonymous identity that crew
+-- membership uses (the value crew_members.session_id holds since migration
+-- 00021), never by the revocable browser bearer. Replacing a leaked browser key
+-- therefore keeps reminders attached, and no plaintext bearer is stored here.
+-- There are no accounts in this product, so that identity is the only thing a
+-- reminder can be addressed to; a member who clears all site data loses the
+-- subscription along with the crew, which is the existing bargain.
 create table push_subscriptions (
   id              bigserial primary key,
   session_id      text not null check (char_length(session_id) between 1 and 128),

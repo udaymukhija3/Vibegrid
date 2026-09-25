@@ -255,8 +255,12 @@ environment.
 
 ## Deliberate boundaries
 
-- No accounts, OAuth, email, chat, presence, matchmaking, push notifications,
-  monetization, or public leaderboard.
+- No accounts, OAuth, email, chat, presence, matchmaking, monetization, or
+  public leaderboard.
+- Reminders are one opt-in Web Push digest per crew per day, keyed to the
+  anonymous identity and sent only when something is waiting for that member.
+  They stay off unless `VIBEGRID_VAPID_*` keys are configured. No per-event
+  pushes and no email.
 - No public feed of cards. Crew history is private to current members.
 - No real-time protocol. Visible crew pages poll; measured demand must justify
   SSE/WebSocket complexity.

@@ -1,3 +1,4 @@
+import { guestMutationHeaders } from "@/lib/api";
 import { ApiError, apiFetch } from "@/lib/http";
 
 export type PushConfig = {
@@ -99,7 +100,7 @@ export async function enablePush(config: PushConfig): Promise<PushState> {
   const response = await apiFetch("/api/push/subscribe", {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: await guestMutationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       endpoint: payload.endpoint,
       keys: { p256dh: payload.keys?.p256dh ?? "", auth: payload.keys?.auth ?? "" }
@@ -125,11 +126,15 @@ export async function disablePush(): Promise<PushState> {
   }
   const endpoint = subscription.endpoint;
   await subscription.unsubscribe().catch(() => undefined);
-  await apiFetch("/api/push/unsubscribe", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoint })
-  }).catch(() => undefined);
+  await guestMutationHeaders({ "Content-Type": "application/json" })
+    .then((headers) =>
+      apiFetch("/api/push/unsubscribe", {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: JSON.stringify({ endpoint })
+      })
+    )
+    .catch(() => undefined);
   return "off";
 }

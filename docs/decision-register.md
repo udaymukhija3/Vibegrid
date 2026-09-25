@@ -77,7 +77,7 @@ changes only when product behavior, tests, and this document change together.
 | Decision | Evidence required | Default until then |
 | --- | --- | --- |
 | Crew-size formula | Controlled crews show scan cost or card quality is materially worse in a membership band; measure overlap, time-to-submit, completion, and abandonment by frozen row count | Keep the ratified 3–7 row bands. Change formula only with a migration and historical compatibility plan. |
-| Notifications | Crews make but fail to return for judge/reveal | No push/email. Test an optional calendar or web-push reminder only after funnel instrumentation. |
+| Notifications | Crews make but fail to return for judge/reveal | An opt-in Web Push digest is built (one per crew per day at a fixed UTC hour; result > open ballot > today's card; silent when nothing is waiting; keyed to the stable anonymous identity) but ships dormant: it stays off unless VAPID keys are configured. Turning it on in production is the decision this row still gates; the original gate was funnel instrumentation. Known gap before enabling: a failed send retries the whole crew digest, which can repeat a reminder to members who already received it. No email. |
 | Phase duration | Multi-timezone crews miss 24-hour stages | Keep daily UTC stages; consider a 36-hour grace only with missed-stage data. |
 | Crew-size guidance | Official-round rate is poor below a measured size | UI says two people are enough for a round that counts; system cap 20. |
 | Result archive navigation | Crews complete enough rounds to need browsing | Show only latest reveal now; add private pagination when history exists. |

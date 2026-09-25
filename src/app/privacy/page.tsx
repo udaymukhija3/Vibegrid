@@ -28,6 +28,14 @@ export default function PrivacyPage() {
           ]
         },
         {
+          title: "Reminders",
+          body: [
+            "Reminders are off unless you turn them on from a crew page, and the browser only asks for notification permission after that click. When they are on, VibeGrid stores the push address your browser's push service issued, the two encryption keys your browser supplied for it, when a reminder last arrived, and a delivery failure count. They are attached to the same anonymous identity as your crews, not to a name, email, or phone number.",
+            "A reminder is a daily digest per crew, sent only when something is waiting for you: a result from a round you played, a ballot you have not cast, or today's card. It contains the crew name, a short status line or the day's prompt, and a link to the crew room.",
+            "Delivery goes through your browser vendor's push service. The message is encrypted to your browser, but that service can see that a message was sent to your push address and when. Turning reminders off deletes the stored address; so does the push service reporting it no longer exists."
+          ]
+        },
+        {
           title: "Control and retention",
           body: [
             "A crew owner can rotate a leaked invite and remove a member. A member can leave. When the last member chooses the separately confirmed delete-and-leave action, the crew, invite, identity mappings, cards, votes, and result history are permanently deleted through database cascades.",

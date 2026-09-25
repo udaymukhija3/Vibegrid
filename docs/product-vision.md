@@ -322,6 +322,12 @@ concurrency, removed members, leaked links, and partial participation.
   never enter Postgres or operational logs as authored content.
 - New product claims need a test, a runtime check, or a documented manual gap.
 
+Reminders follow the same identity rule. A push subscription is keyed by the
+stable anonymous identity, never the browser bearer, so replacing a leaked key
+keeps reminders attached and the table holds no plaintext credential. The
+reminder is one opt-in digest per crew per day, silent when nothing is waiting,
+and ships off until VAPID keys are configured.
+
 The guest-session recovery boundary is intentionally narrow. Replacing a live
 browser key revokes a copied cookie while preserving identity; clearing all
 browser data or losing the only device still loses the anonymous account. That

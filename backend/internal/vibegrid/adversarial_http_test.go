@@ -17,8 +17,9 @@ import (
 
 // hostileServer wires the full HTTP surface against a real database, so probes
 // exercise handler authorization, projection, and validation together rather
-// than one store method in isolation.
-func hostileServer(t *testing.T) (http.Handler, *sql.DB) {
+// than one store method in isolation. configure lets a suite switch on an
+// optional subsystem (reminders need VAPID keys and a subscription store).
+func hostileServer(t *testing.T, configure ...func(*ServerConfig, *sql.DB)) (http.Handler, *sql.DB) {
 	t.Helper()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -36,7 +37,7 @@ func hostileServer(t *testing.T) (http.Handler, *sql.DB) {
 	if _, err := database.Exec(`truncate vibe_votes, vibe_submissions, vibe_crew_boards,
 		vibe_board_expansions, vibe_daily_boards, idempotency_keys, rate_limit_hits,
 			guest_sessions, admin_sessions, moderation_actions, moderation_reports, moderation_appeals,
-		crew_members, crews, puzzles, attempts, attempt_guesses restart identity cascade`); err != nil {
+		crew_members, crews, puzzles, attempts, attempt_guesses, push_subscriptions restart identity cascade`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 
@@ -45,7 +46,7 @@ func hostileServer(t *testing.T) (http.Handler, *sql.DB) {
 		t.Fatalf("seed puzzles: %v", err)
 	}
 	vibeRounds := NewPostgresVibeRoundStore(database)
-	handler := NewServer(ServerConfig{
+	config := ServerConfig{
 		Puzzles:         puzzleStore,
 		Store:           NewPostgresAttemptStore(database),
 		AdminPuzzles:    puzzleStore,
@@ -59,8 +60,11 @@ func hostileServer(t *testing.T) (http.Handler, *sql.DB) {
 		Idempotency:     NewPostgresIdempotencyStore(database),
 		Moderation:      NewPostgresModerationStore(database),
 		Clock:           fixedClock,
-	})
-	return handler, database
+	}
+	for _, apply := range configure {
+		apply(&config, database)
+	}
+	return NewServer(config), database
 }
 
 // rawRequest issues a request with full control over method, headers and body

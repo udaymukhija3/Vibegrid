@@ -65,6 +65,10 @@ need network access.
 - `src/components/VibeComposer.tsx`, `VibeCard.tsx`: interaction primitives.
 - `src/components/VibeBoardDesk.tsx`: editor board room.
 - `src/lib/api.ts`, `src/types/vibe.ts`: runtime-validated client contracts.
+- `backend/internal/vibegrid/push*.go`, `00022_push_subscriptions.sql`,
+  `src/lib/push.ts`, `src/components/ReminderToggle.tsx`, `public/sw.js`:
+  opt-in Web Push crew digest, dormant without `VIBEGRID_VAPID_*` keys.
+  Subscriptions are keyed by the stable identity, never the browser bearer.
 - `scripts/smoke.mjs`, `scripts/e2e.mjs`: runtime verification.
 
 The Go binary still embeds the exported Next.js frontend and legacy migrations,

@@ -64,7 +64,12 @@ func (server *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request
 		"You're changing reminders too quickly. Try again later.") {
 		return
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	// The stable identity, not the cookie value: the digest finds recipients by
+	// joining crew_members.session_id, which holds the identity. Storing the raw
+	// bearer would put a plaintext credential in the table, and for any browser
+	// minted after migration 00021 it would never match a membership, so the
+	// reminder would silently never arrive.
+	sessionID := server.ensureSessionID(w, r)
 
 	var request pushSubscribeRequest
 	if !decodeJSONBody(w, r, maxPushBodyBytes, &request, "That subscription is not valid JSON.") {

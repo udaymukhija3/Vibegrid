@@ -234,18 +234,22 @@ func TestMigrationsRollBackAndForwardCleanly(t *testing.T) {
 		t.Fatalf("read head version: %v", err)
 	}
 
-	// Step 1: the realistic rollback — undo the newest release only.
-	if err := goose.DownTo(database, "migrations", head-2); err != nil {
-		t.Fatalf("rollback of the newest migrations failed: %v", err)
+	// Step 1: the realistic rollback — back to the last schema the pre-identity
+	// binary ran on. This is pinned to a named version rather than "head minus
+	// N": a relative offset silently stops short of the identity release as soon
+	// as a later migration (00022 push subscriptions) lands on top of it.
+	const preIdentitySchema = 19
+	if err := goose.DownTo(database, "migrations", preIdentitySchema); err != nil {
+		t.Fatalf("rollback to the pre-identity schema failed: %v", err)
 	}
-	var identityTables int
+	var newerTables int
 	if err := database.QueryRow(
 		`select count(*) from information_schema.tables
-		 where table_name in ('crew_member_identities', 'guest_sessions')`).Scan(&identityTables); err != nil {
+		 where table_name in ('crew_member_identities', 'guest_sessions', 'push_subscriptions')`).Scan(&newerTables); err != nil {
 		t.Fatalf("inspect rolled-back schema: %v", err)
 	}
-	if identityTables != 0 {
-		t.Fatalf("rollback left %d of the new tables behind", identityTables)
+	if newerTables != 0 {
+		t.Fatalf("rollback left %d of the newer tables behind", newerTables)
 	}
 
 	// The previous release must still be able to write a membership, which is

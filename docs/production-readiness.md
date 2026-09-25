@@ -29,7 +29,7 @@ judge, or enjoy the reveal. The correct next launch is controlled and measured.
 
 - Provision managed Postgres.
 - Apply migrations `00018_vibe_rounds.sql` through
-  `00021_revocable_guest_sessions.sql` through the release workflow.
+  `00022_push_subscriptions.sql` through the release workflow.
 - Run the full Go race suite with `TEST_DATABASE_URL` and retain the CI link.
 - Run `npm run test:e2e` against the embedded single-binary build.
 - Run `npm run smoke:deploy -- --mutate` against the deployed URL; verify crew
@@ -181,6 +181,8 @@ Manual or missing:
   retained as artifacts.
 - [ ] Privacy-reviewed event taxonomy and controlled-cohort consent.
 - [ ] Crew-card support/report contact available.
+- [ ] Reminders either deliberately left off (no VAPID keys) or enabled with
+  the retry-duplication gap closed and one real device receiving a digest.
 
 ## Do not overstate
 
