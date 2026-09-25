@@ -40,7 +40,11 @@ alter table attempts
   foreign key (puzzle_id) references puzzles(id) on delete cascade not valid;
 
 -- +goose Down
-alter table attempts drop constraint attempts_puzzle_id_fkey;
+-- Migration 00010 drops this constraint in its Up (attempts reference seeded
+-- puzzle ids that no longer have to exist as rows), so by the time anything
+-- rolls this far back the constraint is already gone. Without `if exists` the
+-- rollback chain aborts here and the schema cannot be torn down or rebuilt.
+alter table attempts drop constraint if exists attempts_puzzle_id_fkey;
 drop table puzzle_tiles;
 drop table puzzle_groups;
 drop table puzzles;

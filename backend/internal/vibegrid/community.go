@@ -1,6 +1,7 @@
 package vibegrid
 
 import (
+	"container/list"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -66,6 +67,8 @@ const maxCommunityBodyBytes = 16 << 10 // 16 KiB
 type rateLimiter struct {
 	mu        sync.Mutex
 	hits      map[string][]time.Time
+	recency   *list.List
+	positions map[string]*list.Element
 	limit     int
 	window    time.Duration
 	maxKeys   int
@@ -73,7 +76,14 @@ type rateLimiter struct {
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {
-	return &rateLimiter{hits: map[string][]time.Time{}, limit: limit, window: window, maxKeys: 10000}
+	return &rateLimiter{
+		hits:      map[string][]time.Time{},
+		recency:   list.New(),
+		positions: map[string]*list.Element{},
+		limit:     limit,
+		window:    window,
+		maxKeys:   10000,
+	}
 }
 
 type rateLimitDecision struct {
@@ -117,7 +127,11 @@ func (limiter *rateLimiter) checkLimit(key string, limit int, now time.Time) rat
 	}
 
 	if _, exists := limiter.hits[key]; !exists && limiter.maxKeys > 0 && len(limiter.hits) >= limiter.maxKeys {
-		return rateLimitDecision{retryAfter: limiter.window}
+		// Capacity is a memory bound, not a global traffic ceiling. Failing closed
+		// here made the 10,001st active public reader receive 429 forever until an
+		// old window happened to expire. Evict the least-recently-used identity;
+		// the coarser network bucket still limits churn from one source.
+		limiter.evictOldestLocked()
 	}
 
 	recent := make([]time.Time, 0, len(limiter.hits[key]))
@@ -129,11 +143,47 @@ func (limiter *rateLimiter) checkLimit(key string, limit int, now time.Time) rat
 
 	if len(recent) >= limit {
 		limiter.hits[key] = recent
+		limiter.touchLocked(key)
 		return rateLimitDecision{retryAfter: recent[0].Add(limiter.window).Sub(now)}
 	}
 
 	limiter.hits[key] = append(recent, now)
+	limiter.touchLocked(key)
 	return rateLimitDecision{allowed: true}
+}
+
+func (limiter *rateLimiter) touchLocked(key string) {
+	if limiter.recency == nil {
+		limiter.recency = list.New()
+	}
+	if limiter.positions == nil {
+		limiter.positions = map[string]*list.Element{}
+	}
+	if position, ok := limiter.positions[key]; ok {
+		limiter.recency.MoveToFront(position)
+		return
+	}
+	limiter.positions[key] = limiter.recency.PushFront(key)
+}
+
+func (limiter *rateLimiter) evictOldestLocked() {
+	if limiter.recency == nil {
+		// Defensive compatibility for a manually constructed limiter. Production
+		// instances always come from newRateLimiter.
+		for key := range limiter.hits {
+			delete(limiter.hits, key)
+			return
+		}
+		return
+	}
+	oldest := limiter.recency.Back()
+	if oldest == nil {
+		return
+	}
+	key, _ := oldest.Value.(string)
+	delete(limiter.hits, key)
+	delete(limiter.positions, key)
+	limiter.recency.Remove(oldest)
 }
 
 func (limiter *rateLimiter) pruneLocked(cutoff, now time.Time) {
@@ -146,6 +196,10 @@ func (limiter *rateLimiter) pruneLocked(cutoff, now time.Time) {
 		}
 		if len(recent) == 0 {
 			delete(limiter.hits, key)
+			if position, ok := limiter.positions[key]; ok {
+				limiter.recency.Remove(position)
+				delete(limiter.positions, key)
+			}
 		} else {
 			limiter.hits[key] = recent
 		}

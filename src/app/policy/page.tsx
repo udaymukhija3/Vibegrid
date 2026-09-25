@@ -16,6 +16,7 @@ export default function CrewPolicyPage() {
           title: "Hard lines",
           body: [
             "Do not use a display name or card title for threats, hate, targeted harassment, sexual content involving minors, impersonation, or disclosure of private information.",
+            "Invisible or bidirectional formatting characters are rejected because they can disguise names, titles, and owner controls.",
             "Do not turn an invite into a public pile-on. The fact that a room is link-accessible does not make its people or its history public material."
           ]
         },
@@ -30,7 +31,7 @@ export default function CrewPolicyPage() {
         {
           title: "What owners can do",
           body: [
-            "Owners can remove a member or rotate a leaked invite. Members can leave at any time. These controls change access going forward; they do not silently rewrite an old revealed result.",
+            "Owners can remove a member or rotate a leaked invite. After removing someone who still knows the current capability link, replace the invite to stop a new join. Members can leave at any time. These controls change access going forward; they do not silently rewrite an old revealed result.",
             "There is not yet a public in-product report queue for crew cards. If that becomes part of the product, the privacy and moderation documentation must be updated before launch."
           ]
         }

@@ -42,6 +42,7 @@ platform. Never put the token in a public URL or frontend variable.
 New routes have stable labels:
 
 - `/api/vibes/today`
+- `/api/session/rotate`
 - `/api/crews/{id}/daily`
 - `/api/crews/{id}/submissions`
 - `/api/crews/{id}/votes`

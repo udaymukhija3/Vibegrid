@@ -194,6 +194,7 @@ func run(logger *slog.Logger) error {
 		Store:              deps.attempts,
 		AdminPuzzles:       deps.adminPuzzles,
 		AdminSessions:      deps.adminSessions,
+		GuestSessions:      deps.guestSessions,
 		Community:          deps.community,
 		Crews:              deps.crews,
 		VibeRounds:         deps.vibeRounds,
@@ -285,6 +286,7 @@ type deps struct {
 	vibeRounds       vibegrid.VibeRoundStore
 	adminVibeBoards  vibegrid.VibeBoardAdminStore
 	adminSessions    vibegrid.AdminSessionStore
+	guestSessions    vibegrid.GuestSessionStore
 	stats            vibegrid.StatsStore
 	rateLimits       vibegrid.RateLimitStore
 	idempotency      vibegrid.IdempotencyStore
@@ -349,6 +351,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 	logger.Info("connected to postgres, puzzles seeded")
 	attempts := vibegrid.NewPostgresAttemptStore(database)
 	adminSessions := vibegrid.NewPostgresAdminSessionStore(database)
+	guestSessions := vibegrid.NewPostgresGuestSessionStore(database)
 	idempotency := vibegrid.NewPostgresIdempotencyStore(database)
 	outbox := vibegrid.NewPostgresNotificationOutbox(database)
 	vibeRoundStore := vibegrid.NewPostgresVibeRoundStore(database)
@@ -361,6 +364,7 @@ func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL string, req
 		vibeRounds:       vibeRoundStore,
 		adminVibeBoards:  vibeRoundStore,
 		adminSessions:    adminSessions,
+		guestSessions:    guestSessions,
 		bankSource:       banked,
 		stats:            vibegrid.NewCachedStatsStore(vibegrid.NewPostgresStatsStore(database, timeZone), 5*time.Minute),
 		rateLimits:       vibegrid.NewPostgresRateLimitStore(database),
