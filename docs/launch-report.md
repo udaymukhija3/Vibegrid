@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-20
 **Decision update:** 2026-08-23
+**Security/correctness update:** 2026-08-27
 **Status:** **OVERRULED as a product strategy. Retained only as a record of the
 pre-pivot audit.**
 **Scope:** content audit, design audit, new design direction, and go-to-market for a real product launch
@@ -44,8 +45,8 @@ is no canonical grouping and no correct solution. The creative and social output
 of the crew is the content.
 
 Every daily board contains one human-written prompt and a 28-fragment editorial
-master. A crew receives a frozen four-column projection sized when a member
-first opens that date: 1–4 members see 12 fragments, 5–8 see 16, 9–12 see 20,
+master. A crew receives a four-column projection sized from membership and
+frozen by its first card on that date: 1–4 members see 12 fragments, 5–8 see 16, 9–12 see 20,
 13–16 see 24, and 17–20 see 28. Public practice is deliberately 4×4. The row
 count changes the amount of creative material, not the answer model—there is
 still no partition, intended quartet, correctness, timer, or mistakes. A round
@@ -58,9 +59,10 @@ unfolds across three UTC dates:
    cards without authors and cast exactly one non-self vote. They cannot revise
    the ballot or vote twice.
 3. **Reveal — day D+2.** Authors, vote totals, ties, and crew history become
-   visible. Ties remain ties; the product does not manufacture a winner.
+   visible. Only a sole plurality is crowned; a level top is reported as a
+   split, and the product does not manufacture a winner.
 
-A result is official only when at least three cards and two ballots exist.
+A result is official only when at least two cards and two ballots exist.
 Undersized rounds end quietly and do not extend the crew streak. This makes the
 streak evidence of a continuing group ritual, not individual compulsion.
 
@@ -128,6 +130,23 @@ The data model stores that crew/date decision once, and the submission
 transaction rejects master fragments outside the frozen projection. This is not
 a return to Connections: the player still authors and titles one interpretation,
 other players judge it, and no correct grouping exists.
+
+### 0.5 Adversarial audit amendment
+
+The 26 August audit found one genuine P1 in the superseding product: leaving and
+rejoining minted a new member id, allowing one browser to author extra cards,
+cast extra ballots, self-vote through its former identity, and manufacture an
+official result. That is now closed by a durable crew identity mapping that
+survives membership churn. Rejoin restores the prior card/ballot limits.
+
+The same amendment makes anonymous browser bearers hash-only and revocable,
+adds an in-product key replacement flow, requires explicit CSRF on every crew
+write, enforces same-round/no-self vote targets in Postgres, makes all crew
+mutation idempotency headers real, randomizes blind ballot order independently
+of submission timing, bounds the read limiter with eviction, rejects disguised
+Unicode formatting, and requires confirmation before the final member deletes a
+crew. These are engineering consequences of the new private social product;
+they do not revive any hidden-group mechanic below.
 
 ---
 

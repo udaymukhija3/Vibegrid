@@ -288,10 +288,7 @@ func (server *Server) withIdempotency(
 }
 
 func (server *Server) guestIdempotencyCaller(w http.ResponseWriter, r *http.Request) string {
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
-	if _, err := r.Cookie(sessionCookieName); err != nil {
-		r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
-	}
+	sessionID := server.ensureSessionID(w, r)
 	return "guest:" + sessionID
 }
 

@@ -1,8 +1,8 @@
 # VibeGrid production readiness
 
-**Review date:** 23 August 2026
-**Decision:** recruiter demonstration ready; controlled beta requires the P0
-evidence below; broad launch is blocked.
+**Review date:** 27 August 2026
+**Decision:** local product verification is ready; controlled beta requires the
+P0 evidence below; broad launch is blocked.
 
 ## Executive assessment
 
@@ -20,7 +20,6 @@ judge, or enjoy the reveal. The correct next launch is controlled and measured.
 | --- | --- | --- |
 | Local public practice | **READY** | Direct composer, first-visit dialog, and deterministic Unlimited deals work without database. |
 | Local durable crew demo | **READY WITH DB** | Migrations applied; at least three browser sessions. |
-| Recruiter demo | **READY WITH DISCLOSED GAPS** | Run verification; never claim traffic/backups/alerts. |
 | Controlled beta | **BLOCKED ON P0** | Provider durability, E2E, accessibility pass, privacy-reviewed funnel, seeded crews. |
 | Broad consumer launch | **BLOCKED** | Controlled cohort retention plus completed ops evidence and safety path. |
 
@@ -29,8 +28,8 @@ judge, or enjoy the reveal. The correct next launch is controlled and measured.
 ### 1. Production-shaped data path
 
 - Provision managed Postgres.
-- Apply migrations `00018_vibe_rounds.sql` and
-  `00019_variable_vibe_boards.sql` through the release workflow.
+- Apply migrations `00018_vibe_rounds.sql` through
+  `00022_push_subscriptions.sql` through the release workflow.
 - Run the full Go race suite with `TEST_DATABASE_URL` and retain the CI link.
 - Run `npm run test:e2e` against the embedded single-binary build.
 - Run `npm run smoke:deploy -- --mutate` against the deployed URL; verify crew
@@ -88,14 +87,14 @@ is configured.
 | --- | --- | --- | --- |
 | 28 unique master fragments, no answer mapping | strict master validation and additive expansion storage | unit + smoke | nested editorial ambiguity checklist is manual |
 | Unlimited is isolated from durable play | public deterministic 4×4 deal endpoint; cards/ballots remain component state | determinism/max-sequence and in-process HTTP/cache tests; E2E assertion checked in | updated embedded E2E rerun and product cannibalization evidence |
-| Crew-sized rows stay stable | crew-lock first-open snapshot + `(crew,board)` key; selection revalidated in transaction | row-band unit matrix; real-Postgres 32-open convergence, max-crew writes, post-freeze join, and join/freeze race | multi-browser join/open trace |
-| One card per member/round | transaction + unique constraint | real-Postgres distinct-client contention under the Go race detector | retained release CI artifact needed |
-| Exact retry is safe | persisted client id; changed input conflicts; loser reloads winner | sequential replay, 16-way identical card/vote races, durable E2E smoke | browser timeout E2E |
+| Crew-sized rows stay stable | opening is a read; crew-lock snapshot on first card submission + `(crew,board)` key; selection revalidated in transaction | row-band unit matrix; real-Postgres lock-on-play-not-on-look, 32-way freeze convergence, max-crew writes, post-freeze join, and join/freeze race | multi-browser join/submit trace |
+| One card per stable member/round | durable `(crew,identity) → member` mapping + transaction + unique constraint | leave/rejoin exploit regression and distinct-client contention under the Go race detector | retained release CI artifact needed |
+| Exact retry is safe | content-stable client id plus server `Idempotency-Key`; changed input conflicts; concurrent callers replay one response | sequential replay, changed-body conflict, concurrent create, 16-way identical card/vote races, durable E2E smoke | browser timeout E2E |
 | Makers-only blind vote | transaction checks own submission and target | integration tests | multi-browser E2E |
-| No self-vote / one ballot | transaction + unique constraint | integration plus distinct/identical concurrent race tests | sustained load profile |
+| No self-vote / one ballot | transaction, stable member id, unique constraint, composite target FK, no-self check | application, direct-SQL, identity-churn, and concurrent race tests | sustained load profile |
 | Outsider privacy | member-aware response projection | unit test | hostile HTTP matrix |
 | Author hidden then revealed | judge/result views | unit test | screen-reader/browser QA |
-| Official threshold and ties | result builder/streak query | unit + integration | validate with real crews |
+| Official threshold and crown | shared 2-card/2-ballot constants read by result builder and streak query; crown only on sole plurality, `tied` flag on a level top | two-person-round unit test; round-robin split and clear-plurality cases | validate with real crews |
 | Frozen dated board | insert-once store + strict admin create | unit/store code | admin HTTP integration |
 | UTC stage rollover | code/deploy/defaults set UTC | deterministic clock tests | deployed midnight soak |
 
@@ -104,6 +103,9 @@ is configured.
 ### Credible in code
 
 - Opaque guest capability session and per-crew membership.
+- Guest bearer hashes map to stable anonymous identities; copied bearers can be
+  revoked through replay-safe in-product rotation without losing crew history.
+- Explicit CSRF tokens protect every cookie-authenticated crew mutation.
 - Opaque revocable admin session; only token hashes stored; CSRF on cookie
   mutations; throttled login.
 - Size/shape validation, blocklist, bounded identifiers, request/DB timeouts,
@@ -121,7 +123,10 @@ is configured.
 - No external penetration test or sustained load test. The 23 August local npm
   audit and Go vulnerability scan found no known dependency vulnerabilities;
   this is a dated local result, not continuous monitoring.
-- Guest browser loss means membership loss; there is no recovery.
+- Guest browser-data/device loss means membership loss; live-key rotation is
+  theft recovery, not cross-device account recovery.
+- Anonymous identities do not prove unique humans. A private crew owner still
+  controls who receives the capability invite.
 - Capability invites are secrets but still transferable by design.
 
 ## Reliability and observability
@@ -134,6 +139,8 @@ Implemented:
 - store-operation latency/count metrics plus DB/cache/outbox gauges;
 - additive embedded migrations and release/boot migration options;
 - mutation replay ids and database uniqueness constraints;
+- stable crew identities, schema-enforced vote targets, and hash-only guest
+  bearer revocation;
 - local/runtime smoke checks for the new board contract.
 
 Manual or missing:
@@ -143,7 +150,7 @@ Manual or missing:
 - real dashboard for make/judge/reveal failure rates;
 - backup freshness heartbeat and restore artifact;
 - load profile for simultaneous UTC rollover and crew polling;
-- documented rollback rehearsal after migration 18.
+- documented roll-forward rehearsal after identity migration 20.
 
 ## Rollout plan
 
@@ -174,6 +181,8 @@ Manual or missing:
   retained as artifacts.
 - [ ] Privacy-reviewed event taxonomy and controlled-cohort consent.
 - [ ] Crew-card support/report contact available.
+- [ ] Reminders either deliberately left off (no VAPID keys) or enabled with
+  the retry-duplication gap closed and one real device receiving a digest.
 
 ## Do not overstate
 

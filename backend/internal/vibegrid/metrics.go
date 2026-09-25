@@ -408,7 +408,7 @@ func routeMetricLabel(r *http.Request) string {
 // paths and unknown HTTP methods.
 func knownRouteMetricLabel(route string) string {
 	switch route {
-	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/vibes/today", "/api/puzzles", "/api/puzzle-templates", "/api/public-config", "/api/session", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/crews", "/api/reports", "/api/appeals", "/api/client-errors", "/api/admin/session", "/api/admin/queue-health", "/api/admin/vibe-boards", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
+	case "/healthz", "/readyz", "/metrics", "/api/puzzles/today", "/api/vibes/today", "/api/puzzles", "/api/puzzle-templates", "/api/public-config", "/api/session", "/api/session/rotate", "/api/push/config", "/api/push/subscribe", "/api/push/unsubscribe", "/api/streak", "/api/guesses", "/api/community/puzzles", "/api/crews", "/api/reports", "/api/appeals", "/api/client-errors", "/api/admin/session", "/api/admin/queue-health", "/api/admin/vibe-boards", "/api/admin/puzzles", "/api/admin/moderation/reports", "/api/admin/moderation/appeals", "/api/admin/moderation/audit":
 		return route
 	}
 	if strings.HasPrefix(route, "/api/attempts/") {

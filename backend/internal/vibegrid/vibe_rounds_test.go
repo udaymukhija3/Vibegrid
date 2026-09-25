@@ -820,7 +820,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 					exitError <- crewStore.RemoveMember(ctx, exitCrew.ID, departingMemberID, ownerSession)
 					return
 				}
-				exitError <- crewStore.LeaveCrew(ctx, exitCrew.ID, departingSession)
+				exitError <- crewStore.LeaveCrew(ctx, exitCrew.ID, departingSession, false)
 			}()
 			close(startExitRace)
 			exitOutcome := <-exitBoardResult

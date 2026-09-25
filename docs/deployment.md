@@ -66,6 +66,11 @@ Optional:
   operational/community paths are still in use.
 - `VIBEGRID_MIGRATE_ON_BOOT=true` only on a single-instance host without a
   release hook. Prefer a release migration.
+- `VIBEGRID_VAPID_PUBLIC_KEY`, `VIBEGRID_VAPID_PRIVATE_KEY`, and
+  `VIBEGRID_VAPID_SUBJECT` (a `mailto:` or `https:` contact) turn on crew
+  reminders; all three or none. Missing keys boot with a warning and no
+  reminders. Rotating the key pair silently unsubscribes every browser.
+  `VIBEGRID_PUSH_DIGEST_HOUR_UTC` (default `18`) sets the send hour.
 
 `NEXT_PUBLIC_APP_URL` affects build-time frontend metadata. The Go server’s
 canonical, robots, sitemap, and injected metadata use
@@ -78,6 +83,13 @@ Run once per release before new instances serve traffic:
 ```bash
 DATABASE_URL="postgres://..." npm run migrate:backend
 ```
+
+Migrations 20 and 21 introduce stable crew identities, schema-enforced ballot
+targets, and revocable guest bearer records. Migration 20 is a compatibility
+boundary: once applied, binaries that still mint `crew_members.member_id`
+directly cannot create/join crews. Deploy the migration and current binary as
+one release and roll forward if the new binary fails; do not roll the runtime
+back below migration-20 support.
 
 Fly uses the release command in `fly.toml`. Render free can use
 `VIBEGRID_MIGRATE_ON_BOOT=true` only while exactly one instance boots. Migration
@@ -149,9 +161,10 @@ npm run smoke:deploy -- --base-url https://<domain> --mutate \
   --metrics-token "$VIBEGRID_METRICS_TOKEN"
 ```
 
-The mutating smoke creates a temporary crew, submits a card twice with the same
-client replay id, and proves only one card exists. It skips durable mutation
-only when the environment explicitly has no database; production must not skip.
+The mutating smoke creates a temporary crew, exercises a five-member 4×4 freeze,
+submits a card twice with the same client replay id, rotates the hash-only guest
+bearer, and proves membership survives. It skips durable mutation only when the
+environment explicitly has no database; production must not skip.
 
 Manual checklist:
 
@@ -167,6 +180,11 @@ Manual checklist:
 - Use backdated fixtures or a test clock to verify blind authors on judge and
   named authors/ties/quiet labels on reveal.
 - Rotate invite: old link fails for a newcomer; existing member access remains.
+- Replace the browser key: the previous copied cookie loses crew access and the
+  replacement retains it.
+- Leave and rejoin a non-empty crew: prior card/ballot limits remain attached to
+  the restored member identity. Verify final-member leave requires the separate
+  permanent-delete acknowledgement.
 - `/admin` authenticates over HTTPS, creates a future board, and rejects a
   duplicate frozen date.
 - `/robots.txt` disallows admin; `/sitemap.xml` includes `/crews` but no `/crew/`
@@ -191,8 +209,10 @@ a durable destination and test one routed alert.
 
 1. Stop promotion if the release migration fails; old instances should continue.
 2. Re-promote the prior immutable image tag/SHA.
-3. Migration 18 is additive, so the prior binary can ignore its tables.
-4. Do not run a destructive down migration against crew data during incident
+3. Migrations 18 and 19 are additive, but migration 20 changes the membership
+   write contract. After it applies, roll forward with a migration-20-aware
+   binary; an older binary cannot safely create or join crews.
+4. Do not run a destructive down migration against crew/session data during incident
    rollback.
 5. Rerun health/readiness and non-mutating smoke, then inspect logs/metrics.
 

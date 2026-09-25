@@ -17,6 +17,7 @@ import {
   Users
 } from "lucide-react";
 import { toast } from "sonner";
+import { ReminderToggle } from "@/components/ReminderToggle";
 import { VibeCard } from "@/components/VibeCard";
 import { VibeComposer } from "@/components/VibeComposer";
 import { VibeHeader } from "@/components/VibeHeader";
@@ -27,8 +28,10 @@ import {
   joinCrew,
   leaveCrew,
   removeCrewMember,
+  rotateGuestSession,
   rotateCrewInvite,
-  submitVibeCard
+  submitVibeCard,
+  replayIdFor
 } from "@/lib/api";
 import { writeClipboardText } from "@/lib/clipboard";
 import { readStoredValue, writeStoredValue } from "@/lib/storage";
@@ -146,7 +149,10 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
   const [copied, setCopied] = useState(false);
   const [managing, setManaging] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmSessionRotation, setConfirmSessionRotation] = useState(false);
   const [busy, setBusy] = useState(false);
+  const leaveDeletesCrew = daily.isMember && (daily.members?.length ?? 0) === 1;
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -182,11 +188,24 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
   async function leave() {
     setBusy(true);
     try {
-      await leaveCrew(daily.crew.inviteCode);
+      await leaveCrew(daily.crew.inviteCode, leaveDeletesCrew);
       toast.success(`You left ${daily.crew.name}.`);
       router.push("/crews");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not leave the crew.");
+      setBusy(false);
+    }
+  }
+
+  async function secureBrowserSession() {
+    setBusy(true);
+    try {
+      await rotateGuestSession();
+      toast.success("Browser key replaced. The previous session cookie no longer works.");
+      setConfirmSessionRotation(false);
+      setBusy(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not replace this browser key.");
       setBusy(false);
     }
   }
@@ -212,6 +231,7 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
             {copied ? <Check aria-hidden size={17} /> : <Send aria-hidden size={17} />}
             {copied ? "Copied" : "Nudge the crew"}
           </button>
+          {daily.isMember && <ReminderToggle />}
           {daily.isMember && (
             <button type="button" onClick={() => setManaging((value) => !value)} className="vg-secondary-button">
               <ShieldCheck aria-hidden size={17} />
@@ -228,13 +248,42 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
               <Users aria-hidden size={16} />
               All crews
             </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmRotate(false);
+                setConfirmLeave(false);
+                setConfirmSessionRotation(true);
+              }}
+              className="vg-secondary-button"
+            >
+              <ShieldCheck aria-hidden size={16} />
+              Replace browser key
+            </button>
             {daily.crew.isOwner && !confirmRotate && (
-              <button type="button" onClick={() => setConfirmRotate(true)} className="vg-secondary-button">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmLeave(false);
+                  setConfirmSessionRotation(false);
+                  setConfirmRotate(true);
+                }}
+                className="vg-secondary-button"
+              >
                 <RefreshCw aria-hidden size={16} />
                 Replace invite
               </button>
             )}
-            <button type="button" disabled={busy} onClick={() => void leave()} className="vg-secondary-button">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setConfirmRotate(false);
+                setConfirmSessionRotation(false);
+                setConfirmLeave(true);
+              }}
+              className="vg-secondary-button"
+            >
               <LogOut aria-hidden size={16} />
               Leave
             </button>
@@ -251,6 +300,44 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
                 </button>
                 <button type="button" onClick={() => setConfirmRotate(false)} className="vg-secondary-button">
                   Keep it
+                </button>
+              </div>
+            </div>
+          )}
+          {confirmSessionRotation && (
+            <div className="mt-4 border-l-4 border-violet pl-4">
+              <p className="font-black">Invalidate the current browser key?</p>
+              <p className="mt-1 text-sm font-semibold text-cream/[.58]">
+                Use this if the session cookie may have been copied or the device was shared. Your crew memberships and history stay; the previous cookie stops authorising them.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button type="button" disabled={busy} onClick={() => void secureBrowserSession()} className="vg-primary-button">
+                  {busy ? "Replacing…" : "Replace key"}
+                </button>
+                <button type="button" disabled={busy} onClick={() => setConfirmSessionRotation(false)} className="vg-secondary-button">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {confirmLeave && (
+            <div className="mt-4 border-l-4 border-coral pl-4">
+              <p className="font-black">
+                {leaveDeletesCrew ? "Delete this crew and leave?" : `Leave ${daily.crew.name}?`}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-cream/[.58]">
+                {leaveDeletesCrew
+                  ? "You are the last member. This permanently deletes the crew, its cards, ballots, results, and invite."
+                  : daily.crew.isOwner
+                    ? "Ownership passes to the longest-standing remaining member. Your existing cards stay in crew history."
+                    : "Your existing cards stay in crew history. Rejoining this crew later restores the same round identity."}
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button type="button" disabled={busy} onClick={() => void leave()} className="vg-primary-button bg-coral">
+                  {busy ? "Leaving…" : leaveDeletesCrew ? "Delete and leave" : "Leave crew"}
+                </button>
+                <button type="button" disabled={busy} onClick={() => setConfirmLeave(false)} className="vg-secondary-button">
+                  Stay
                 </button>
               </div>
             </div>
@@ -332,7 +419,7 @@ function JudgeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () 
         inviteCode: daily.crew.inviteCode,
         boardId: activeJudge.board.id,
         submissionId: selection,
-        clientVoteId: crypto.randomUUID()
+        clientVoteId: replayIdFor("vote", activeJudge.board.id, selection)
       });
       toast.success("Ballot locked. Authors reveal tomorrow.");
       await onReload();
@@ -419,7 +506,7 @@ function MakeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () =
             boardId: daily.today.board.id,
             title,
             selectedTileIds,
-            clientSubmissionId: crypto.randomUUID()
+            clientSubmissionId: replayIdFor("card", daily.today.board.id, title, ...selectedTileIds)
           });
           toast.success("Vibe locked. Nobody sees it until tomorrow.");
           await onReload();
