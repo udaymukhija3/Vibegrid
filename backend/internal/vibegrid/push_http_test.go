@@ -74,7 +74,8 @@ func assertDigestReaches(t *testing.T, store *PostgresPushSubscriptionStore, cre
 	if !slices.Contains(crews, crewID) {
 		t.Fatalf("crew %s is not queued for a digest; got %v", crewID, crews)
 	}
-	subscriptions, err := store.SubscriptionsForSessions(ctx, []string{identity})
+	// Outbox ids start at 1, so event 0 is one that has settled nothing yet.
+	subscriptions, err := store.UnsettledSubscriptions(ctx, 0, []string{identity})
 	if err != nil {
 		t.Fatalf("subscriptions for member: %v", err)
 	}

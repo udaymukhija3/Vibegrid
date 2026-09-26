@@ -25,6 +25,36 @@ create table push_subscriptions (
 
 create index push_subscriptions_session_idx on push_subscriptions (session_id);
 
+-- The per-event delivery ledger. The outbox retries a crew digest as a whole
+-- when any one send fails, so without this a member whose phone already showed
+-- the reminder would be shown it again on every retry. A row means "this
+-- subscription is settled for this event": the push service accepted it, or
+-- rejected it in a way no retry can change. A retry skips settled rows.
+--
+-- It is keyed by subscription id, not endpoint, so the push service's
+-- capability URL is not copied into a second table that would outlive an
+-- unsubscribe; forgetting a subscription forgets its ledger rows. Re-subscribing
+-- the same browser upserts on endpoint and keeps the id, so it stays settled.
+-- push_subscriptions.last_success_at cannot stand in for this: a member of two
+-- crews receives two different digests on the same day.
+create table push_deliveries (
+  event_id        bigint not null references notification_outbox (id) on delete cascade,
+  subscription_id bigint not null references push_subscriptions (id) on delete cascade,
+  outcome         text not null check (outcome in ('DELIVERED', 'REJECTED')),
+  -- What the push service answered, so an operator can tell a VAPID key
+  -- mismatch (403) from an oversized payload (413) without the logs.
+  status_code     integer not null check (status_code between 200 and 499),
+  settled_at      timestamptz not null default now(),
+  primary key (event_id, subscription_id),
+  check ((outcome = 'DELIVERED') = (status_code between 200 and 299))
+);
+
+-- Serves the cascade when a subscription is forgotten; the primary key already
+-- serves the per-event lookup.
+create index push_deliveries_subscription_idx on push_deliveries (subscription_id);
+
 -- +goose Down
+drop index if exists push_deliveries_subscription_idx;
+drop table if exists push_deliveries;
 drop index if exists push_subscriptions_session_idx;
 drop table if exists push_subscriptions;

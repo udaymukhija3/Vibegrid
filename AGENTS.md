@@ -70,6 +70,8 @@ Run `npx playwright install chromium` first. Registry audits need network access
   `src/lib/push.ts`, `src/components/ReminderToggle.tsx`, `public/sw.js`:
   opt-in Web Push crew digest, dormant without `VIBEGRID_VAPID_*` keys.
   Subscriptions are keyed by the stable identity, never the browser bearer.
+  Every send settles in `push_deliveries` per outbox event and subscription,
+  so a retried digest skips devices already settled for that event.
 - `scripts/smoke.mjs`, `scripts/e2e.mjs`: runtime verification.
 
 The Go binary still embeds the exported Next.js frontend and legacy migrations,

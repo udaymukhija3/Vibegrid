@@ -190,7 +190,7 @@ Manual or missing:
 - [ ] Privacy-reviewed event taxonomy and controlled-cohort consent.
 - [ ] Crew-card support/report contact available.
 - [ ] Reminders either deliberately left off (no VAPID keys) or enabled with
-  the retry-duplication gap closed and one real device receiving a digest.
+  one real device receiving a digest.
 
 ## Do not overstate
 

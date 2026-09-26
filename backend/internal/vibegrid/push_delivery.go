@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -62,7 +63,9 @@ type CrewDigestSource interface {
 }
 
 // WebPushDeliverer turns one enqueued crew digest into at most one notification
-// per subscribed member.
+// per subscribed device. The outbox retries an event as a whole, so every send
+// is settled in the push_deliveries ledger and a retry only reaches the devices
+// that are still unsettled — the ones whose push failed transiently.
 type WebPushDeliverer struct {
 	keys          VAPIDKeys
 	subscriptions PushSubscriptionStore
@@ -135,19 +138,23 @@ func (deliverer *WebPushDeliverer) Deliver(ctx context.Context, event OutboxEven
 	for _, member := range snapshot.Members {
 		sessionIDs = append(sessionIDs, member.SessionID)
 	}
-	subscriptions, err := deliverer.subscriptions.SubscriptionsForSessions(ctx, sessionIDs)
+	subscriptions, err := deliverer.subscriptions.UnsettledSubscriptions(ctx, event.ID, sessionIDs)
 	if err != nil {
 		return fmt.Errorf("load digest subscriptions: %w", err)
 	}
 
 	var failures []string
 	for _, member := range snapshot.Members {
+		pending := subscriptions[member.SessionID]
+		if len(pending) == 0 {
+			continue
+		}
 		notification, send := crewDigestFor(crew, member, today, judge, result, snapshot, deliverer.publicBaseURL, payload.Date)
 		if !send {
 			continue
 		}
-		for _, subscription := range subscriptions[member.SessionID] {
-			if err := deliverer.send(ctx, subscription, notification); err != nil {
+		for _, subscription := range pending {
+			if err := deliverer.send(ctx, event.ID, subscription, notification); err != nil {
 				failures = append(failures, err.Error())
 			}
 		}
@@ -158,10 +165,45 @@ func (deliverer *WebPushDeliverer) Deliver(ctx context.Context, event OutboxEven
 	return nil
 }
 
-// send pushes one notification. A push service reporting the subscription gone
-// is the one signal that justifies forgetting it; everything else is treated as
-// transient so the outbox retries rather than silently dropping a person.
-func (deliverer *WebPushDeliverer) send(ctx context.Context, subscription PushSubscription, notification pushNotification) error {
+// pushVerdict is what one push service answer means for the event.
+type pushVerdict int
+
+const (
+	// pushAccepted settles the subscription: the notification is on its way.
+	pushAccepted pushVerdict = iota
+	// pushRejected settles it too. The push service refused this request as
+	// formed (a bad payload, a VAPID key the subscription was not made with),
+	// and sending the same request again can only get the same answer.
+	pushRejected
+	// pushGone means the subscription no longer exists and should be forgotten.
+	pushGone
+	// pushRetry leaves it unsettled so the outbox tries it again.
+	pushRetry
+)
+
+// classifyPushStatus maps an RFC 8030 push service response to a verdict. A 4xx
+// is the service saying this request will never succeed, except for the two
+// that explicitly mean "later": 408 and 429. Anything else unexpected is
+// treated as transient, so an odd answer costs a retry rather than a reminder.
+func classifyPushStatus(status int) pushVerdict {
+	switch {
+	case status >= 200 && status < 300:
+		return pushAccepted
+	case status == http.StatusNotFound || status == http.StatusGone:
+		return pushGone
+	case status == http.StatusRequestTimeout || status == http.StatusTooManyRequests:
+		return pushRetry
+	case status >= 400 && status < 500:
+		return pushRejected
+	default:
+		return pushRetry
+	}
+}
+
+// send pushes one notification and settles the outcome. It returns an error
+// only for a transient failure, which is the one case where retrying the event
+// can reach someone who has not yet been reached.
+func (deliverer *WebPushDeliverer) send(ctx context.Context, eventID int64, subscription PushSubscription, notification pushNotification) error {
 	body, err := json.Marshal(notification)
 	if err != nil {
 		return fmt.Errorf("encode notification: %w", err)
@@ -181,25 +223,61 @@ func (deliverer *WebPushDeliverer) send(ctx context.Context, subscription PushSu
 		Urgency:         pushURGENCY,
 	})
 	if err != nil {
-		return fmt.Errorf("push send: %w", err)
+		// A transport error quotes the request URL, which is the endpoint. Keep
+		// the cause and drop the address before it reaches the outbox and logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("subscription %d: push send: %w", subscription.ID, err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+	detail, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
 
-	switch {
-	case response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone:
-		if err := deliverer.subscriptions.DeleteSubscription(ctx, subscription.Endpoint); err != nil {
+	// Settling must outlive the delivery deadline. A push that went out just
+	// before the outbox's timeout fired still went out, and losing the record of
+	// it is exactly what would send it a second time.
+	settleCtx := context.WithoutCancel(ctx)
+	now := deliverer.clock()
+
+	switch classifyPushStatus(response.StatusCode) {
+	case pushAccepted:
+		if err := deliverer.subscriptions.SettleDelivery(settleCtx, eventID, subscription.ID, response.StatusCode, now); err != nil {
+			// Logged, not returned: failing the event here would retry it and
+			// re-send the very notification that just arrived.
+			deliverer.logger.Error("could not record push delivery", "event", eventID, "subscription", subscription.ID, "error", err)
+		}
+		return nil
+	case pushGone:
+		if err := deliverer.subscriptions.DeleteSubscription(settleCtx, subscription.Endpoint); err != nil {
 			deliverer.logger.Error("could not forget a gone push subscription", "error", err)
 		}
 		return nil
-	case response.StatusCode >= 200 && response.StatusCode < 300:
-		if err := deliverer.subscriptions.MarkSubscriptionDelivered(ctx, subscription.Endpoint, deliverer.clock()); err != nil {
-			deliverer.logger.Error("could not record push delivery", "error", err)
+	case pushRejected:
+		deliverer.logger.Warn("push service rejected a crew digest; not retrying",
+			"event", eventID,
+			"subscription", subscription.ID,
+			"push_service", pushServiceHost(subscription.Endpoint),
+			"status", response.StatusCode,
+			"detail", truncateRunes(strings.TrimSpace(string(detail)), 256))
+		if err := deliverer.subscriptions.SettleRejection(settleCtx, eventID, subscription.ID, response.StatusCode, now); err != nil {
+			deliverer.logger.Error("could not record push rejection", "event", eventID, "subscription", subscription.ID, "error", err)
 		}
 		return nil
 	default:
-		return fmt.Errorf("push service returned %d", response.StatusCode)
+		return fmt.Errorf("subscription %d: push service returned %d", subscription.ID, response.StatusCode)
 	}
+}
+
+// pushServiceHost names the push service (FCM, APNs, autopush) without logging
+// the endpoint path, which is the per-browser push address and is no more a log
+// field than the browser key is.
+func pushServiceHost(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
 }
 
 // crewDigestFor decides what one member is told, and whether they are told

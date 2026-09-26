@@ -23,6 +23,7 @@ var ErrPushSubscriptionInvalid = errors.New("push subscription is invalid")
 // personal data: the endpoint is issued by the push service, and the two keys
 // are what encrypt the payload to that browser.
 type PushSubscription struct {
+	ID        int64  `json:"-"`
 	SessionID string `json:"-"`
 	Endpoint  string `json:"endpoint"`
 	P256dh    string `json:"p256dh"`
@@ -36,11 +37,17 @@ type PushSubscription struct {
 type PushSubscriptionStore interface {
 	SaveSubscription(ctx context.Context, subscription PushSubscription, now time.Time) error
 	DeleteSubscription(ctx context.Context, endpoint string) error
-	// SubscriptionsForSessions returns every subscription belonging to any of the
-	// given sessions, keyed by session. One person may be subscribed on a phone
-	// and a laptop and should be reminded on both.
-	SubscriptionsForSessions(ctx context.Context, sessionIDs []string) (map[string][]PushSubscription, error)
-	MarkSubscriptionDelivered(ctx context.Context, endpoint string, now time.Time) error
+	// UnsettledSubscriptions returns every subscription belonging to any of the
+	// given sessions, keyed by session, that has not yet been settled for this
+	// outbox event. One person may be subscribed on a phone and a laptop and
+	// should be reminded on both — once each, however often the event retries.
+	UnsettledSubscriptions(ctx context.Context, eventID int64, sessionIDs []string) (map[string][]PushSubscription, error)
+	// SettleDelivery records that the push service accepted this event for this
+	// subscription, so a retry of the event skips it.
+	SettleDelivery(ctx context.Context, eventID, subscriptionID int64, statusCode int, now time.Time) error
+	// SettleRejection records that the push service refused this event for this
+	// subscription in a way no retry can change, so a retry skips it too.
+	SettleRejection(ctx context.Context, eventID, subscriptionID int64, statusCode int, now time.Time) error
 	// CrewsAwaitingDigest lists crews that have at least one subscribed member,
 	// so the sweeper never enqueues a reminder nobody could receive.
 	CrewsAwaitingDigest(ctx context.Context) ([]string, error)
@@ -91,7 +98,7 @@ func (store *PostgresPushSubscriptionStore) DeleteSubscription(ctx context.Conte
 	return nil
 }
 
-func (store *PostgresPushSubscriptionStore) SubscriptionsForSessions(ctx context.Context, sessionIDs []string) (map[string][]PushSubscription, error) {
+func (store *PostgresPushSubscriptionStore) UnsettledSubscriptions(ctx context.Context, eventID int64, sessionIDs []string) (map[string][]PushSubscription, error) {
 	subscriptions := map[string][]PushSubscription{}
 	if len(sessionIDs) == 0 {
 		return subscriptions, nil
@@ -100,8 +107,13 @@ func (store *PostgresPushSubscriptionStore) SubscriptionsForSessions(ctx context
 	defer cancel()
 
 	rows, err := store.db.QueryContext(ctx,
-		`select session_id, endpoint, p256dh, auth
-		 from push_subscriptions where session_id = any($1)`, pq.Array(sessionIDs))
+		`select s.id, s.session_id, s.endpoint, s.p256dh, s.auth
+		 from push_subscriptions s
+		 where s.session_id = any($2)
+		   and not exists (
+		     select 1 from push_deliveries d
+		     where d.event_id = $1 and d.subscription_id = s.id)
+		 order by s.id`, eventID, pq.Array(sessionIDs))
 	if err != nil {
 		return nil, fmt.Errorf("load push subscriptions: %w", err)
 	}
@@ -109,7 +121,7 @@ func (store *PostgresPushSubscriptionStore) SubscriptionsForSessions(ctx context
 
 	for rows.Next() {
 		var subscription PushSubscription
-		if err := rows.Scan(&subscription.SessionID, &subscription.Endpoint, &subscription.P256dh, &subscription.Auth); err != nil {
+		if err := rows.Scan(&subscription.ID, &subscription.SessionID, &subscription.Endpoint, &subscription.P256dh, &subscription.Auth); err != nil {
 			return nil, fmt.Errorf("scan push subscription: %w", err)
 		}
 		subscriptions[subscription.SessionID] = append(subscriptions[subscription.SessionID], subscription)
@@ -117,15 +129,38 @@ func (store *PostgresPushSubscriptionStore) SubscriptionsForSessions(ctx context
 	return subscriptions, rows.Err()
 }
 
-func (store *PostgresPushSubscriptionStore) MarkSubscriptionDelivered(ctx context.Context, endpoint string, now time.Time) error {
+func (store *PostgresPushSubscriptionStore) SettleDelivery(ctx context.Context, eventID, subscriptionID int64, statusCode int, now time.Time) error {
+	ctx, cancel := withDatabaseTimeout(ctx)
+	defer cancel()
+
+	// One statement, so the ledger row and the subscription's health move
+	// together. Selecting the subscription rather than inserting its id blind
+	// lets an unsubscribe that raced the send simply record nothing.
+	if _, err := store.db.ExecContext(ctx,
+		`with settled as (
+		   insert into push_deliveries (event_id, subscription_id, outcome, status_code, settled_at)
+		   select $1, id, 'DELIVERED', $3, $4 from push_subscriptions where id = $2
+		   on conflict (event_id, subscription_id) do nothing
+		 )
+		 update push_subscriptions set last_success_at = $4, failure_count = 0 where id = $2`,
+		eventID, subscriptionID, statusCode, now.UTC(),
+	); err != nil {
+		return fmt.Errorf("record push delivery: %w", err)
+	}
+	return nil
+}
+
+func (store *PostgresPushSubscriptionStore) SettleRejection(ctx context.Context, eventID, subscriptionID int64, statusCode int, now time.Time) error {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
 	if _, err := store.db.ExecContext(ctx,
-		`update push_subscriptions set last_success_at = $2, failure_count = 0 where endpoint = $1`,
-		endpoint, now.UTC(),
+		`insert into push_deliveries (event_id, subscription_id, outcome, status_code, settled_at)
+		 select $1, id, 'REJECTED', $3, $4 from push_subscriptions where id = $2
+		 on conflict (event_id, subscription_id) do nothing`,
+		eventID, subscriptionID, statusCode, now.UTC(),
 	); err != nil {
-		return fmt.Errorf("mark push subscription delivered: %w", err)
+		return fmt.Errorf("record push rejection: %w", err)
 	}
 	return nil
 }

@@ -245,7 +245,7 @@ func TestMigrationsRollBackAndForwardCleanly(t *testing.T) {
 	var newerTables int
 	if err := database.QueryRow(
 		`select count(*) from information_schema.tables
-		 where table_name in ('crew_member_identities', 'guest_sessions', 'push_subscriptions')`).Scan(&newerTables); err != nil {
+		 where table_name in ('crew_member_identities', 'guest_sessions', 'push_subscriptions', 'push_deliveries')`).Scan(&newerTables); err != nil {
 		t.Fatalf("inspect rolled-back schema: %v", err)
 	}
 	if newerTables != 0 {
