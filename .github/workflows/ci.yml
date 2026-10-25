@@ -28,7 +28,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # go.mod is the single source of truth for the toolchain version, so a
           # security bump there (e.g. GO-2026-5856) applies to CI automatically.
