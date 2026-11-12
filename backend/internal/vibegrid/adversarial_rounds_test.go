@@ -92,7 +92,7 @@ func (fixture *adversarialFixture) join(t *testing.T, displayName, session strin
 
 func (fixture *adversarialFixture) freeze(t *testing.T, session string) VibeBoard {
 	t.Helper()
-	projected, err := fixture.rounds.EnsureCrewBoard(fixture.ctx, fixture.crew.ID, session, fixture.board)
+	projected, err := fixture.rounds.seedFrozenCrewBoard(fixture.ctx, fixture.crew.ID, session, fixture.board)
 	if err != nil {
 		t.Fatalf("freeze crew board for %s: %v", session, err)
 	}
@@ -487,11 +487,8 @@ func TestJudgeBallotIgnoresCreationOrderWhenItDiffersFromIDOrder(t *testing.T) {
 	}
 }
 
-// EDGE-005: the crew board size must freeze once (EnsureCrewBoard, which the
-// first card submission calls) and must not be rewritten by later joins. Two
-// members freezing simultaneously while a third joins must converge on exactly
-// one frozen size.
-func TestConcurrentFirstOpenAndJoinFreezeOneSize(t *testing.T) {
+// EDGE-005: actual first cards racing new members must commit exactly one size.
+func TestConcurrentFirstCardsAndJoinFreezeOneSize(t *testing.T) {
 	fixture := newAdversarialFixture(t, "2026-08-21")
 	fixture.createCrew(t, "Night Shift", "Ari", "session-a")
 	for index := 0; index < 3; index++ {
@@ -509,9 +506,15 @@ func TestConcurrentFirstOpenAndJoinFreezeOneSize(t *testing.T) {
 			if slot > 0 {
 				session = fmt.Sprintf("session-m%d", slot-1)
 			}
-			projected, err := fixture.rounds.EnsureCrewBoard(context.Background(), fixture.crew.ID, session, fixture.board)
+			_, err := fixture.rounds.SubmitVibe(context.Background(), fixture.crew.ID, session, VibeSubmissionRequest{
+				BoardID: fixture.board.ID, Title: "Racing card", SelectedTileIDs: fixture.selection(0), ClientSubmissionID: "first-card",
+			}, fixture.now)
 			errs[slot] = err
-			sizes[slot] = len(projected.Tiles)
+			if err == nil {
+				frozen, readErr := fixture.rounds.FrozenCrewBoards(context.Background(), fixture.crew.ID, []string{fixture.board.ID})
+				errs[slot] = readErr
+				sizes[slot] = frozen[fixture.board.ID]
+			}
 		}(index)
 	}
 	for index := 0; index < 4; index++ {
@@ -533,7 +536,7 @@ func TestConcurrentFirstOpenAndJoinFreezeOneSize(t *testing.T) {
 	first := sizes[0]
 	for _, size := range sizes {
 		if size != first {
-			t.Fatalf("concurrent first-open produced different frozen sizes: %v", sizes)
+			t.Fatalf("concurrent first cards produced different frozen sizes: %v", sizes)
 		}
 	}
 

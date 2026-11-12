@@ -17,6 +17,7 @@ import {
   Users
 } from "lucide-react";
 import { toast } from "sonner";
+import { ReminderToggle } from "@/components/ReminderToggle";
 import { VibeCard } from "@/components/VibeCard";
 import { VibeComposer } from "@/components/VibeComposer";
 import { VibeHeader } from "@/components/VibeHeader";
@@ -33,6 +34,7 @@ import {
   replayIdFor
 } from "@/lib/api";
 import { writeClipboardText } from "@/lib/clipboard";
+import { ApiError } from "@/lib/http";
 import { readStoredValue, writeStoredValue } from "@/lib/storage";
 import type { VibeCrewDaily } from "@/types/vibe";
 
@@ -61,6 +63,7 @@ function CrewDailyView({ crewId }: { crewId: string }) {
   const [error, setError] = useState("");
   const [unavailable, setUnavailable] = useState(false);
   const loadSequence = useRef(0);
+  const loaded = useRef(false);
 
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
@@ -69,11 +72,20 @@ function CrewDailyView({ crewId }: { crewId: string }) {
       if (sequence !== loadSequence.current) {
         return;
       }
+      loaded.current = true;
       setDaily(nextDaily);
       setError("");
       setUnavailable(false);
     } catch (loadError) {
       if (sequence !== loadSequence.current) {
+        return;
+      }
+      // Once the room is on screen, only a 404 means it is gone. Any other
+      // failed refresh — a dropped connection, a deploy restarting the server, a
+      // rate limit — used to replace the whole room with "Crew not found" and
+      // stop polling, stranding a draft card until a manual reload. Keep the
+      // last good state; the next poll catches up.
+      if (loaded.current && !(loadError instanceof ApiError && loadError.status === 404)) {
         return;
       }
       if (loadError instanceof CrewsUnavailableError) {
@@ -132,9 +144,44 @@ function CrewDailyView({ crewId }: { crewId: string }) {
         <JoinCrewLanding crewId={crewId} daily={daily} onJoined={load} />
       ) : (
         <div className="grid gap-8 pb-12">
+          <nav
+            aria-label="Crew round stages"
+            className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-2xl border-2 border-line bg-paper/95 px-3 py-2 backdrop-blur"
+          >
+            <a
+              href="#make-heading"
+              className="inline-flex min-h-9 items-center rounded-xl border-2 border-ink bg-amber px-3 font-mono text-xs font-bold uppercase tracking-[0.08em] text-ink transition hover:bg-lime"
+            >
+              Today: Make
+            </a>
+            {daily.judge && (
+              <>
+                <span aria-hidden className="text-cream/40">·</span>
+                <a
+                  href="#judge-heading"
+                  className="inline-flex min-h-9 items-center rounded-xl border-2 border-cream/25 bg-cream/5 px-3 font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream transition hover:border-lime hover:text-lime"
+                >
+                  Yesterday: Judge
+                </a>
+              </>
+            )}
+            {daily.result && (
+              <>
+                <span aria-hidden className="text-cream/40">·</span>
+                <a
+                  href="#latest-result"
+                  className="inline-flex min-h-9 items-center rounded-xl border-2 border-cream/25 bg-cream/5 px-3 font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream transition hover:border-lime hover:text-lime"
+                >
+                  Reveal
+                </a>
+              </>
+            )}
+          </nav>
           <ResultSection daily={daily} />
-          <JudgeSection daily={daily} onReload={load} />
-          <MakeSection daily={daily} onReload={load} />
+          {/* Keyed by board so a pick or draft never outlives the day it was made
+              on: at rollover both sections start fresh on the new board. */}
+          <JudgeSection key={daily.judge?.board.id ?? "no-ballot"} daily={daily} onReload={load} />
+          <MakeSection key={daily.today.board.id} daily={daily} onReload={load} />
           <CrewRoster daily={daily} onReload={load} />
         </div>
       )}
@@ -215,7 +262,7 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
         <div>
           <p className="vg-meta text-lime">Private crew</p>
           <h1 className="mt-2 text-4xl font-black tracking-[-0.05em] text-cream sm:text-6xl">{daily.crew.name}</h1>
-          <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-bold text-cream/[.58]">
+          <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-bold tabular-nums text-cream/[.58]">
             <span>Board {String(daily.today.board.boardNumber).padStart(3, "0")}</span>
             {daily.isMember && (
               <span className="inline-flex items-center gap-1.5 text-amber">
@@ -230,10 +277,16 @@ function CrewHero({ daily }: { daily: VibeCrewDaily }) {
             {copied ? <Check aria-hidden size={17} /> : <Send aria-hidden size={17} />}
             {copied ? "Copied" : "Nudge the crew"}
           </button>
+          {daily.isMember && <ReminderToggle />}
           {daily.isMember && (
-            <button type="button" onClick={() => setManaging((value) => !value)} className="vg-secondary-button">
+            <button
+              type="button"
+              aria-expanded={managing}
+              onClick={() => setManaging((value) => !value)}
+              className="vg-secondary-button"
+            >
               <ShieldCheck aria-hidden size={17} />
-              Manage
+              Crew options
             </button>
           )}
         </div>
@@ -369,7 +422,7 @@ function ResultSection({ daily }: { daily: VibeCrewDaily }) {
             </p>
           )}
         </div>
-        <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
+        <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] tabular-nums text-cream/[.48]">
           {result.submissionCount} cards · {result.voteCount} votes
         </p>
       </div>
@@ -395,11 +448,27 @@ function JudgeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () 
   }
   if (!judge.eligible) {
     return (
-      <section className="vg-dark-panel">
+      <section className="vg-dark-panel" aria-labelledby="judge-heading">
         <p className="vg-meta text-violet-light">Yesterday&apos;s ballot</p>
-        <h2 className="mt-2 text-2xl font-black text-cream">You sat this one out.</h2>
+        <h2 id="judge-heading" className="mt-2 text-2xl font-black text-cream">You sat this one out.</h2>
         <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-cream/[.58]">
           Only people who made a card get a ballot. The authors and result reveal tomorrow.
+        </p>
+      </section>
+    );
+  }
+
+  // Only your own card made it in, so there is no one to back. This used to
+  // render a ballot of one disabled card and a vote button that could never
+  // enable, above a prompt to pick the card that lands.
+  if (!(judge.cards ?? []).some((card) => !card.isYours)) {
+    return (
+      <section className="vg-dark-panel" aria-labelledby="judge-heading">
+        <p className="vg-meta text-violet-light">Yesterday&apos;s ballot</p>
+        <h2 id="judge-heading" className="mt-2 text-2xl font-black text-cream">Nothing to judge yet.</h2>
+        <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-cream/[.58]">
+          Yours was the only card yesterday, and nobody votes for their own. It still reveals tomorrow as a quiet
+          round.
         </p>
       </section>
     );
@@ -424,6 +493,9 @@ function JudgeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () 
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not lock that ballot.");
       setBusy(false);
+      // The refusal usually means the room moved on — a ballot already cast
+      // from another tab, or a day that rolled over. Show what is true now.
+      await onReload();
     }
   }
 
@@ -468,13 +540,13 @@ function JudgeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () 
 function MakeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () => Promise<void> }) {
   if (daily.today.submission) {
     return (
-      <section aria-labelledby="today-card">
+      <section aria-labelledby="make-heading">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="vg-meta text-amber">Today · locked in</p>
-            <h2 id="today-card" className="mt-2 text-3xl font-black text-cream">Your card is waiting for tomorrow.</h2>
+            <h2 id="make-heading" className="mt-2 text-3xl font-black text-cream">Your card is waiting for tomorrow.</h2>
           </div>
-          <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
+          <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] tabular-nums text-cream/[.48]">
             {daily.today.submittedCount}/{daily.today.memberCount} in
           </p>
         </div>
@@ -492,20 +564,29 @@ function MakeSection({ daily, onReload }: { daily: VibeCrewDaily; onReload: () =
           <p className="vg-meta text-amber">Make today</p>
           <h2 id="make-heading" className="sr-only">Make today&apos;s vibe card</h2>
         </div>
-        <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-cream/[.48]">
+        <p className="font-mono text-xs font-bold uppercase tracking-[0.08em] tabular-nums text-cream/[.48]">
           {daily.today.submittedCount}/{daily.today.memberCount} in
         </p>
       </div>
       <VibeComposer
         board={daily.today.board}
         onSubmit={async ({ title, selectedTileIds }) => {
-          await submitVibeCard({
-            inviteCode: daily.crew.inviteCode,
-            boardId: daily.today.board.id,
-            title,
-            selectedTileIds,
-            clientSubmissionId: replayIdFor("card", daily.today.board.id, title, ...selectedTileIds)
-          });
+          try {
+            await submitVibeCard({
+              inviteCode: daily.crew.inviteCode,
+              boardId: daily.today.board.id,
+              title,
+              selectedTileIds,
+              clientSubmissionId: replayIdFor("card", daily.today.board.id, title, ...selectedTileIds)
+            });
+          } catch (error) {
+            // A refused card usually means the board moved under the draft: the
+            // day rolled over, or the first card elsewhere locked a smaller
+            // palette. Reload so the composer shows the board the server holds
+            // and drops any pick that is no longer on it.
+            await onReload();
+            throw error;
+          }
           toast.success("Vibe locked. Nobody sees it until tomorrow.");
           await onReload();
         }}
@@ -521,7 +602,7 @@ function CrewRoster({ daily, onReload }: { daily: VibeCrewDaily; onReload: () =>
       <div className="flex items-end justify-between gap-3">
         <div>
           <p className="vg-meta">Crew check-in</p>
-          <h2 className="mt-2 text-2xl font-black text-cream">{members.filter((member) => member.submittedToday).length} of {members.length} are in.</h2>
+          <h2 className="mt-2 text-2xl font-black tabular-nums text-cream">{members.filter((member) => member.submittedToday).length} of {members.length} are in.</h2>
         </div>
       </div>
       <ul className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -577,12 +658,21 @@ function RemoveMemberButton({
 
   if (confirming) {
     return (
-      <span className="flex gap-1">
-        <button type="button" disabled={busy} onClick={() => void remove()} className="rounded-lg bg-coral px-2 py-1 text-xs font-black text-ink">
+      <span className="flex gap-1.5">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void remove()}
+          className="inline-flex min-h-9 items-center justify-center rounded-lg bg-coral px-3 text-xs font-black text-ink"
+        >
           {busy ? "…" : "Remove"}
         </button>
-        <button type="button" onClick={() => setConfirming(false)} className="rounded-lg border border-cream/20 px-2 py-1 text-xs font-bold">
-          No
+        <button
+          type="button"
+          onClick={() => setConfirming(false)}
+          className="inline-flex min-h-9 items-center justify-center rounded-lg border border-cream/20 px-3 text-xs font-bold"
+        >
+          Cancel
         </button>
       </span>
     );
@@ -643,7 +733,7 @@ function JoinCrewLanding({
             <span key={tile.id} className="vg-hero-fragment">{tile.text}</span>
           ))}
         </div>
-        <p className="mt-5 border-t-2 border-ink/[.15] pt-4 font-mono text-xs font-bold uppercase tracking-[0.08em]">
+        <p className="mt-5 border-t-2 border-ink/[.15] pt-4 font-mono text-xs font-bold uppercase tracking-[0.08em] tabular-nums">
           {daily.today.submittedCount}/{daily.today.memberCount} have made today&apos;s card
         </p>
       </section>

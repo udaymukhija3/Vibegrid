@@ -99,6 +99,20 @@ export async function runSmoke({
   assert(jar.has("vibegrid_session"), "guest session cookie was not set");
   log("ok guest browser identity");
 
+  // Reminders may legitimately be off (no VAPID keys), so only the contract is
+  // checked: a private, uncached answer, and a public key exactly when enabled.
+  const push = await expectJSON("/api/push/config");
+  assert(typeof push.payload.enabled === "boolean", "push config did not report enabled");
+  assert(!push.payload.enabled || typeof push.payload.publicKey === "string", "enabled push config had no public key");
+  assert(push.response.headers.get("cache-control") === "private, no-store", "push config was cacheable");
+  const unsignedSubscribe = await request("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  assert(unsignedSubscribe.status === 403, `push subscribe without CSRF returned ${unsignedSubscribe.status}`);
+  log(`ok reminder config (${push.payload.enabled ? "enabled" : "off"})`);
+
   const robots = await expectText("/robots.txt");
   assert(robots.text.includes("Disallow: /admin"), "robots.txt did not protect admin");
   const sitemap = await expectText("/sitemap.xml");

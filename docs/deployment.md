@@ -66,6 +66,11 @@ Optional:
   operational/community paths are still in use.
 - `VIBEGRID_MIGRATE_ON_BOOT=true` only on a single-instance host without a
   release hook. Prefer a release migration.
+- `VIBEGRID_VAPID_PUBLIC_KEY`, `VIBEGRID_VAPID_PRIVATE_KEY`, and
+  `VIBEGRID_VAPID_SUBJECT` (a `mailto:` or `https:` contact) turn on crew
+  reminders; all three or none. Missing keys boot with a warning and no
+  reminders. Rotating the key pair silently unsubscribes every browser.
+  `VIBEGRID_PUSH_DIGEST_HOUR_UTC` (default `18`) sets the send hour.
 
 `NEXT_PUBLIC_APP_URL` affects build-time frontend metadata. The Go server’s
 canonical, robots, sitemap, and injected metadata use

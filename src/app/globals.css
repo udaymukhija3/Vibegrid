@@ -110,11 +110,11 @@ textarea:focus-visible {
   }
 
   .vg-meta {
-    @apply font-mono text-[0.7rem] font-bold uppercase tracking-[0.13em] text-cream/[.55];
+    @apply font-mono text-xs font-bold uppercase tracking-[0.11em] text-cream/70 tabular-nums;
   }
 
   .vg-count {
-    @apply min-w-14 rounded-xl border-2 border-cream/20 bg-cream/5 px-3 py-2 text-center font-mono text-sm font-bold text-lime;
+    @apply min-w-14 rounded-xl border-2 border-cream/20 bg-cream/5 px-3 py-2 text-center font-mono text-sm font-bold text-lime tabular-nums;
   }
 
   .vg-header-link {
@@ -165,7 +165,7 @@ textarea:focus-visible {
   }
 
   .vg-tag {
-    @apply inline-flex items-center gap-1 rounded-full border-2 border-ink px-2.5 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.08em];
+    @apply inline-flex items-center gap-1 rounded-full border-2 border-ink px-2.5 py-1 font-mono text-xs font-bold uppercase tracking-[0.08em];
   }
 
   .vg-card-row {
@@ -185,7 +185,7 @@ textarea:focus-visible {
   }
 
   .vg-hero-fragment {
-    @apply flex min-h-14 items-center justify-center rounded-xl border-2 border-ink/[.15] bg-white px-1.5 text-center text-[0.62rem] font-black leading-tight sm:min-h-20 sm:px-2 sm:text-xs;
+    @apply flex min-h-14 items-center justify-center rounded-xl border-2 border-ink/[.15] bg-white px-1.5 text-center text-xs font-black leading-tight sm:min-h-20 sm:px-2;
   }
 
   .vg-prompt {
@@ -197,7 +197,7 @@ textarea:focus-visible {
   }
 
   .vg-fragment {
-    @apply relative flex min-h-[4.75rem] items-center justify-center rounded-xl border-2 border-cream/25 bg-cream px-1.5 text-center text-[0.65rem] font-black leading-tight text-ink transition sm:min-h-[6.5rem] sm:px-3 sm:text-sm;
+    @apply relative flex min-h-[4.75rem] items-center justify-center rounded-xl border-2 border-cream/25 bg-cream px-2 text-center text-xs font-black leading-tight text-ink transition sm:min-h-[6.5rem] sm:px-3 sm:text-sm;
     box-shadow: 4px 4px 0 var(--ink-deep);
   }
 
@@ -246,7 +246,7 @@ textarea:focus-visible {
   }
 
   .vg-title-input {
-    @apply min-h-12 w-full rounded-xl border-2 border-cream/25 bg-cream px-4 text-base font-black text-ink outline-none placeholder:text-ink/[.35] focus:border-lime;
+    @apply min-h-12 w-full rounded-xl border-2 border-cream/25 bg-cream px-4 text-base font-black text-ink placeholder:text-ink/[.35] focus:border-lime focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-amber;
     box-shadow: inset 0 -3px 0 rgba(13, 18, 32, 0.12);
   }
 
@@ -274,7 +274,7 @@ textarea:focus-visible {
   }
 
   .vg-card-badge {
-    @apply inline-flex shrink-0 items-center gap-1 rounded-full border-2 border-ink px-2.5 py-1 font-mono text-[0.62rem] font-bold uppercase tracking-[0.08em];
+    @apply inline-flex shrink-0 items-center gap-1 rounded-full border-2 border-ink px-2.5 py-1 font-mono text-xs font-bold uppercase tracking-[0.08em];
   }
 
   /* Legacy/admin surfaces inherit the same physical system while their routes
@@ -316,7 +316,7 @@ textarea:focus-visible {
   }
 
   .vg-input {
-    @apply min-h-12 w-full rounded-xl border-2 border-line bg-white px-3 text-ink outline-none focus:border-violet;
+    @apply min-h-12 w-full rounded-xl border-2 border-line bg-white px-3 text-ink focus:border-violet focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-amber;
   }
 
   .vg-kicker {

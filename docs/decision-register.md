@@ -13,7 +13,7 @@ changes only when product behavior, tests, and this document change together.
 | Primary unit | One private crew of 3–8 known people | Meaning and reveal suspense depend on relationship context. System cap remains 20. |
 | Daily input | One prompt plus an immutable 28-fragment editorial master; no grouping metadata | Supports every crew-size projection without generating content at request time. |
 | Crew board size | Four columns; 1–4 members = 3 rows, 5–8 = 4, 9–12 = 5, 13–16 = 6, 17–20 = 7 | More participants receive a wider creative palette while the core act remains choosing four. |
-| Size snapshot | Opening the room is a read that projects an unstarted board from current membership; a member's first card submission for a crew/date freezes the band, and later joins, leaves, and removals do not resize it | Cards, retries, and open clients must refer to one stable palette once play starts. Freezing on first open let whoever looked first (usually the founder, before sending the invite) size the round for a crew of one. Crew locks linearize membership changes against the first submission. |
+| Size snapshot | Opening is a read; the first accepted card and its crew/date size commit together. Rejected cards, failed inserts, and closed-board attempts cannot freeze an unstarted round. Later membership changes cannot resize it. | A failed attempt is not play. Crew locks linearize membership changes against the first valid card; transaction rollback keeps sizing open until that card commits. Clarified 23 October 2026; existing snapshots are preserved without a schema change. |
 | Player output | Exactly 4 fragments plus a 1–40 rune title | Four creates a memorable card; the title makes the selection an authored interpretation. |
 | Answer model | No answer key, category mapping, correctness, difficulty, timer, or mistake count | The crew evaluates resonance, not editor intent. |
 | Phases | Day D make; D+1 blind judge; D+2 reveal | Delayed stages create return behavior and fit an async group-chat tempo. |
@@ -24,8 +24,8 @@ changes only when product behavior, tests, and this document change together.
 | Crown and ties | A crown requires a sole plurality; a level top is reported as a split (`tied`) and nobody is crowned | No arbitrary tiebreaker or earliest-submit advantage, and no crowning the whole crew when everyone backs someone else once. Two-person rounds always split and say so. |
 | Streak | Consecutive official crew results through the latest revealed date; a quiet revealed date resets rather than pauses it | Measures uninterrupted group recurrence, not one person opening the app. This hard-reset behavior was explicitly retained after adversarial review. |
 | Public experience | The homepage opens directly on complete local practice: make, house ballot, immediate reveal | The playable board is the front door; a dismissible, remembered first-visit dialog teaches the loop without becoming a landing-page gate. No fake people, signup, or durable public content. |
-| Practice ballot | House titles come from the editorial template; every card casts one non-self vote, the house reading the player's card through a stable hash | The previous reveal gave three votes to the player's pick and one to the player every time, so a newcomer could only lose to a bot. Practice can now be won, tied, or lost, and an identical card always replays to the identical result. |
-| Unlimited practice | A clearly labeled local 4×4 sandbox can deal another deterministic palette after every reveal | It satisfies repeat play without adding correctness, scores, persistence, or a second fake community. The finite curated masters may cycle; Unlimited never changes crew stages or streaks. |
+| Practice ballot | House titles follow the prompt — a bank prompt's own template titles, or a neutral trio for an authored prompt the bank does not know; every card casts one non-self vote, the house reading the player's card through a stable hash | The previous reveal gave three votes to the player's pick and one to the player every time, so a newcomer could only lose to a bot. Practice can now be won, tied, or lost, and an identical card always replays to the identical result. |
+| Unlimited practice | A clearly labeled local 4×4 sandbox can deal another deterministic palette after every reveal; consecutive returns to a prompt share at most 9 of 16 fragments, and today's prompt is skipped | It satisfies repeat play without adding correctness, scores, persistence, or a second fake community. The finite curated masters may cycle (168 palettes per prompt); Unlimited never changes crew stages or streaks. |
 | Identity | A revocable HttpOnly browser bearer maps server-side to a stable anonymous identity; per-crew display name | A leaked cookie can be replaced without rewriting membership/history, while the product keeps no-account onboarding. Token hashes—not bearer values—are stored. Browser-data loss still has no recovery. |
 | Invite security | Rotatable capability code separate from internal crew id | A leaked link can be revoked without destroying history. |
 | Ownership | Creator owns; owner leave transfers to longest-standing member; last leave deletes only after explicit destructive confirmation | Keeps access control operable while making the cascade over cards, ballots, results, invite, and identity mappings visible before it runs. |
@@ -43,7 +43,7 @@ changes only when product behavior, tests, and this document change together.
 | Area | Decision | Proof obligation |
 | --- | --- | --- |
 | Mutation authority | Membership and invariants are checked in a Postgres transaction | Integration tests cover outsider, duplicate, replay, eligibility, self-vote, and one-ballot behavior. |
-| Idempotency | Client card/vote ids are content-stable; every crew mutation honors `Idempotency-Key`; exact replay returns the original response and changed input conflicts | Client and server retries converge under lost responses, double presses, cold starts, and concurrent identical requests. Release tests assert one domain row. |
+| Idempotency | Client card/vote ids are content-stable; every crew mutation honors `Idempotency-Key`; the request fingerprint includes method, target URL, and body; changed targets or bodies conflict | Cross-crew key reuse must never report another crew's card as success. Exact same-target retries still replay one response. Pre-upgrade body-only replay records conflict safely rather than being trusted for a target they did not record. |
 | Disclosure | Go builds member-aware make/judge/result projections | Unit tests assert outsiders see no private data and judge cards omit authors. |
 | Schema | Stable crew-member mappings survive leave/removal; unique and foreign-key/check constraints mirror one-card, replay, one-ballot, same-round target, and no-self-vote invariants | Migrations and real-Postgres adversarial tests, including direct impossible-row inserts. |
 | Variable palette storage | Keep the legacy 12 fragments in `vibe_daily_boards`; store 16 immutable expansion fragments additively; freeze `tile_count` in `vibe_crew_boards` | Previous binary can boot after migration; current code validates expansion selections inside the card transaction. |
@@ -56,6 +56,19 @@ changes only when product behavior, tests, and this document change together.
 | Admin board authoring | Future/today date, one prompt, 28 distinct fragments, strict insert | Frozen date conflicts; first stored master and expansion win together. |
 | Runtime shape | Exported Next.js embedded into one Go binary with same-origin API | Docker/build/E2E smoke. |
 | Operational truth | External provider state is manual until verified | Docs separate code evidence from backups, alerts, domains, and traffic claims. |
+
+### Correctness follow-up — 23 October 2026
+
+Practice hashes sorted fragment ids, so all 24 click orders of one title and
+four-fragment set receive the same house votes. Card display order may still
+follow selection order. A separate browser lifecycle regression now uses five
+isolated Chromium sessions and real Postgres to exercise make, blind judge,
+and reveal with a test-only clock. This supplies local browser evidence; it
+does not establish provider durability, cross-engine accessibility, or retention.
+That browser test also exposed a rollover race: simultaneous first readers can
+collide on the dated board's primary key before its date uniqueness constraint.
+The insert now handles either conflict and loads the complete winning snapshot;
+a Postgres regression covers concurrent candidates and immutable later reads.
 
 ## Explicitly rejected ideas
 
@@ -77,7 +90,7 @@ changes only when product behavior, tests, and this document change together.
 | Decision | Evidence required | Default until then |
 | --- | --- | --- |
 | Crew-size formula | Controlled crews show scan cost or card quality is materially worse in a membership band; measure overlap, time-to-submit, completion, and abandonment by frozen row count | Keep the ratified 3–7 row bands. Change formula only with a migration and historical compatibility plan. |
-| Notifications | Crews make but fail to return for judge/reveal | No push/email. Test an optional calendar or web-push reminder only after funnel instrumentation. |
+| Notifications | Crews make but fail to return for judge/reveal | An opt-in Web Push digest is built (one per crew per day at a fixed UTC hour; result > open ballot > today's card; silent when nothing is waiting; keyed to the stable anonymous identity) but ships dormant: it stays off unless VAPID keys are configured. Each send is settled per digest and device in `push_deliveries`, so an outbox retry skips devices whose push service already accepted that digest, and a permanent refusal (4xx other than 404/408/410/429) is recorded instead of retried. Turning it on in production is the decision this row still gates; the original gate was funnel instrumentation. No email. |
 | Phase duration | Multi-timezone crews miss 24-hour stages | Keep daily UTC stages; consider a 36-hour grace only with missed-stage data. |
 | Crew-size guidance | Official-round rate is poor below a measured size | UI says two people are enough for a round that counts; system cap 20. |
 | Result archive navigation | Crews complete enough rounds to need browsing | Show only latest reveal now; add private pagination when history exists. |

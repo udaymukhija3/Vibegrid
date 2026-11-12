@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,7 +139,7 @@ func TestUnlimitedVibeBoardsKeepCoherentFourByFourDeals(t *testing.T) {
 			t.Fatalf("same unlimited sequence changed tile %d", index)
 		}
 	}
-	if rotated.Prompt != first.Prompt || rotated.ID == first.ID || rotated.Tiles[0].Text == first.Tiles[0].Text {
+	if rotated.Prompt != first.Prompt || rotated.ID == first.ID || sharedVibeFragments(rotated, first) > 9 {
 		t.Fatalf("next variation did not rotate one coherent master: %#v / %#v", first, rotated)
 	}
 	if _, err := UnlimitedVibeBoard(^uint64(0)); err != nil {
@@ -166,6 +168,81 @@ func TestUnlimitedVibeBoardsKeepCoherentFourByFourDeals(t *testing.T) {
 	handler.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/api/vibes/practice/not-a-number", nil))
 	if invalid.Code != http.StatusNotFound {
 		t.Fatalf("invalid unlimited sequence: status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func sharedVibeFragments(left, right VibeBoard) int {
+	texts := make(map[string]bool, len(left.Tiles))
+	for _, tile := range left.Tiles {
+		texts[tile.Text] = true
+	}
+	shared := 0
+	for _, tile := range right.Tiles {
+		if texts[tile.Text] {
+			shared++
+		}
+	}
+	return shared
+}
+
+// TestUnlimitedDealsAreActuallyNewDeals pins what "deal another" has to mean.
+// The first schedule dealt the twelve daily practice boards verbatim as deals
+// 0-11, so a player who pressed "Keep going" after today's round was handed
+// today's board again within a dozen deals; and every later return to a prompt
+// kept 15 of the 16 fragments the player had just used.
+func TestUnlimitedDealsAreActuallyNewDeals(t *testing.T) {
+	templateCount := uint64(len(vibeBoardTemplates))
+	cycle := uint64(len(unlimitedStrides) * VibeBoardMaxTileCount)
+	// A template's daily board is one of its palettes, so it does come back —
+	// but only after more than a hundred returns to that prompt.
+	const dailyNotBeforeVisit = 120
+
+	for templateIndex, template := range vibeBoardTemplates {
+		daily := VibeBoard{Tiles: make([]Tile, VibePracticeTileCount)}
+		for index := range daily.Tiles {
+			daily.Tiles[index] = Tile{Text: template.tiles[index]}
+		}
+
+		palettes := map[string]uint64{}
+		var previous VibeBoard
+		for visit := uint64(0); visit <= cycle; visit++ {
+			sequence := uint64(templateIndex) + visit*templateCount
+			deal, err := UnlimitedVibeBoard(sequence)
+			if err != nil {
+				t.Fatalf("deal %d: %v", sequence, err)
+			}
+			if deal.Prompt != template.prompt {
+				t.Fatalf("deal %d left its master's prompt", sequence)
+			}
+
+			// The same sixteen fragments in another order is not a new deal.
+			texts := make([]string, 0, len(deal.Tiles))
+			for _, tile := range deal.Tiles {
+				texts = append(texts, tile.Text)
+			}
+			slices.Sort(texts)
+			palette := strings.Join(texts, "|")
+			if visit == cycle {
+				if earlier, seen := palettes[palette]; !seen || earlier != 0 {
+					t.Fatalf("template %d's cycle did not close after %d visits", templateIndex, cycle)
+				}
+				continue
+			}
+			if earlier, seen := palettes[palette]; seen {
+				t.Fatalf("template %d dealt visit %d's palette again at visit %d", templateIndex, earlier, visit)
+			}
+			palettes[palette] = visit
+
+			if visit < dailyNotBeforeVisit && sharedVibeFragments(deal, daily) == VibePracticeTileCount {
+				t.Fatalf("deal %d replays template %d's daily practice board", sequence, templateIndex)
+			}
+			if visit > 0 {
+				if shared := sharedVibeFragments(deal, previous); shared > 9 {
+					t.Fatalf("deal %d keeps %d of the 16 fragments from the last visit to its prompt", sequence, shared)
+				}
+			}
+			previous = deal
+		}
 	}
 }
 
@@ -337,7 +414,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 	if _, err := rounds.CreateVibeBoard(ctx, board); err != nil {
 		t.Fatalf("create board: %v", err)
 	}
-	if projected, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-a", board); err != nil || len(projected.Tiles) != 12 {
+	if projected, err := rounds.seedFrozenCrewBoard(ctx, crew.ID, "session-a", board); err != nil || len(projected.Tiles) != 12 {
 		t.Fatalf("freeze three-member board: tiles=%d err=%v", len(projected.Tiles), err)
 	}
 	selection := []string{board.Tiles[0].ID, board.Tiles[1].ID, board.Tiles[2].ID, board.Tiles[3].ID}
@@ -413,7 +490,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 	if _, err := rounds.CreateVibeBoard(ctx, raceBoard); err != nil {
 		t.Fatalf("create race board: %v", err)
 	}
-	if _, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-a", raceBoard); err != nil {
+	if _, err := rounds.seedFrozenCrewBoard(ctx, crew.ID, "session-a", raceBoard); err != nil {
 		t.Fatalf("freeze race board: %v", err)
 	}
 	raceSelection := []string{raceBoard.Tiles[0].ID, raceBoard.Tiles[1].ID, raceBoard.Tiles[2].ID, raceBoard.Tiles[3].ID}
@@ -491,7 +568,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 	if _, err := rounds.CreateVibeBoard(ctx, exactBoard); err != nil {
 		t.Fatalf("create exact replay board: %v", err)
 	}
-	if _, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-a", exactBoard); err != nil {
+	if _, err := rounds.seedFrozenCrewBoard(ctx, crew.ID, "session-a", exactBoard); err != nil {
 		t.Fatalf("freeze exact replay board: %v", err)
 	}
 	exactSelection := []string{exactBoard.Tiles[0].ID, exactBoard.Tiles[1].ID, exactBoard.Tiles[2].ID, exactBoard.Tiles[3].ID}
@@ -586,7 +663,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 		session := scaleSessions[index%len(scaleSessions)]
 		go func() {
 			<-startBoardOpens
-			projected, freezeErr := rounds.EnsureCrewBoard(ctx, scaleCrew.ID, session, scaleBoard)
+			projected, freezeErr := rounds.seedFrozenCrewBoard(ctx, scaleCrew.ID, session, scaleBoard)
 			boardOutcomes <- boardOutcome{board: projected, err: freezeErr}
 		}()
 	}
@@ -666,7 +743,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 	if _, err := rounds.CreateVibeBoard(ctx, freezeBoard); err != nil {
 		t.Fatalf("create freeze board: %v", err)
 	}
-	frozen, err := rounds.EnsureCrewBoard(ctx, freezeCrew.ID, "freeze-session-0", freezeBoard)
+	frozen, err := rounds.seedFrozenCrewBoard(ctx, freezeCrew.ID, "freeze-session-0", freezeBoard)
 	if err != nil || len(frozen.Tiles) != 16 {
 		t.Fatalf("five-member crew should freeze at 4x4: tiles=%d err=%v", len(frozen.Tiles), err)
 	}
@@ -675,7 +752,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 			t.Fatalf("join post-freeze member %d: %v", index, err)
 		}
 	}
-	stillFrozen, err := rounds.EnsureCrewBoard(ctx, freezeCrew.ID, "freeze-session-8", freezeBoard)
+	stillFrozen, err := rounds.seedFrozenCrewBoard(ctx, freezeCrew.ID, "freeze-session-8", freezeBoard)
 	if err != nil || len(stillFrozen.Tiles) != 16 {
 		t.Fatalf("post-freeze joins resized the board: tiles=%d err=%v", len(stillFrozen.Tiles), err)
 	}
@@ -707,7 +784,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 	joinRaceJoinError := make(chan error, 1)
 	go func() {
 		<-startJoinRace
-		projected, freezeErr := rounds.EnsureCrewBoard(ctx, joinRaceCrew.ID, "join-race-0", joinRaceBoard)
+		projected, freezeErr := rounds.seedFrozenCrewBoard(ctx, joinRaceCrew.ID, "join-race-0", joinRaceBoard)
 		joinRaceBoardResult <- boardOutcome{board: projected, err: freezeErr}
 	}()
 	go func() {
@@ -723,7 +800,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 	if joinRaceOutcome.err != nil || (len(joinRaceOutcome.board.Tiles) != 12 && len(joinRaceOutcome.board.Tiles) != 16) {
 		t.Fatalf("join/freeze race produced torn board: tiles=%d err=%v", len(joinRaceOutcome.board.Tiles), joinRaceOutcome.err)
 	}
-	afterJoinRace, err := rounds.EnsureCrewBoard(ctx, joinRaceCrew.ID, "join-race-4", joinRaceBoard)
+	afterJoinRace, err := rounds.seedFrozenCrewBoard(ctx, joinRaceCrew.ID, "join-race-4", joinRaceBoard)
 	if err != nil || len(afterJoinRace.Tiles) != len(joinRaceOutcome.board.Tiles) {
 		t.Fatalf("join/freeze race did not preserve its winner: first=%d later=%d err=%v",
 			len(joinRaceOutcome.board.Tiles), len(afterJoinRace.Tiles), err)
@@ -811,7 +888,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 			exitError := make(chan error, 1)
 			go func() {
 				<-startExitRace
-				projected, freezeErr := rounds.EnsureCrewBoard(ctx, exitCrew.ID, ownerSession, exitBoard)
+				projected, freezeErr := rounds.seedFrozenCrewBoard(ctx, exitCrew.ID, ownerSession, exitBoard)
 				exitBoardResult <- boardOutcome{board: projected, err: freezeErr}
 			}()
 			go func() {
@@ -830,7 +907,7 @@ func TestPostgresVibeRoundTransactions(t *testing.T) {
 			if exitOutcome.err != nil || (len(exitOutcome.board.Tiles) != 12 && len(exitOutcome.board.Tiles) != 16) {
 				t.Fatalf("%s/freeze race produced torn board: tiles=%d err=%v", exitKind, len(exitOutcome.board.Tiles), exitOutcome.err)
 			}
-			afterExit, freezeErr := rounds.EnsureCrewBoard(ctx, exitCrew.ID, ownerSession, exitBoard)
+			afterExit, freezeErr := rounds.seedFrozenCrewBoard(ctx, exitCrew.ID, ownerSession, exitBoard)
 			if freezeErr != nil || len(afterExit.Tiles) != len(exitOutcome.board.Tiles) {
 				t.Fatalf("%s/freeze race did not preserve its winner: first=%d later=%d err=%v",
 					exitKind, len(exitOutcome.board.Tiles), len(afterExit.Tiles), freezeErr)
@@ -893,32 +970,32 @@ func TestPostgresCrewBoardLocksOnPlayNotOnLook(t *testing.T) {
 
 	// The first card locks the palette, and it is sized for the full room:
 	// twelve members is five rows, not the three the owner would have frozen.
-	locked, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-a", board)
+	_, err = rounds.SubmitVibe(ctx, crew.ID, "session-a", VibeSubmissionRequest{
+		BoardID: board.ID, Title: "First accepted card", ClientSubmissionID: "first-card",
+		SelectedTileIDs: []string{board.Tiles[0].ID, board.Tiles[1].ID, board.Tiles[2].ID, board.Tiles[19].ID},
+	}, now)
 	if err != nil {
 		t.Fatalf("lock board on submit: %v", err)
-	}
-	if want := vibeBoardRowsForMembers(12) * VibeBoardColumns; len(locked.Tiles) != want {
-		t.Fatalf("expected a %d-fragment palette for twelve members, got %d", want, len(locked.Tiles))
 	}
 
 	frozen, err = rounds.FrozenCrewBoards(ctx, crew.ID, []string{board.ID})
 	if err != nil {
 		t.Fatalf("read frozen boards after play: %v", err)
 	}
-	if frozen[board.ID] != len(locked.Tiles) {
-		t.Fatalf("frozen size %d does not match the dealt palette %d", frozen[board.ID], len(locked.Tiles))
+	if want := vibeBoardRowsForMembers(12) * VibeBoardColumns; frozen[board.ID] != want {
+		t.Fatalf("expected a %d-fragment palette for twelve members, got %d", want, frozen[board.ID])
 	}
 
 	// Once play has started the size is settled, even as the room keeps changing.
 	if _, err := crewStore.JoinCrew(ctx, crew.InviteCode, "Late", "session-late", now); err != nil {
 		t.Fatalf("late join: %v", err)
 	}
-	stable, err := rounds.EnsureCrewBoard(ctx, crew.ID, "session-late", board)
+	stable, err := rounds.FrozenCrewBoards(ctx, crew.ID, []string{board.ID})
 	if err != nil {
 		t.Fatalf("late member board: %v", err)
 	}
-	if len(stable.Tiles) != len(locked.Tiles) {
-		t.Fatalf("a started round must not resize: had %d, got %d", len(locked.Tiles), len(stable.Tiles))
+	if stable[board.ID] != frozen[board.ID] {
+		t.Fatalf("a started round must not resize: had %d, got %d", frozen[board.ID], stable[board.ID])
 	}
 }
 
@@ -940,6 +1017,9 @@ func TestPracticeHouseCardsAreOnPromptAndVaried(t *testing.T) {
 				t.Fatalf("house title %q is shared by %q and %q", card.Title, owner, template.prompt)
 			}
 			seen[card.Title] = template.prompt
+			if got := vibeHouseCardsForPrompt(template.prompt); got[0].Title != cards[0].Title {
+				t.Fatalf("template %d's prompt dealt %q, not its own house cards", index, got[0].Title)
+			}
 			if len(card.TileIndices) != VibeCardTileCount {
 				t.Fatalf("house card %q claims %d fragments", card.Title, len(card.TileIndices))
 			}
@@ -949,5 +1029,103 @@ func TestPracticeHouseCardsAreOnPromptAndVaried(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestPracticeHouseCardsFollowThePromptNotTheDate covers the steady state the
+// editorial plan aims for: an authored board on today's date. House titles used
+// to be picked by date, so an authored prompt was played against the titles of
+// whichever bank prompt shared its date.
+func TestPracticeHouseCardsFollowThePromptNotTheDate(t *testing.T) {
+	neutral := vibeHouseCardsForPrompt("Build the friend who says five more minutes.")
+	for index, card := range neutral {
+		if card.Title != vibeNeutralHouseTitles[index] || !validVibeText(card.Title, MaxVibeTitleRunes) {
+			t.Fatalf("unknown prompt dealt %q, want the neutral titles", card.Title)
+		}
+		for _, template := range vibeBoardTemplates {
+			for _, title := range template.houseTitles {
+				if title == card.Title {
+					t.Fatalf("neutral title %q belongs to %q", card.Title, template.prompt)
+				}
+			}
+		}
+	}
+
+	handler, database := hostileServer(t)
+	today := fixedClock().Format("2006-01-02")
+	authored, err := VibeBoardForDate(today)
+	if err != nil {
+		t.Fatalf("board: %v", err)
+	}
+	authored.Prompt = "Build the friend who says five more minutes."
+	for index := range authored.Tiles {
+		authored.Tiles[index].Text = fmt.Sprintf("authored fragment %02d", index+1)
+	}
+	if _, err := NewPostgresVibeRoundStore(database).CreateVibeBoard(context.Background(), authored); err != nil {
+		t.Fatalf("author today's board: %v", err)
+	}
+
+	response := rawRequest(t, handler, http.MethodGet, "/api/vibes/today", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("today board: %d %s", response.Code, response.Body.String())
+	}
+	var practice VibePracticeBoard
+	if err := json.NewDecoder(response.Body).Decode(&practice); err != nil {
+		t.Fatalf("decode practice board: %v", err)
+	}
+	if practice.Prompt != authored.Prompt {
+		t.Fatalf("practice did not serve the authored board: %q", practice.Prompt)
+	}
+	for index, card := range practice.HouseCards {
+		if card.Title != vibeNeutralHouseTitles[index] {
+			t.Fatalf("authored prompt was played against %q", card.Title)
+		}
+	}
+}
+
+// TestSubmittingToAClosedBoardDoesNotLockToday covers a tab left open past
+// midnight. Its card names yesterday's board; it used to freeze today's palette
+// on the way to being rejected, sizing the new round before anyone had seen it.
+func TestSubmittingToAClosedBoardDoesNotLockToday(t *testing.T) {
+	handler, database := hostileServer(t)
+	owner := newCrewSession(t, handler)
+	crew := createCrew(t, handler, owner, "Night Shift", "Ari")
+	_, yesterday, twoDaysAgo := judgeDatesFor(fixedClock())
+	closed, err := VibeBoardForDate(yesterday)
+	if err != nil {
+		t.Fatalf("closed board: %v", err)
+	}
+
+	submit := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/submissions", owner,
+		VibeSubmissionRequest{
+			BoardID:            closed.ID,
+			Title:              "Drafted before midnight",
+			SelectedTileIDs:    []string{closed.Tiles[0].ID, closed.Tiles[1].ID, closed.Tiles[2].ID, closed.Tiles[3].ID},
+			ClientSubmissionID: "stale-card",
+		})
+	if submit.Code != http.StatusConflict {
+		t.Fatalf("closed-board card returned %d, want 409: %s", submit.Code, submit.Body.String())
+	}
+	today, err := VibeBoardForDate(fixedClock().Format("2006-01-02"))
+	if err != nil {
+		t.Fatalf("today board: %v", err)
+	}
+	frozen, err := NewPostgresVibeRoundStore(database).FrozenCrewBoards(context.Background(),
+		crewInternalID(t, database, crew.InviteCode), []string{today.ID, closed.ID})
+	if err != nil {
+		t.Fatalf("read frozen boards: %v", err)
+	}
+	if len(frozen) != 0 {
+		t.Fatalf("a rejected closed-board card froze %v", frozen)
+	}
+
+	stale, err := VibeBoardForDate(twoDaysAgo)
+	if err != nil {
+		t.Fatalf("stale ballot board: %v", err)
+	}
+	vote := crewRequest(t, handler, http.MethodPost, "/api/crews/"+crew.InviteCode+"/votes", owner,
+		VibeVoteRequest{BoardID: stale.ID, SubmissionID: "card_whatever", ClientVoteID: "stale-vote"})
+	if vote.Code != http.StatusConflict {
+		t.Fatalf("closed-ballot vote returned %d, want 409: %s", vote.Code, vote.Body.String())
 	}
 }

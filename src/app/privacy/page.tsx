@@ -24,7 +24,16 @@ export default function PrivacyPage() {
           title: "Crew rounds",
           body: [
             "For each crew, VibeGrid stores the crew name, invite code, member display names, daily card titles, the four selected fragment ids, blind votes, and timestamps.",
+            "The first accepted card also stores that crew's board size. A rejected card or failed save does not lock a new round's size. Practice results depend on the title and selected fragments, not the order you click them; those practice choices stay in the browser.",
             "A card keeps a snapshot of its author display name so an old result remains understandable after membership changes. A crew-specific identity mapping survives leave or removal so rejoining cannot reset the one-card and one-ballot rules. Crew content is returned only to current members; invite links should be treated as private capability links."
+          ]
+        },
+        {
+          title: "Reminders",
+          body: [
+            "Reminders are off unless you turn them on from a crew page, and the browser only asks for notification permission after that click. When they are on, VibeGrid stores the push address your browser's push service issued, the two encryption keys your browser supplied for it, when a reminder last arrived, a delivery failure count, and for each daily digest whether your push service accepted or refused it, which is how a retried delivery skips a browser that already has that reminder. They are attached to the same anonymous identity as your crews, not to a name, email, or phone number.",
+            "A reminder is a daily digest per crew, sent only when something is waiting for you: a result from a round you played, a ballot you have not cast, or today's card. It contains the crew name, a short status line or the day's prompt, and a link to the crew room.",
+            "Delivery goes through your browser vendor's push service. The message is encrypted to your browser, but that service can see that a message was sent to your push address and when. Turning reminders off deletes the stored address and its delivery records; so does the push service reporting it no longer exists."
           ]
         },
         {

@@ -57,6 +57,10 @@ async function main() {
   } finally {
     await stop(server);
   }
+  await run("go", ["test", "./backend/internal/vibegrid", "-run", "^TestBrowserCrewLifecycle$", "-count=1", "-v"], {
+    GOCACHE: goCache,
+    TEST_BROWSER_DATABASE_URL: process.env.DATABASE_URL
+  });
 }
 
 async function copyStaticExport() {

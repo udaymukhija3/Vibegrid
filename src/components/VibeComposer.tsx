@@ -9,17 +9,32 @@ type VibeComposerProps = {
   board: VibeBoard;
   onSubmit: (input: { title: string; selectedTileIds: string[] }) => Promise<void> | void;
   submitLabel?: string;
+  promptLabel?: string;
   compact?: boolean;
 };
 
-export function VibeComposer({ board, onSubmit, submitLabel = "Lock it in", compact = false }: VibeComposerProps) {
-  const [selected, setSelected] = useState<string[]>([]);
+export function VibeComposer({
+  board,
+  onSubmit,
+  submitLabel = "Lock it in",
+  promptLabel = "Today's prompt",
+  compact = false
+}: VibeComposerProps) {
+  const [picks, setPicks] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const titleInputId = useId();
   const titleCountId = `${titleInputId}-count`;
 
+  // An unstarted crew board follows membership, so a refresh can take away the
+  // row a pick came from. A pick that is no longer on the board is not a pick:
+  // counting it used to leave the composer at 4/4 with every visible fragment
+  // disabled and a card the server would refuse.
+  const selected = useMemo(
+    () => picks.filter((id) => board.tiles.some((tile) => tile.id === id)),
+    [board.tiles, picks]
+  );
   const selectedTiles = useMemo(
     () => selected.map((id) => board.tiles.find((tile) => tile.id === id)).filter(Boolean),
     [board.tiles, selected]
@@ -27,14 +42,15 @@ export function VibeComposer({ board, onSubmit, submitLabel = "Lock it in", comp
 
   function toggle(tileId: string) {
     setError("");
-    setSelected((current) => {
-      if (current.includes(tileId)) {
-        return current.filter((id) => id !== tileId);
+    setPicks((current) => {
+      const live = current.filter((id) => board.tiles.some((tile) => tile.id === id));
+      if (live.includes(tileId)) {
+        return live.filter((id) => id !== tileId);
       }
-      if (current.length === 4) {
-        return current;
+      if (live.length === 4) {
+        return live;
       }
-      return [...current, tileId];
+      return [...live, tileId];
     });
   }
 
@@ -59,10 +75,10 @@ export function VibeComposer({ board, onSubmit, submitLabel = "Lock it in", comp
       <div>
         <div className="flex items-end justify-between gap-3">
           <div>
-            <p className="vg-meta">Today&apos;s prompt</p>
+            <p className="vg-meta">{promptLabel}</p>
             <h2 className="vg-prompt mt-2">{board.prompt}</h2>
           </div>
-          <p className="vg-count" aria-live="polite">
+          <p className="vg-count tabular-nums" aria-live="polite">
             {selected.length}/4
           </p>
         </div>
@@ -99,7 +115,7 @@ export function VibeComposer({ board, onSubmit, submitLabel = "Lock it in", comp
               type="button"
               className="vg-text-button"
               onClick={() => {
-                setSelected([]);
+                setPicks([]);
                 setTitle("");
               }}
             >
@@ -140,10 +156,10 @@ export function VibeComposer({ board, onSubmit, submitLabel = "Lock it in", comp
                 {!busy && <ArrowRight aria-hidden size={18} strokeWidth={3} />}
               </button>
             </div>
-            <span id={titleCountId} className="text-right font-mono text-[0.68rem] text-cream/[.55]">{title.length}/40</span>
+            <span id={titleCountId} className="text-right font-mono text-xs tabular-nums text-cream/70">{title.length}/40</span>
           </div>
         ) : (
-          <p className="mt-4 text-sm font-semibold text-cream/60">Pick {4 - selected.length} more to name what you made.</p>
+          <p className="mt-4 text-sm font-semibold tabular-nums text-cream/70">Pick {4 - selected.length} more to name what you made.</p>
         )}
 
         {error && (

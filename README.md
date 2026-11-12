@@ -30,7 +30,8 @@ write one title             makers only can vote        ≥2 cards + ≥2 votes 
   partition.
 - 1–4 members receive 12 fragments; each additional four-person band adds one
   row, up to 28 at the 20-member cap. Opening the room never decides the size;
-  the crew's first card on a board freezes it, so a crew that fills up before
+  the crew's first accepted card on a board freezes it in the same transaction,
+  so invalid or failed submissions leave sizing open. A crew that fills up before
   anyone plays gets the larger palette and later membership changes cannot
   rewrite an active round. Public practice is deliberately 4×4.
 - A private crew is the primary product. The public homepage opens directly on
@@ -39,6 +40,8 @@ write one title             makers only can vote        ≥2 cards + ≥2 votes 
 - Unlimited practice deals another local 4×4 round on demand. It has no score,
   timer, lives, persistence, or effect on the daily crew loop; finite curated
   master palettes eventually cycle rather than masquerading as new editorial.
+  Practice votes treat the four fragments as a set: changing click order cannot
+  reroll the house response to the same title and fragments.
 - Submission and vote authorship are enforced inside database transactions.
 - A member sees only their own card during the make phase. Eligible judges see
   cards without authors. Results reveal authors to current crew members.
@@ -250,13 +253,23 @@ Without `TEST_DATABASE_URL`, `npm run test:backend` emits an explicit warning
 that the transactional tests skipped. The strict Postgres command fails instead
 of producing partial green evidence. `npm run test:e2e` requires `DATABASE_URL`,
 builds the exported frontend and Go binary, starts the single-container path,
-and mutates a durable crew; local port binding may need an unrestricted
+and mutates a durable crew. It then runs Chromium with five isolated browser
+sessions through creation, three joins, concurrent cards, blind judging, and
+reveal against real Postgres. A clock advance exists only in the Go test binary.
+Install Chromium with `npx playwright install chromium` first (CI uses
+`--with-deps`). Use a disposable `DATABASE_URL`: the browser fixtures reset its
+tables. Traces and failure screenshots are written to `dist/browser-e2e/` and
+retained by CI. Local port binding and browser launch may need an unrestricted
 environment.
 
 ## Deliberate boundaries
 
-- No accounts, OAuth, email, chat, presence, matchmaking, push notifications,
-  monetization, or public leaderboard.
+- No accounts, OAuth, email, chat, presence, matchmaking, monetization, or
+  public leaderboard.
+- Reminders are one opt-in Web Push digest per crew per day, keyed to the
+  anonymous identity and sent only when something is waiting for that member.
+  They stay off unless `VIBEGRID_VAPID_*` keys are configured. No per-event
+  pushes and no email.
 - No public feed of cards. Crew history is private to current members.
 - No real-time protocol. Visible crew pages poll; measured demand must justify
   SSE/WebSocket complexity.

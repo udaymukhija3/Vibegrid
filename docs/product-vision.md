@@ -44,8 +44,9 @@ Every date has one immutable editorial master:
 - no categories, group ids, difficulty, timer, mistakes, or answer key.
 
 Every crew sees a nested, four-column projection of that master. The number of
-rows follows current membership until the crew's first card on that dated board
-is submitted, and is frozen at that moment:
+rows follows current membership until the crew's first valid card on that dated
+board is accepted. The card and size commit together; rejected attempts and
+failed writes do not start the round:
 
 | Members at first card | Rows | Fragments |
 | --- | --- | --- |
@@ -157,12 +158,14 @@ The homepage must teach the full promise without requiring friends or a signup:
 4. create a crew if the loop felt good.
 
 House cards are tutorial fixtures, never presented as real people or activity.
-Their titles belong to the editorial template alongside the prompt and
-fragments. The practice ballot plays out like a four-person crew: every card
+Their titles belong to the prompt: a bank prompt plays against its own
+template's titles, and an authored prompt the bank does not know plays against
+a neutral trio that fits any prompt, never another prompt's titles. The practice ballot plays out like a four-person crew: every card
 casts one non-self vote, the house reading the player's card through a stable
 hash of its title and fragments. Practice can therefore be won, tied, or lost,
 and replaying an identical card always gives the identical result, so the
-outcome cannot be rerolled. It must never be rigged toward the player's pick or
+outcome cannot be rerolled by changing fragment click order: the hash uses the
+unordered set of fragment ids. It must never be rigged toward the player's pick or
 against the player.
 Public practice state is local and disposable. This avoids a hollow landing
 page while keeping the private crew as the only durable social product.
@@ -195,6 +198,10 @@ Unlimited is a sandbox, not a second social economy:
 - it never advances, backfills, or otherwise changes a crew's dated stages;
 - each deal stays inside one coherent 28-fragment editorial master; deterministic
   rotation and coprime stepping vary the visible 16 without mixing prompts;
+- "deal another" means a new palette: consecutive returns to one prompt share at
+  most 9 of 16 fragments, each prompt deals 168 different palettes before its
+  cycle repeats, a prompt's daily board is not re-dealt until well over a
+  thousand deals in, and Unlimited steps past today's prompt entirely;
 - the activity can continue indefinitely, but the curated source material is
   finite and will eventually cycle. The product must never call a reshuffle a
   newly human-authored board.
@@ -283,8 +290,9 @@ concurrency, removed members, leaked links, and partial participation.
 - Database constraints mirror one-card and one-ballot rules and make cross-round
   vote targets and self-votes impossible even outside the application path.
 - Client-generated replay ids survive timeouts; changed replay input is rejected.
-  Every crew mutation also honors `Idempotency-Key`, so a network retry replays
-  one stored response instead of treating the header as decoration.
+  Every crew mutation also honors `Idempotency-Key`. The fingerprint includes
+  the method, target URL, and body, so using one key for another crew or member
+  conflicts instead of replaying another action's success.
 - Blind ballot order is stable but derived from cryptographically random card
   ids, never submission time or live roster activity.
 - The browser cookie is a revocable bearer, not the durable identity itself.
@@ -306,11 +314,14 @@ concurrency, removed members, leaked links, and partial participation.
   its key budget cannot turn the key ceiling into a global first-visitor outage.
 - Dated board rows are immutable snapshots. Editorial fallback code may evolve
   without rewriting history.
-- Per-crew row count is inserted once, when a member first submits a card for
-  that board, under the same crew lock used by joins and leaves. The freeze runs
-  before title and selection validation, so a rejected first attempt still fixes
-  the size. Opening the room only reads the lock. The database uniqueness key is
-  the final arbiter for concurrent submits.
+- Per-crew row count and the first accepted card commit in one transaction,
+  under the same crew lock used by joins and leaves. Title and blocklist checks
+  precede the transaction; the stored master and frozen projection are validated
+  inside it. Invalid selections and failed inserts roll sizing back. A card
+  naming any board but today's is refused before the transaction, so a tab left
+  open past midnight cannot size the new round. Opening the room only reads the
+  lock. Existing historical snapshots remain unchanged; no schema migration is
+  needed for this transaction-boundary correction (23 October 2026).
 - The original 12-fragment row and its 16-fragment expansion are stored
   separately so the schema migration is additive and the prior binary can still
   boot during rollback. A roll-forward is required after cards use expansion ids.
@@ -321,6 +332,14 @@ concurrency, removed members, leaked links, and partial participation.
 - Unlimited deals are deterministic public reads; selections and tutorial votes
   never enter Postgres or operational logs as authored content.
 - New product claims need a test, a runtime check, or a documented manual gap.
+
+Reminders follow the same identity rule. A push subscription is keyed by the
+stable anonymous identity, never the browser bearer, so replacing a leaked key
+keeps reminders attached and the table holds no plaintext credential. The
+reminder is one opt-in digest per crew per day, silent when nothing is waiting,
+and ships off until VAPID keys are configured. Every send is recorded against
+that day's digest, so retrying a failed delivery skips devices that already
+accepted it.
 
 The guest-session recovery boundary is intentionally narrow. Replacing a live
 browser key revokes a copied cookie while preserving identity; clearing all

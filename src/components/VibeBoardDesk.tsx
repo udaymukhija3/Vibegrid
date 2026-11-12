@@ -102,7 +102,7 @@ export function VibeBoardDesk() {
         <LockKeyhole aria-hidden className="text-lime" size={28} />
         <p className="vg-meta mt-5">Private editorial tool</p>
         <h2 className="mt-2 text-3xl font-black tracking-[-0.04em]">Enter the board room.</h2>
-        <p className="mt-3 text-sm font-semibold text-paper/[.65]">
+        <p className="mt-3 text-sm font-semibold text-cream/[.68]">
           This desk freezes a 28-fragment master palette for a specific date. Crews receive a stable 3–7 row projection from it.
         </p>
         <label className="mt-6 block">
@@ -126,10 +126,10 @@ export function VibeBoardDesk() {
 
   return (
     <div className="mt-8 grid gap-8">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-paper/[.15] pb-5">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-cream/[.15] pb-5">
         <div>
           <p className="vg-meta text-lime">Editorial contract</p>
-          <p className="mt-2 max-w-2xl text-sm font-semibold text-paper/[.65]">
+          <p className="mt-2 max-w-2xl text-sm font-semibold text-cream/[.68]">
             One evocative prompt. Twenty-eight fragments with range. No hidden answer. Crew size determines the frozen row count.
           </p>
         </div>
@@ -175,7 +175,7 @@ export function VibeBoardDesk() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {tiles.map((tile, index) => (
               <label key={index} className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-[10px] font-bold text-ink/40">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs font-bold tabular-nums text-ink/40">
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <input
@@ -192,8 +192,8 @@ export function VibeBoardDesk() {
           </div>
         </fieldset>
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-paper/[.15] pt-5">
-          <p className="max-w-xl text-xs font-semibold text-paper/[.55]">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-cream/[.15] pt-5">
+          <p className="max-w-xl text-xs font-semibold text-cream/[.62]">
             Freezing is intentionally irreversible. The first stored board for a date wins, so a live round cannot silently change.
           </p>
           <button type="button" className="vg-button vg-button-lime" disabled={!ready} onClick={() => void freezeBoard()}>
@@ -223,7 +223,7 @@ export function VibeBoardDesk() {
                   <span className="vg-meta">board {String(board.boardNumber).padStart(3, "0")}</span>
                 </div>
                 <h3 className="mt-3 text-xl font-black">{board.prompt}</h3>
-                <p className="mt-3 font-mono text-xs leading-6 text-paper/[.60]">
+                <p className="mt-3 font-mono text-xs leading-6 text-cream/[.68]">
                   {board.tiles.map((tile) => tile.text).join(" · ")}
                 </p>
               </article>
