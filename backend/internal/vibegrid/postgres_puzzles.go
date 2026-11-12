@@ -82,11 +82,28 @@ func (store *PostgresPuzzleStore) PuzzleByID(ctx context.Context, puzzleID strin
 	return puzzles[0], nil
 }
 
+// readQuerier returns the transaction driving this request, or the pool when the
+// call is not part of one.
+//
+// Reads reached from inside an idempotent mutation must reuse that mutation's
+// transaction. The transaction already holds a connection, so taking a second
+// one from the same pool deadlocks it: once as many mutations are in flight as
+// the pool is wide, every connection is held by a transaction waiting for a
+// connection that only another one of them could release, and nothing unwinds
+// until databaseOperationTimeout expires.
+func (store *PostgresPuzzleStore) readQuerier(ctx context.Context) rowsQuerier {
+	if tx := transactionFromContext(ctx); tx != nil {
+		return tx
+	}
+	return store.db
+}
+
 func (store *PostgresPuzzleStore) loadPuzzleSet(ctx context.Context, query string, args ...any) ([]Puzzle, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
 
-	rows, err := store.db.QueryContext(ctx, query, args...)
+	querier := store.readQuerier(ctx)
+	rows, err := querier.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query puzzles: %w", err)
 	}
@@ -116,10 +133,10 @@ func (store *PostgresPuzzleStore) loadPuzzleSet(ctx context.Context, query strin
 	if len(order) == 0 {
 		return []Puzzle{}, nil
 	}
-	if err := store.attachGroups(ctx, puzzles, order); err != nil {
+	if err := attachGroups(ctx, querier, puzzles, order); err != nil {
 		return nil, err
 	}
-	if err := store.attachTiles(ctx, puzzles, order); err != nil {
+	if err := attachTiles(ctx, querier, puzzles, order); err != nil {
 		return nil, err
 	}
 
@@ -130,8 +147,8 @@ func (store *PostgresPuzzleStore) loadPuzzleSet(ctx context.Context, query strin
 	return result, nil
 }
 
-func (store *PostgresPuzzleStore) attachGroups(ctx context.Context, puzzles map[string]*Puzzle, puzzleIDs []string) error {
-	rows, err := store.db.QueryContext(ctx,
+func attachGroups(ctx context.Context, querier rowsQuerier, puzzles map[string]*Puzzle, puzzleIDs []string) error {
+	rows, err := querier.QueryContext(ctx,
 		`select id, puzzle_id, name, explanation, color_index
 		 from puzzle_groups
 		 where puzzle_id = any($1)
@@ -159,8 +176,8 @@ func (store *PostgresPuzzleStore) attachGroups(ctx context.Context, puzzles map[
 	return rows.Err()
 }
 
-func (store *PostgresPuzzleStore) attachTiles(ctx context.Context, puzzles map[string]*Puzzle, puzzleIDs []string) error {
-	rows, err := store.db.QueryContext(ctx,
+func attachTiles(ctx context.Context, querier rowsQuerier, puzzles map[string]*Puzzle, puzzleIDs []string) error {
+	rows, err := querier.QueryContext(ctx,
 		`select id, puzzle_id, group_id, text
 		 from puzzle_tiles
 		 where puzzle_id = any($1)

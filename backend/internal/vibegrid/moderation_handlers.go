@@ -2,6 +2,7 @@ package vibegrid
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -93,8 +94,17 @@ func (server *Server) handleCreateReportMutation(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	// Only a genuinely absent (or non-public) puzzle is a 404. Reporting a
+	// storage failure as "not found" tells the client something false about a
+	// puzzle that exists, and 404 reads as permanent — a caller that should
+	// retry gives up instead.
 	if _, err := server.publicPuzzleByID(r.Context(), input.PuzzleID); err != nil {
-		writeError(w, http.StatusNotFound, "Puzzle not found.")
+		if errors.Is(err, ErrPuzzleNotFound) {
+			writeError(w, http.StatusNotFound, "Puzzle not found.")
+			return
+		}
+		slog.Error("report puzzle lookup failed", "error", err, "puzzle_id", input.PuzzleID, "request_id", requestIDFromContext(r.Context()))
+		writeError(w, http.StatusServiceUnavailable, "Could not check that puzzle. Try again shortly.")
 		return
 	}
 
