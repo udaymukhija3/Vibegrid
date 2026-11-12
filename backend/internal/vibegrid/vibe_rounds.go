@@ -81,13 +81,14 @@ type VibeSubmission struct {
 }
 
 type VibeVote struct {
-	ID            string
-	CrewID        string
-	BoardID       string
-	VoterMemberID string
-	SubmissionID  string
-	ClientVoteID  string
-	CreatedAt     time.Time
+	ID             string
+	CrewID         string
+	BoardID        string
+	VoterMemberID  string
+	TargetMemberID string
+	SubmissionID   string
+	ClientVoteID   string
+	CreatedAt      time.Time
 }
 
 type VibeCrewSnapshot struct {
@@ -267,8 +268,9 @@ func (store *PostgresVibeRoundStore) EnsureBoard(ctx context.Context, board Vibe
 
 // EnsureCrewBoard freezes one crew's palette size for one dated board. The
 // crew row lock is shared with joins and leaves, which gives membership changes
-// and first-open sizing one deterministic order. The unique key makes two
-// members opening at once converge on the same snapshot.
+// and first-card sizing one deterministic order. The unique key makes two
+// members submitting at once converge on the same snapshot. Opening the room
+// never calls this; it reads FrozenCrewBoards instead.
 func (store *PostgresVibeRoundStore) EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error) {
 	if err := validateVibeBoard(board); err != nil {
 		return VibeBoard{}, err
@@ -413,7 +415,7 @@ func (store *PostgresVibeRoundStore) CrewSnapshot(ctx context.Context, crewID st
 	}
 
 	votes, err := store.db.QueryContext(ctx,
-		`select id, crew_id, board_id, voter_member_id, submission_id, client_vote_id, created_at
+		`select id, crew_id, board_id, voter_member_id, target_member_id, submission_id, client_vote_id, created_at
 		 from vibe_votes
 		 where crew_id = $1 and board_id = any($2)
 		 order by created_at, id`, crewID, pq.Array(boardIDs))
@@ -423,7 +425,7 @@ func (store *PostgresVibeRoundStore) CrewSnapshot(ctx context.Context, crewID st
 	defer func() { _ = votes.Close() }()
 	for votes.Next() {
 		var vote VibeVote
-		if err := votes.Scan(&vote.ID, &vote.CrewID, &vote.BoardID, &vote.VoterMemberID, &vote.SubmissionID, &vote.ClientVoteID, &vote.CreatedAt); err != nil {
+		if err := votes.Scan(&vote.ID, &vote.CrewID, &vote.BoardID, &vote.VoterMemberID, &vote.TargetMemberID, &vote.SubmissionID, &vote.ClientVoteID, &vote.CreatedAt); err != nil {
 			return VibeCrewSnapshot{}, fmt.Errorf("scan vibe vote: %w", err)
 		}
 		snapshot.Votes = append(snapshot.Votes, vote)
@@ -620,19 +622,20 @@ func (store *PostgresVibeRoundStore) CastVibeVote(ctx context.Context, crewID, s
 	}
 
 	vote := VibeVote{
-		ID:            newVibeObjectID("vote"),
-		CrewID:        crewID,
-		BoardID:       request.BoardID,
-		VoterMemberID: voterMemberID,
-		SubmissionID:  request.SubmissionID,
-		ClientVoteID:  request.ClientVoteID,
-		CreatedAt:     now.UTC(),
+		ID:             newVibeObjectID("vote"),
+		CrewID:         crewID,
+		BoardID:        request.BoardID,
+		VoterMemberID:  voterMemberID,
+		TargetMemberID: targetMemberID,
+		SubmissionID:   request.SubmissionID,
+		ClientVoteID:   request.ClientVoteID,
+		CreatedAt:      now.UTC(),
 	}
 	if _, err := tx.ExecContext(ctx,
 		`insert into vibe_votes (
-		   id, crew_id, board_id, voter_member_id, submission_id, client_vote_id, created_at
-		 ) values ($1, $2, $3, $4, $5, $6, $7)`,
-		vote.ID, crewID, request.BoardID, voterMemberID, request.SubmissionID, request.ClientVoteID, vote.CreatedAt,
+		   id, crew_id, board_id, voter_member_id, target_member_id, submission_id, client_vote_id, created_at
+		 ) values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		vote.ID, crewID, request.BoardID, voterMemberID, targetMemberID, request.SubmissionID, request.ClientVoteID, vote.CreatedAt,
 	); err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) {
@@ -813,11 +816,11 @@ func loadSubmissionByReplayKey(ctx context.Context, queryer vibeQueryer, crewID,
 func loadVoteByReplayKey(ctx context.Context, queryer vibeQueryer, crewID, memberID, clientID string) (VibeVote, bool, error) {
 	var vote VibeVote
 	err := queryer.QueryRowContext(ctx,
-		`select id, crew_id, board_id, voter_member_id, submission_id, client_vote_id, created_at
+		`select id, crew_id, board_id, voter_member_id, target_member_id, submission_id, client_vote_id, created_at
 		 from vibe_votes
 		 where crew_id = $1 and voter_member_id = $2 and client_vote_id = $3`,
 		crewID, memberID, clientID,
-	).Scan(&vote.ID, &vote.CrewID, &vote.BoardID, &vote.VoterMemberID, &vote.SubmissionID, &vote.ClientVoteID, &vote.CreatedAt)
+	).Scan(&vote.ID, &vote.CrewID, &vote.BoardID, &vote.VoterMemberID, &vote.TargetMemberID, &vote.SubmissionID, &vote.ClientVoteID, &vote.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return VibeVote{}, false, nil
 	}
@@ -840,7 +843,7 @@ func normalizeVibeTitle(raw string) (string, error) {
 	// Fields collapses newlines and repeated whitespace into a share-safe title.
 	// Other control characters are rejected before the collapse.
 	for _, r := range raw {
-		if unicode.IsControl(r) && !unicode.IsSpace(r) {
+		if (unicode.IsControl(r) && !unicode.IsSpace(r)) || unicode.Is(unicode.Cf, r) {
 			return "", ErrVibeRequestInvalid
 		}
 	}

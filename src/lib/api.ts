@@ -39,7 +39,8 @@ const sessionStatusSchema = z.object({
     active: z.boolean(),
     label: z.string(),
     cookieName: z.string(),
-    maxAgeDays: z.number()
+    maxAgeDays: z.number(),
+    csrfToken: z.string()
   }),
   admin: z.object({
     authenticated: z.boolean(),
@@ -50,8 +51,48 @@ const sessionStatusSchema = z.object({
 
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 
+let guestCSRFTokenPromise: Promise<string> | null = null;
+
 export async function fetchSessionStatus(): Promise<SessionStatus> {
-  return sessionStatusSchema.parse(await getJSON("/api/session"));
+  const status = sessionStatusSchema.parse(await getJSON("/api/session"));
+  guestCSRFTokenPromise = Promise.resolve(status.guest.csrfToken);
+  return status;
+}
+
+export async function rotateGuestSession(): Promise<void> {
+  const replacementToken = globalThis.crypto.randomUUID().replaceAll("-", "");
+  const response = await apiFetch(
+    "/api/session/rotate",
+    {
+      method: "POST",
+      credentials: "include",
+      headers: await guestMutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ replacementToken })
+    },
+    undefined,
+    { replayable: true }
+  );
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(payload);
+    throw new ApiError(parsed.success ? parsed.data.error : `Request failed (${response.status})`, response.status);
+  }
+  const rotated = z.object({ ok: z.literal(true), csrfToken: z.string() }).parse(payload);
+  guestCSRFTokenPromise = Promise.resolve(rotated.csrfToken);
+}
+
+async function guestMutationHeaders(initial?: HeadersInit): Promise<Headers> {
+  if (!guestCSRFTokenPromise) {
+    guestCSRFTokenPromise = getJSON("/api/session")
+      .then((payload) => sessionStatusSchema.parse(payload).guest.csrfToken)
+      .catch((error) => {
+        guestCSRFTokenPromise = null;
+        throw error;
+      });
+  }
+  const headers = idempotencyHeaders(initial);
+  headers.set("X-CSRF-Token", await guestCSRFTokenPromise);
+  return headers;
 }
 
 // The archive grows by one puzzle a day, so it is paginated. Callers page with
@@ -283,7 +324,7 @@ async function crewMutation(url: string, body: unknown): Promise<Crew> {
   const response = await apiFetch(url, {
     method: "POST",
     credentials: "include",
-    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    headers: await guestMutationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)
   });
   const payload: unknown = await response.json().catch(() => null);
@@ -308,12 +349,12 @@ export async function rotateCrewInvite(inviteCode: string): Promise<Crew> {
   return crewMutation(`/api/crews/${encodeURIComponent(inviteCode)}/rotate`, {});
 }
 
-async function crewAction(url: string): Promise<void> {
+async function crewAction(url: string, body: unknown = {}): Promise<void> {
   const response = await apiFetch(url, {
     method: "POST",
     credentials: "include",
-    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
-    body: "{}"
+    headers: await guestMutationHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body)
   });
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
@@ -331,8 +372,8 @@ export async function removeCrewMember(inviteCode: string, memberId: string): Pr
   );
 }
 
-export async function leaveCrew(inviteCode: string): Promise<void> {
-  return crewAction(`/api/crews/${encodeURIComponent(inviteCode)}/leave`);
+export async function leaveCrew(inviteCode: string, confirmDelete: boolean): Promise<void> {
+  return crewAction(`/api/crews/${encodeURIComponent(inviteCode)}/leave`, { confirmDelete });
 }
 
 export async function fetchCrewBoard(crewId: string): Promise<CrewBoard> {
@@ -465,7 +506,7 @@ export async function submitVibeCard(input: {
   const response = await apiFetch(`/api/crews/${encodeURIComponent(input.inviteCode)}/submissions`, {
     method: "POST",
     credentials: "include",
-    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    headers: await guestMutationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       boardId: input.boardId,
       title: input.title,
@@ -490,7 +531,7 @@ export async function castVibeVote(input: {
   const response = await apiFetch(`/api/crews/${encodeURIComponent(input.inviteCode)}/votes`, {
     method: "POST",
     credentials: "include",
-    headers: idempotencyHeaders({ "Content-Type": "application/json" }),
+    headers: await guestMutationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       boardId: input.boardId,
       submissionId: input.submissionId,
@@ -562,4 +603,27 @@ export async function appealPuzzle(input: {
   }
   const created = createdModerationSchema.parse(payload);
   return { id: created.id };
+}
+
+// A replay id identifies an INTENT, not a keypress. The browser used to mint a
+// fresh uuid on every press, so a player who pressed again after a lost response
+// sent the same card under a key the server had never seen: the server answered
+// "already locked in" for an action that had in fact succeeded, and the composer
+// stayed on screen showing a failure.
+//
+// Deriving the id from the content makes the retry of one intent carry one key —
+// so it replays and succeeds — while a genuinely different card still gets its
+// own key and still earns an honest "already locked in".
+export function replayIdFor(prefix: string, ...parts: string[]): string {
+  // FNV-1a, run twice with different offsets for a wider key. The id only has to
+  // be unique per member per board, which is a handful of drafts.
+  const hash = (offset: number) => {
+    let value = offset;
+    for (const part of parts.join("\u0000")) {
+      value ^= part.codePointAt(0) ?? 0;
+      value = Math.imul(value, 0x01000193) >>> 0;
+    }
+    return value.toString(16).padStart(8, "0");
+  };
+  return `${prefix}-${hash(0x811c9dc5)}${hash(0x9e3779b9)}`;
 }

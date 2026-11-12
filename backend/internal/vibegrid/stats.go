@@ -53,7 +53,7 @@ func (server *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 // handleStreak serves the current session's daily-completion streak. Without a
 // database it returns an empty summary (streaks need persistence).
 func (server *Server) handleStreak(w http.ResponseWriter, r *http.Request) {
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	if server.stats == nil {
 		writeJSON(w, http.StatusOK, StreakSummary{})
 		return

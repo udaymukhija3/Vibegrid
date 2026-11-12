@@ -66,6 +66,10 @@ type crewJoinRequest struct {
 	DisplayName string `json:"displayName"`
 }
 
+type crewLeaveRequest struct {
+	ConfirmDelete bool `json:"confirmDelete"`
+}
+
 // crewsEnabled reports whether crews can be served at all. Crews are inherently
 // multi-session and durable, so in no-database mode the endpoints say so rather
 // than pretending to work for a single process.
@@ -103,7 +107,7 @@ func (server *Server) handleCreateCrew(w http.ResponseWriter, r *http.Request) {
 	if !server.crewsEnabled(w) {
 		return
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	if !server.allowCrewWrite(w, r, "crew-create:", crewCreateRateLimit, crewCreateRateWindow,
 		"You're making crews too quickly. Try again later.") {
 		return
@@ -135,7 +139,7 @@ func (server *Server) handleJoinCrew(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Crew not found.")
 		return
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	if !server.allowCrewWrite(w, r, "crew-join:", crewJoinRateLimit, crewJoinRateWindow,
 		"You're joining crews too quickly. Try again later.") {
 		return
@@ -178,7 +182,15 @@ func (server *Server) handleRemoveCrewMember(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if err := server.crews.RemoveMember(r.Context(), crew.ID, r.PathValue("memberId"), sessionID); err != nil {
+	// member_id is a uuid column. Handing Postgres a non-uuid raises a type error
+	// that surfaced as a 500 for what is plainly a bad client handle, which both
+	// misreports the failure and puts client garbage into the 5xx error budget.
+	memberID := r.PathValue("memberId")
+	if !validMemberID(memberID) {
+		writeCrewError(w, ErrCrewMemberUnknown)
+		return
+	}
+	if err := server.crews.RemoveMember(r.Context(), crew.ID, memberID, sessionID); err != nil {
 		writeCrewError(w, err)
 		return
 	}
@@ -190,7 +202,11 @@ func (server *Server) handleLeaveCrew(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := server.crews.LeaveCrew(r.Context(), crew.ID, sessionID); err != nil {
+	var request crewLeaveRequest
+	if !decodeJSONBody(w, r, maxCrewBodyBytes, &request, "That leave request is not valid JSON.") {
+		return
+	}
+	if err := server.crews.LeaveCrew(r.Context(), crew.ID, sessionID, request.ConfirmDelete); err != nil {
 		writeCrewError(w, err)
 		return
 	}
@@ -210,7 +226,7 @@ func (server *Server) crewFromRequest(w http.ResponseWriter, r *http.Request) (C
 		writeError(w, http.StatusNotFound, "Crew not found.")
 		return Crew{}, "", false
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	if !server.allowCrewWrite(w, r, "crew-manage:", crewJoinRateLimit, crewJoinRateWindow,
 		"You're changing crews too quickly. Try again later.") {
 		return Crew{}, "", false
@@ -232,7 +248,7 @@ func (server *Server) handleMyCrews(w http.ResponseWriter, r *http.Request) {
 	if !server.allowPuzzleRead(w, r) {
 		return
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 
 	crews, err := server.crews.CrewsForSession(r.Context(), sessionID)
 	if err != nil {
@@ -264,7 +280,7 @@ func (server *Server) handleCrewBoard(w http.ResponseWriter, r *http.Request) {
 	if !server.allowPuzzleRead(w, r) {
 		return
 	}
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 
 	crew, err := server.crews.CrewByInviteCode(r.Context(), inviteCode)
 	if err != nil {
@@ -413,6 +429,8 @@ func writeCrewError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "This crew is full.")
 	case errors.Is(err, ErrDisplayNameTaken):
 		writeError(w, http.StatusConflict, "Someone in this crew already uses that name.")
+	case errors.Is(err, ErrCrewDeleteConfirmationRequired):
+		writeError(w, http.StatusConflict, "Leaving now deletes this crew and all of its history. Confirm the deletion to continue.")
 	case errors.Is(err, ErrCrewNameInvalid):
 		writeError(w, http.StatusUnprocessableEntity, "Pick a shorter name with no line breaks.")
 	default:

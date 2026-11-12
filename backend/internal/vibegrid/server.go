@@ -52,6 +52,7 @@ type ServerConfig struct {
 	Store              Store
 	AdminPuzzles       AdminPuzzleStore
 	AdminSessions      AdminSessionStore
+	GuestSessions      GuestSessionStore
 	Community          CommunityPuzzleStore
 	Crews              CrewStore
 	VibeRounds         VibeRoundStore
@@ -88,6 +89,7 @@ type Server struct {
 	store              Store
 	adminPuzzles       AdminPuzzleStore
 	adminSessions      AdminSessionStore
+	guestSessions      GuestSessionStore
 	community          CommunityPuzzleStore
 	crews              CrewStore
 	vibeRounds         VibeRoundStore
@@ -136,6 +138,7 @@ func NewServer(config ServerConfig) http.Handler {
 		puzzles:            config.Puzzles,
 		store:              config.Store,
 		adminPuzzles:       config.AdminPuzzles,
+		guestSessions:      config.GuestSessions,
 		community:          config.Community,
 		crews:              config.Crews,
 		vibeRounds:         config.VibeRounds,
@@ -178,6 +181,9 @@ func NewServer(config ServerConfig) http.Handler {
 	if server.adminSessions == nil {
 		server.adminSessions = NewMemoryAdminSessionStore()
 	}
+	if server.guestSessions == nil {
+		server.guestSessions = NewMemoryGuestSessionStore()
+	}
 	server.puzzles = observePuzzleSource(server.puzzles, server.metrics)
 	server.store = observeAttemptStore(server.store, server.metrics)
 	server.adminPuzzles = observeAdminPuzzleStore(server.adminPuzzles, server.metrics)
@@ -204,6 +210,7 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/puzzle-templates", server.handlePuzzleTemplates)
 	mux.HandleFunc("GET /api/public-config", server.handlePublicConfig)
 	mux.HandleFunc("GET /api/session", server.handleSessionStatus)
+	mux.HandleFunc("POST /api/session/rotate", server.requireGuestCSRF(server.handleGuestSessionRotate))
 	mux.HandleFunc("GET /api/og/puzzles/{id}", server.handlePuzzleOGImage)
 	mux.HandleFunc("GET /robots.txt", server.handleRobots)
 	mux.HandleFunc("GET /sitemap.xml", server.handleSitemap)
@@ -214,15 +221,15 @@ func NewServer(config ServerConfig) http.Handler {
 	mux.HandleFunc("GET /api/community/puzzles/{id}/claim", server.handleCreatorStatus)
 	mux.HandleFunc("POST /api/community/puzzles/{id}/withdraw", server.handleCreatorWithdraw)
 	mux.HandleFunc("GET /api/crews", server.handleMyCrews)
-	mux.HandleFunc("POST /api/crews", server.handleCreateCrew)
+	mux.HandleFunc("POST /api/crews", server.requireGuestCSRF(server.withIdempotency("crew.create", server.guestIdempotencyCaller, server.handleCreateCrew)))
 	mux.HandleFunc("GET /api/crews/{id}", server.handleCrewBoard)
 	mux.HandleFunc("GET /api/crews/{id}/daily", server.handleCrewDaily)
-	mux.HandleFunc("POST /api/crews/{id}/join", server.handleJoinCrew)
-	mux.HandleFunc("POST /api/crews/{id}/submissions", server.handleSubmitVibe)
-	mux.HandleFunc("POST /api/crews/{id}/votes", server.handleCastVibeVote)
-	mux.HandleFunc("POST /api/crews/{id}/rotate", server.handleRotateCrewInvite)
-	mux.HandleFunc("POST /api/crews/{id}/leave", server.handleLeaveCrew)
-	mux.HandleFunc("POST /api/crews/{id}/members/{memberId}/remove", server.handleRemoveCrewMember)
+	mux.HandleFunc("POST /api/crews/{id}/join", server.requireGuestCSRF(server.withIdempotency("crew.join", server.guestIdempotencyCaller, server.handleJoinCrew)))
+	mux.HandleFunc("POST /api/crews/{id}/submissions", server.requireGuestCSRF(server.withIdempotency("vibe.submit", server.guestIdempotencyCaller, server.handleSubmitVibe)))
+	mux.HandleFunc("POST /api/crews/{id}/votes", server.requireGuestCSRF(server.withIdempotency("vibe.vote", server.guestIdempotencyCaller, server.handleCastVibeVote)))
+	mux.HandleFunc("POST /api/crews/{id}/rotate", server.requireGuestCSRF(server.withIdempotency("crew.rotate", server.guestIdempotencyCaller, server.handleRotateCrewInvite)))
+	mux.HandleFunc("POST /api/crews/{id}/leave", server.requireGuestCSRF(server.withIdempotency("crew.leave", server.guestIdempotencyCaller, server.handleLeaveCrew)))
+	mux.HandleFunc("POST /api/crews/{id}/members/{memberId}/remove", server.requireGuestCSRF(server.withIdempotency("crew.remove-member", server.guestIdempotencyCaller, server.handleRemoveCrewMember)))
 	mux.HandleFunc("POST /api/reports", server.handleCreateReport)
 	mux.HandleFunc("POST /api/appeals", server.handleCreateAppeal)
 	mux.HandleFunc("POST /api/client-errors", server.handleClientError)
@@ -347,7 +354,7 @@ func (server *Server) handleAttempt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	attempt, err := server.store.GetAttempt(r.Context(), puzzle, sessionID, server.clock())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load that attempt.")
@@ -387,7 +394,7 @@ func (server *Server) handleGuess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	submission, err := server.store.SubmitGuess(r.Context(), puzzle, sessionID, request, server.clock())
 	if err != nil {
 		status := http.StatusUnprocessableEntity
@@ -467,7 +474,7 @@ func (server *Server) handleEasyHint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	attempt, err := server.store.GetAttempt(r.Context(), puzzle, sessionID, server.clock())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load that attempt.")
@@ -695,6 +702,9 @@ func (server *Server) withFrontendMetadata(next http.Handler) http.Handler {
 		// two tabs opened together share one session, so their server-side attempt
 		// state cannot diverge into two anonymous sessions. EnsureSessionID is a
 		// no-op when the request already carries a valid cookie.
+		// Public HTML needs a browser bearer for a later API bootstrap, but it does
+		// not need a durable guest_sessions write. The first /api/session or crew
+		// API call resolves that token to a stable identity under rate limiting.
 		EnsureSessionID(recorder, r, server.secureCookies)
 		next.ServeHTTP(recorder, r)
 
@@ -1039,7 +1049,15 @@ func (server *Server) rateLimitScopes(r *http.Request, prefix string, limit int)
 
 	scopes := []rateLimitScope{{key: prefix + "session:" + sessionID, limit: limit}}
 	if network != "" {
-		scopes = append(scopes, rateLimitScope{key: prefix + "net:" + network, limit: limit * networkRateLimitFactor})
+		// The widened per-network budget gets its own counter. Charging it to the
+		// same "net:" key the cookie-less branch reads meant one counter was
+		// evaluated against two ceilings: an ordinary member spending their own
+		// session budget pushed the shared count past the tight limit, and the
+		// next brand-new visitor from that network — someone who had made no
+		// requests at all, arriving on an invite link — was refused on their very
+		// first read. A first-visit lockout on a shared uplink is precisely the
+		// failure this scoping exists to prevent.
+		scopes = append(scopes, rateLimitScope{key: prefix + "netsession:" + network, limit: limit * networkRateLimitFactor})
 	}
 	return scopes
 }
@@ -1157,7 +1175,7 @@ func withCacheSafety(next http.Handler) http.Handler {
 }
 
 func isPrivateRoute(route string) bool {
-	return route == "/api/session" || route == "/api/streak" || route == "/api/crews" ||
+	return strings.HasPrefix(route, "/api/session") || route == "/api/streak" || route == "/api/crews" ||
 		strings.HasPrefix(route, "/api/crews/") ||
 		strings.HasPrefix(route, "/api/attempts/") ||
 		strings.HasPrefix(route, "/api/admin/") ||

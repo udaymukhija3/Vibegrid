@@ -35,11 +35,15 @@ Never restore over the live database directly — restore to a fresh target, ver
    ```
 
 3. Verify row counts and referential integrity for `vibe_daily_boards`,
-   `vibe_submissions`, `vibe_votes`, `crews`, and `crew_members` (plus legacy
-   tables while `/p` compatibility remains). Point a local run at the restored
+   `vibe_submissions`, `vibe_votes`, `crews`, `crew_members`,
+   `crew_member_identities`, and `guest_sessions` (plus legacy tables while
+   `/p` compatibility remains). Confirm guest session values are 64-character
+   hashes, not 32-character plaintext bearers. Point a local run at the restored
    database, load `/api/vibes/today`, open a known crew daily, and confirm one
    historical result and its author/vote tally.
-4. Switch production: update `DATABASE_URL` in the Render dashboard → service redeploys → run the smoke check from the deploy runbook.
+4. Switch production: update `DATABASE_URL` in the Render dashboard → service
+   redeploys → run the smoke check from the deploy runbook, including guest-key
+   rotation and membership preservation.
 
 ## Restore drill
 

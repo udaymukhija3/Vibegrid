@@ -11,7 +11,7 @@ not a hidden-answer puzzle.
 - no groups, intended quartet, difficulty, answer, timer, or mistake budget;
 - immutable after the first row for that date is stored.
 - nested editorial quality at the first 12, 16, 20, 24, and 28 fragments;
-  crews freeze one of those four-column projections on first member open.
+  crews freeze one of those four-column projections on their first card.
 
 ## Normal workflow
 

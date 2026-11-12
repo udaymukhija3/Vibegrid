@@ -26,8 +26,10 @@ the same-origin Go API with credentials included.
 - `database/sql` with the Postgres driver and explicit timeouts/pool bounds.
 - Embedded goose-style SQL migrations.
 - Server-side stage projection and authorization.
-- Transactional card/vote writes with database uniqueness constraints.
-- Opaque cookie sessions, admin CSRF/revocation, rate limits, request/body caps,
+- Transactional card/vote writes with stable member identity plus database
+  uniqueness, target-integrity, and no-self-vote constraints.
+- Hash-only revocable guest bearer sessions, explicit guest/admin CSRF, rate
+  limits, request/body caps,
   structured `slog`, Prometheus-text metrics, health/readiness, and graceful
   shutdown.
 
@@ -41,8 +43,10 @@ Active product tables:
 - `vibe_submissions`: crew/board/member, author-name snapshot, title, four tile
   ids, client replay id.
 - `vibe_votes`: crew/board/voter/target, client replay id.
-- `crews` and `crew_members`: rotatable capability invite plus session-scoped
-  membership and owner lifecycle.
+- `crews`, `crew_members`, and `crew_member_identities`: rotatable capability
+  invite, active membership, and durable per-crew identity across leave/rejoin.
+- `guest_sessions`: SHA-256 bearer hashes mapped to stable anonymous identities,
+  including revocation tombstones and expiry.
 
 Legacy puzzle, attempt, moderation, and community tables remain for old `/p`
 links. They are not the active product model.

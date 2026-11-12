@@ -331,6 +331,13 @@ func VibeBoardForDate(date string) (VibeBoard, error) {
 	if number < 1 {
 		number = int(parsed.Unix()/86400) + 1
 	}
+	// Pre-epoch dates make the Unix fallback negative too, and validateVibeBoard
+	// rejects any board numbered below 1 — so a host whose clock slipped before
+	// 1970 served 500 on the daily board, every crew page, and practice alike.
+	// A displayed board number is not worth a total outage; clamp it instead.
+	if number < 1 {
+		number = 1
+	}
 
 	template := vibeBoardTemplates[index]
 	boardID := "vibe-" + date

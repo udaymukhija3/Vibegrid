@@ -98,7 +98,7 @@ func (server *Server) handleCreateReportMutation(w http.ResponseWriter, r *http.
 		return
 	}
 
-	sessionID := EnsureSessionID(w, r, server.secureCookies)
+	sessionID := server.ensureSessionID(w, r)
 	report, err := server.moderation.CreateReport(r.Context(), input, sessionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not save that report.")

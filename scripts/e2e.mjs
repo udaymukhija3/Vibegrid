@@ -13,6 +13,11 @@ const goCache = path.join(root, ".cache", "go-build");
 const e2eBinary = path.join(root, "dist", "vibegrid-e2e");
 
 async function main() {
+  if (!process.env.DATABASE_URL?.trim()) {
+    throw new Error(
+      "DATABASE_URL is required: the E2E suite must exercise durable crew mutations and may not pass by skipping them."
+    );
+  }
   await mkdir(goCache, { recursive: true });
   await mkdir(path.dirname(e2eBinary), { recursive: true });
   await run("npm", ["run", "build"]);

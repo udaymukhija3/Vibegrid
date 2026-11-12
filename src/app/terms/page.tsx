@@ -17,7 +17,7 @@ export default function TermsPage() {
           body: [
             "You can use the public practice round or create and join private crews. Do not interfere with the service, bypass rate limits, scrape aggressively, or use the app to target or harm another person.",
             "The public daily and Unlimited practice ballots use clearly labeled house cards to demonstrate the loop. They are fixtures, not claims about real players or live community activity. Unlimited deals may eventually repeat finite curated source material.",
-            "A crew invite is a capability link: anyone who has it may ask to join until the owner rotates it. Share it only with people you intend to invite."
+            "A crew invite is a capability link: anyone who has it may ask to join until the owner rotates it. Share it only with people you intend to invite. Because VibeGrid has anonymous browser identities rather than verified accounts, an official threshold is not proof that each identity belongs to a unique human."
           ]
         },
         {
@@ -30,7 +30,7 @@ export default function TermsPage() {
         {
           title: "Crew control",
           body: [
-            "Crew owners can remove members and rotate invites. Members can leave. VibeGrid may remove content or restrict access when needed for safety, legal compliance, or service integrity.",
+            "Crew owners can remove members and rotate invites. Members can leave. Rejoining restores the same crew identity and does not grant another card or ballot for an existing round. The final member must separately confirm permanent deletion of the crew and all its history. VibeGrid may remove content or restrict access when needed for safety, legal compliance, or service integrity.",
             "Blind judging hides authors only during the ballot. It is a game mechanic, not an anonymity guarantee: results reveal the author display name to crew members."
           ]
         },

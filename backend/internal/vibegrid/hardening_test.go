@@ -666,7 +666,29 @@ func TestRateLimitScopesIgnoreUndeclaredProxyAddresses(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: randomSessionID()})
 
 	scopes := trusted.rateLimitScopes(req, "read-puzzle:", readRateLimit)
-	if len(scopes) != 2 || scopes[1].key != "read-puzzle:net:198.51.100.22" {
+	if len(scopes) != 2 || !strings.Contains(scopes[1].key, "198.51.100.22") {
 		t.Fatalf("a declared proxy must still meter the forwarded client, got %#v", scopes)
+	}
+
+	// The widened per-network bucket must not share a counter with the tight
+	// bucket a cookie-less caller is metered against. When it did, one member
+	// spending their own session budget pushed the shared count past the tight
+	// ceiling and the next first-time visitor from that network was refused on
+	// their very first request.
+	anonymous := httptest.NewRequest(http.MethodGet, "/api/vibes/today", nil)
+	anonymous.RemoteAddr = "10.0.0.5:4444"
+	anonymous.Header.Set("X-Forwarded-For", "198.51.100.22")
+	anonymousScopes := trusted.rateLimitScopes(anonymous, "read-puzzle:", readRateLimit)
+	if len(anonymousScopes) != 1 {
+		t.Fatalf("a cookie-less caller should get exactly one bucket, got %#v", anonymousScopes)
+	}
+	if anonymousScopes[0].key == scopes[1].key {
+		t.Fatalf("the tight cookie-less bucket and the widened per-network bucket share the "+
+			"key %q while carrying limits %d and %d",
+			scopes[1].key, anonymousScopes[0].limit, scopes[1].limit)
+	}
+	if scopes[1].limit <= anonymousScopes[0].limit {
+		t.Fatalf("the widened network bucket (%d) should exceed the tight one (%d)",
+			scopes[1].limit, anonymousScopes[0].limit)
 	}
 }

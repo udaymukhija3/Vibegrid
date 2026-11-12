@@ -95,6 +95,7 @@ export async function runSmoke({
   const session = await expectJSON("/api/session");
   assert(session.payload.mode === "guest", "session did not report guest mode");
   assert(session.payload.guest?.active === true, "guest session was not active");
+  assert(typeof session.payload.guest?.csrfToken === "string", "guest session did not publish a CSRF token");
   assert(jar.has("vibegrid_session"), "guest session cookie was not set");
   log("ok guest browser identity");
 
@@ -107,9 +108,14 @@ export async function runSmoke({
   log("ok search boundaries");
 
   if (mutate) {
+    let ownerCSRF = session.payload.guest.csrfToken;
     const create = await request("/api/crews", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": randomUUID(),
+        "X-CSRF-Token": ownerCSRF
+      },
       body: JSON.stringify({ name: `Smoke ${Date.now()}`, displayName: "Smoke" })
     });
     if (create.status === 503) {
@@ -123,12 +129,20 @@ export async function runSmoke({
       // browser has its own capability session, matching real concurrent users.
       for (let index = 1; index < 5; index++) {
         const memberJar = new CookieJar();
+        const memberSession = await requestWithJar(memberJar, "/api/session");
+        assert(memberSession.status === 200, `smoke member ${index} could not start a session`);
+        const memberCSRF = (await memberSession.json()).guest?.csrfToken;
+        assert(typeof memberCSRF === "string", `smoke member ${index} received no CSRF token`);
         const joined = await requestWithJar(
           memberJar,
           `/api/crews/${encodeURIComponent(crew.inviteCode)}/join`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": randomUUID(),
+              "X-CSRF-Token": memberCSRF
+            },
             body: JSON.stringify({ displayName: `Smoke ${index}` })
           }
         );
@@ -141,9 +155,17 @@ export async function runSmoke({
       assert(daily.payload.today.board.tiles.length === 16, "five-member crew did not freeze at 4x4");
 
       const lateJar = new CookieJar();
+      const lateSession = await requestWithJar(lateJar, "/api/session");
+      assert(lateSession.status === 200, "post-freeze member could not start a session");
+      const lateCSRF = (await lateSession.json()).guest?.csrfToken;
+      assert(typeof lateCSRF === "string", "post-freeze member received no CSRF token");
       const lateJoin = await requestWithJar(lateJar, `/api/crews/${encodeURIComponent(crew.inviteCode)}/join`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": randomUUID(),
+          "X-CSRF-Token": lateCSRF
+        },
         body: JSON.stringify({ displayName: "Smoke late" })
       });
       assert(lateJoin.status === 200, `post-freeze member could not join (${lateJoin.status})`);
@@ -159,19 +181,39 @@ export async function runSmoke({
       };
       const first = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/submissions`, 201, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": randomUUID(),
+          "X-CSRF-Token": ownerCSRF
+        },
         body: JSON.stringify(body)
       });
       const replay = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/submissions`, 201, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": randomUUID(),
+          "X-CSRF-Token": ownerCSRF
+        },
         body: JSON.stringify(body)
       });
       assert(first.payload.id === replay.payload.id, "submission replay created a second card");
 
       const reloaded = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/daily`);
       assert(reloaded.payload.today?.submission?.id === first.payload.id, "crew daily did not preserve the submitted card");
-      log("ok durable crew create/submit/replay");
+
+      const replacementToken = randomUUID().replaceAll("-", "");
+      const rotatedSession = await expectJSON("/api/session/rotate", 200, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": ownerCSRF },
+        body: JSON.stringify({ replacementToken })
+      });
+      assert(rotatedSession.payload.ok === true, "guest session rotation did not succeed");
+      assert(typeof rotatedSession.payload.csrfToken === "string", "guest session rotation returned no CSRF token");
+      ownerCSRF = rotatedSession.payload.csrfToken;
+      const afterRotation = await expectJSON(`/api/crews/${encodeURIComponent(crew.inviteCode)}/daily`);
+      assert(afterRotation.payload.isMember === true, "guest session rotation lost crew membership");
+      log("ok durable crew create/submit/replay/session-rotation");
     }
   }
 
