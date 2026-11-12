@@ -24,6 +24,7 @@ export default function PrivacyPage() {
           title: "Crew rounds",
           body: [
             "For each crew, VibeGrid stores the crew name, invite code, member display names, daily card titles, the four selected fragment ids, blind votes, and timestamps.",
+            "The first accepted card also stores that crew's board size. A rejected card or failed save does not lock a new round's size. Practice results depend on the title and selected fragments, not the order you click them; those practice choices stay in the browser.",
             "A card keeps a snapshot of its author display name so an old result remains understandable after membership changes. A crew-specific identity mapping survives leave or removal so rejoining cannot reset the one-card and one-ballot rules. Crew content is returned only to current members; invite links should be treated as private capability links."
           ]
         },

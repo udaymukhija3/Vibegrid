@@ -1,6 +1,6 @@
 # VibeGrid production readiness
 
-**Review date:** 27 August 2026
+**Review date:** 27 August 2026; correctness follow-up 23 October 2026
 **Decision:** local product verification is ready; controlled beta requires the
 P0 evidence below; broad launch is blocked.
 
@@ -59,8 +59,11 @@ is configured.
 
 ### 4. Browser and accessibility proof
 
-- Add a multi-context Playwright flow over real Postgres for create → three
-  joins → make → judge fixture → reveal fixture.
+- The multi-context Playwright flow is implemented in `scripts/browser-e2e.mjs`
+  and runs as part of `npm run test:e2e`: create → three joins → concurrent make
+  → blind judge → reveal. Five isolated Chromium sessions include a spectator,
+  an outsider, and one phone viewport. The Go test binary alone can advance the
+  clock. Retain the CI traces under `dist/browser-e2e/` for the release SHA.
 - Add automated accessibility checks for homepage introduction, join, composer,
   ballot, result, owner controls, and admin authoring.
 - Manually verify 320px layout, 200% zoom, VoiceOver or NVDA labels, and reduced
@@ -87,15 +90,16 @@ is configured.
 | --- | --- | --- | --- |
 | 28 unique master fragments, no answer mapping | strict master validation and additive expansion storage | unit + smoke | nested editorial ambiguity checklist is manual |
 | Unlimited is isolated from durable play | public deterministic 4×4 deal endpoint; cards/ballots remain component state | determinism/max-sequence and in-process HTTP/cache tests; E2E assertion checked in | updated embedded E2E rerun and product cannibalization evidence |
-| Crew-sized rows stay stable | opening is a read; crew-lock snapshot on first card submission + `(crew,board)` key; selection revalidated in transaction | row-band unit matrix; real-Postgres lock-on-play-not-on-look, 32-way freeze convergence, max-crew writes, post-freeze join, and join/freeze race | multi-browser join/submit trace |
+| Crew-sized rows stay stable | opening is a read; first accepted card and snapshot commit under the crew lock; failed validation or insert rolls sizing back | real-Postgres rejected-title/selection/blocklist and insert-failure regressions; actual concurrent first-card/join race; membership and capacity matrices | retain release CI traces and verify deployed rollover |
 | One card per stable member/round | durable `(crew,identity) → member` mapping + transaction + unique constraint | leave/rejoin exploit regression and distinct-client contention under the Go race detector | retained release CI artifact needed |
-| Exact retry is safe | content-stable client id plus server `Idempotency-Key`; changed input conflicts; concurrent callers replay one response | sequential replay, changed-body conflict, concurrent create, 16-way identical card/vote races, durable E2E smoke | browser timeout E2E |
-| Makers-only blind vote | transaction checks own submission and target | integration tests | multi-browser E2E |
+| Exact retry is safe | content-stable client id plus server `Idempotency-Key`; method, URL, and body identify the intent | same-target replay, cross-crew target conflict, concurrent create, 16-way card/vote races, durable smoke | browser timeout E2E; old body-only replay records now safely conflict |
+| Makers-only blind vote | transaction checks own submission and target | integration tests plus isolated-browser maker/spectator flow | retain release CI trace |
 | No self-vote / one ballot | transaction, stable member id, unique constraint, composite target FK, no-self check | application, direct-SQL, identity-churn, and concurrent race tests | sustained load profile |
 | Outsider privacy | member-aware response projection | unit test | hostile HTTP matrix |
-| Author hidden then revealed | judge/result views | unit test | screen-reader/browser QA |
+| Author hidden then revealed | judge/result views | unit tests and browser lifecycle checks of both payloads and visible cards | screen-reader and cross-engine QA |
+| Practice ignores click order | stable hash of title and sorted fragment ids | all 24 permutations produce identical votes, winner, and tie state | editorial quality and real-crew interpretation remain human judgments |
 | Official threshold and crown | shared 2-card/2-ballot constants read by result builder and streak query; crown only on sole plurality, `tied` flag on a level top | two-person-round unit test; round-robin split and clear-plurality cases | validate with real crews |
-| Frozen dated board | insert-once store + strict admin create | unit/store code | admin HTTP integration |
+| Frozen dated board | insert-once store handles both date and primary-key conflicts; strict admin create | concurrent first readers converge on one complete master/expansion; later reads cannot replace it | admin HTTP integration |
 | UTC stage rollover | code/deploy/defaults set UTC | deterministic clock tests | deployed midnight soak |
 
 ## Security posture
@@ -123,6 +127,10 @@ is configured.
 - No external penetration test or sustained load test. The 23 August local npm
   audit and Go vulnerability scan found no known dependency vulnerabilities;
   this is a dated local result, not continuous monitoring.
+- The 23 October dependency audit reports 11 existing dependency findings
+  (including a critical Next.js advisory). The added Playwright dependency is
+  not among the findings. These remain a separate release blocker; the earlier
+  clean audit must not be used as current security evidence.
 - Guest browser-data/device loss means membership loss; live-key rotation is
   theft recovery, not cross-device account recovery.
 - Anonymous identities do not prove unique humans. A private crew owner still

@@ -8,8 +8,8 @@ VibeGrid is an asynchronous private-crew authorship game, not a semantic
 grouping puzzle. A dated board contains one prompt and a 28-fragment master
 palette with no answer key. Each crew receives a four-column projection sized to
 membership: 1–4 members get 3 rows, 5–8 get 4, 9–12 get 5, 13–16 get 6, and
-17–20 get 7. The size follows membership until the crew's first card on that
-board, which freezes it. On day D a member chooses four fragments and titles the
+17–20 get 7. The first accepted card and size commit together; rejected attempts
+do not freeze an unstarted board. On day D a member chooses four fragments and titles the
 combination; on D+1 eligible makers cast one blind non-self vote; on D+2 authors
 and votes reveal. An official result needs at least two cards and two ballots;
 a crown needs a sole plurality, and a split at the top crowns nobody.
@@ -45,8 +45,9 @@ git diff --check
 ```
 
 `TEST_DATABASE_URL` enables real Postgres integration tests. `npm run test:e2e`
-binds a local port and may need an unrestricted environment. Registry audits
-need network access.
+requires a disposable `DATABASE_URL` (browser fixtures reset its tables), binds
+local ports, and launches Chromium; it may need an unrestricted environment.
+Run `npx playwright install chromium` first. Registry audits need network access.
 
 ## Architecture map
 
@@ -81,8 +82,9 @@ project, not drive-by cleanup.
   metadata; legacy 12-fragment boards remain immutable.
 - The rendered board always has four columns. Public practice is 4x4. Opening
   a crew room is a read: an unstarted board is projected from current
-  membership. The first submitted card freezes the crew's 3–7 row size, and
-  later joins, leaves, removals, retries, or concurrent submits cannot resize it.
+  membership. The first accepted card freezes the crew's 3–7 row size in its
+  transaction; invalid input or a failed insert rolls back sizing. Later
+  joins, leaves, removals, retries, or concurrent submits cannot resize it.
 - Unlimited mode deals another local 4x4 board on demand. It has no correctness,
   timer, lives, streak, persistence, invented people, or effect on crew phases.
 - A card has exactly 4 distinct fragments from that board and a 1–40 rune title.

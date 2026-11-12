@@ -818,7 +818,7 @@ func seedJudgeBoardCards(t *testing.T, handler http.Handler, database *sql.DB, c
 		).Scan(&sessionID); err != nil {
 			t.Fatalf("resolve judge fixture identity: %v", err)
 		}
-		if _, err := rounds.EnsureCrewBoard(context.Background(), crewInternalID(t, database, crew.InviteCode), sessionID, stored); err != nil {
+		if _, err := rounds.seedFrozenCrewBoard(context.Background(), crewInternalID(t, database, crew.InviteCode), sessionID, stored); err != nil {
 			t.Fatalf("freeze judge board: %v", err)
 		}
 		if _, err := rounds.SubmitVibe(context.Background(), crewInternalID(t, database, crew.InviteCode), sessionID,

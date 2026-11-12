@@ -77,6 +77,15 @@ var vibeHouseCardTiles = [vibePracticeHouseCards][VibeCardTileCount]int{
 	{1, 6, 8, 13},
 }
 
+// vibeNeutralHouseTitles stand in when a board's prompt is not in the bank.
+// They are reactions any crew could title any four fragments with, so they
+// never read as an answer to a different prompt.
+var vibeNeutralHouseTitles = [vibePracticeHouseCards]string{
+	"Painfully accurate",
+	"Somehow all of us",
+	"Chaos with a plan",
+}
+
 // vibeTemplateIndex maps any offset, including a negative one, onto the bank.
 func vibeTemplateIndex(offset int) int {
 	index := offset % len(vibeBoardTemplates)
@@ -86,21 +95,28 @@ func vibeTemplateIndex(offset int) int {
 	return index
 }
 
-// VibeTemplateIndexForDate reports which editorial template a dated board was
-// built from, so the practice endpoints can deal that template's house cards.
-func VibeTemplateIndexForDate(date string) (int, error) {
-	parsed, err := time.Parse("2006-01-02", date)
-	if err != nil {
-		return 0, ErrVibeBoardInvalid
+// vibeHouseCardsForPrompt deals the house cards that belong to a board's
+// prompt. They used to follow the date, which was only right while the date's
+// board came from the bank: an editor-authored board — the intended steady
+// state — was played against the titles of whichever bank prompt shared its
+// date, so "Build the friend who says five more minutes" drew "Boarding group
+// denial". A prompt the bank does not know gets titles that fit any prompt.
+func vibeHouseCardsForPrompt(prompt string) []VibeHouseCard {
+	for index, template := range vibeBoardTemplates {
+		if template.prompt == prompt {
+			return vibeHouseCardsFor(index)
+		}
 	}
-	launch, _ := time.Parse("2006-01-02", "2026-08-19")
-	return vibeTemplateIndex(int(parsed.Sub(launch).Hours() / 24)), nil
+	return vibeHouseCardsTitled(vibeNeutralHouseTitles)
 }
 
 func vibeHouseCardsFor(templateIndex int) []VibeHouseCard {
-	template := vibeBoardTemplates[templateIndex]
+	return vibeHouseCardsTitled(vibeBoardTemplates[templateIndex].houseTitles)
+}
+
+func vibeHouseCardsTitled(titles [vibePracticeHouseCards]string) []VibeHouseCard {
 	cards := make([]VibeHouseCard, 0, vibePracticeHouseCards)
-	for index, title := range template.houseTitles {
+	for index, title := range titles {
 		cards = append(cards, VibeHouseCard{
 			Title:       title,
 			TileIndices: append([]int(nil), vibeHouseCardTiles[index][:]...),
@@ -358,19 +374,38 @@ func VibeBoardForDate(date string) (VibeBoard, error) {
 	return board, nil
 }
 
+// unlimitedStrides are steps coprime with 28, so each one walks sixteen
+// distinct fragments of a master. There is one from each pair s and 28-s,
+// because those two walk the same sixteen fragments in opposite directions:
+// keeping both would deal every palette twice, once backwards. The order and
+// unlimitedRotationOffset are tuned so that consecutive returns to a prompt
+// share at most 9 of 16 fragments, and so that a template's daily practice
+// board — rotation 0, stride 1 — is not dealt until well over a thousand deals
+// in. TestUnlimitedDealsAreActuallyNewDeals pins both.
+var unlimitedStrides = [...]int{23, 11, 9, 25, 15, 27}
+
+const unlimitedRotationOffset = 21
+
 // UnlimitedVibeBoard deals a deterministic 4x4 practice palette without
 // reading or mutating durable crew state. The sequence chooses one coherent
 // 28-fragment editorial master, then varies its rotation and coprime stride.
 // That keeps every visible fragment on-prompt while allowing the client to
 // request another round indefinitely; content eventually cycles and is never
 // represented as a newly authored daily board.
+//
+// Each return to a template changes the stride, and the rotation advances once
+// per pass through the strides, so a template deals 168 different palettes
+// before its cycle repeats. The previous schedule advanced the rotation by one
+// and held the stride: deals 0-11 were the twelve daily practice boards
+// verbatim, and every later return to a prompt showed 15 of the 16 fragments
+// the player had just used, shifted over by one square.
 func UnlimitedVibeBoard(sequence uint64) (VibeBoard, error) {
 	templateCount := uint64(len(vibeBoardTemplates))
 	templateIndex := int(sequence % templateCount)
-	variation := sequence / templateCount
-	rotation := int(variation % VibeBoardMaxTileCount)
-	strides := [...]int{1, 3, 5, 9, 11, 13, 15, 17, 19, 23, 25, 27}
-	stride := strides[int(variation/uint64(VibeBoardMaxTileCount))%len(strides)]
+	visit := sequence / templateCount
+	strideCount := uint64(len(unlimitedStrides))
+	stride := unlimitedStrides[visit%strideCount]
+	rotation := int((visit/strideCount + unlimitedRotationOffset) % VibeBoardMaxTileCount)
 	template := vibeBoardTemplates[templateIndex]
 
 	boardID := fmt.Sprintf("unlimited-%d", sequence)

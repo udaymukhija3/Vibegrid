@@ -105,8 +105,17 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - name: Install browser test runtime
+        run: npx playwright install --with-deps chromium
       - name: Build, boot, and mutate the durable product
         env:
           DATABASE_URL: postgres://vibegrid:vibegrid@localhost:5432/vibegrid_e2e?sslmode=disable
           VIBEGRID_MIGRATE_ON_BOOT: "true"
         run: npm run test:e2e
+      - name: Retain browser traces and failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crew-browser-e2e
+          path: dist/browser-e2e/
+          if-no-files-found: ignore

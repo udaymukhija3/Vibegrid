@@ -24,7 +24,8 @@ export default function TermsPage() {
           title: "Your cards",
           body: [
             "You are responsible for the display name and card titles you submit. Do not use them for harassment, hate, threats, sexual content involving minors, private information, impersonation, or material you do not have the right to share.",
-            "By submitting a card, you allow VibeGrid to show it to current members of that crew, tally its votes, and preserve it in that crew’s result history."
+            "By submitting a card, you allow VibeGrid to show it to current members of that crew, tally its votes, and preserve it in that crew’s result history.",
+            "A crew's board size follows membership until its first card is accepted. That card and the size are saved together. Invalid attempts and failed saves do not lock an unstarted round."
           ]
         },
         {

@@ -257,7 +257,9 @@ func (server *Server) withIdempotency(
 		}
 		callerScope := caller(w, r)
 		scope := operation + ":" + digestString(callerScope)
-		requestHash := digestBytes(body)
+		// The target is part of the intent. Reusing a key for another crew or
+		// member must conflict, not replay a success for a different resource.
+		requestHash := digestString(r.Method + "\x00" + r.URL.RequestURI() + "\x00" + string(body))
 
 		response, replayed, conflict, err := server.idempotency.Execute(
 			r.Context(), scope, digestString(key), requestHash,

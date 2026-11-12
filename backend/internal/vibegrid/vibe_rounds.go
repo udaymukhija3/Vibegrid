@@ -102,10 +102,9 @@ type VibeCrewSnapshot struct {
 // a check-then-write authorization sequence.
 type VibeRoundStore interface {
 	EnsureBoard(ctx context.Context, board VibeBoard) (VibeBoard, error)
-	EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error)
 	// FrozenCrewBoards reports the palette size already locked for each board,
 	// omitting boards this crew has never started. It is the read half of
-	// EnsureCrewBoard: opening the room must not decide the size.
+	// SubmitVibe: opening the room must not decide the size.
 	FrozenCrewBoards(ctx context.Context, crewID string, boardIDs []string) (map[string]int, error)
 	CrewSnapshot(ctx context.Context, crewID string, boardIDs []string) (VibeCrewSnapshot, error)
 	SubmitVibe(ctx context.Context, crewID, sessionID string, request VibeSubmissionRequest, now time.Time) (VibeSubmission, error)
@@ -224,10 +223,12 @@ func (store *PostgresVibeRoundStore) EnsureBoard(ctx context.Context, board Vibe
 		return VibeBoard{}, fmt.Errorf("begin persist vibe board: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Concurrent first readers can collide on either unique key (id or date).
+	// Handle both, then load the winning date's master and expansion together.
 	result, err := tx.ExecContext(ctx,
 		`insert into vibe_daily_boards (id, publish_date, board_number, prompt, tiles)
 		 values ($1, $2, $3, $4, $5)
-		 on conflict (publish_date) do nothing`,
+		 on conflict do nothing`,
 		board.ID, board.PublishDate, board.BoardNumber, board.Prompt, string(baseTiles),
 	)
 	if err != nil {
@@ -266,43 +267,27 @@ func (store *PostgresVibeRoundStore) EnsureBoard(ctx context.Context, board Vibe
 	return stored, nil
 }
 
-// EnsureCrewBoard freezes one crew's palette size for one dated board. The
-// crew row lock is shared with joins and leaves, which gives membership changes
-// and first-card sizing one deterministic order. The unique key makes two
-// members submitting at once converge on the same snapshot. Opening the room
-// never calls this; it reads FrozenCrewBoards instead.
-func (store *PostgresVibeRoundStore) EnsureCrewBoard(ctx context.Context, crewID, sessionID string, board VibeBoard) (VibeBoard, error) {
-	if err := validateVibeBoard(board); err != nil {
+// freezeCrewBoard participates in the card transaction. Its caller must hold
+// the crew row lock and authorize membership before calling it. Neither a
+// validation failure nor a failed card insert may commit this snapshot alone.
+func freezeCrewBoard(ctx context.Context, tx *sql.Tx, crewID, boardID string) (VibeBoard, error) {
+	var board VibeBoard
+	var baseTiles, expansionTiles []byte
+	if err := tx.QueryRowContext(ctx,
+		`select b.id, b.board_number, b.publish_date::text, b.prompt, b.tiles,
+		        coalesce(e.tiles, '[]'::jsonb)
+		 from vibe_daily_boards b
+		 left join vibe_board_expansions e on e.board_id = b.id
+		 where b.id = $1`, boardID,
+	).Scan(&board.ID, &board.BoardNumber, &board.PublishDate, &board.Prompt, &baseTiles, &expansionTiles); errors.Is(err, sql.ErrNoRows) {
+		return VibeBoard{}, ErrVibeRequestInvalid
+	} else if err != nil {
+		return VibeBoard{}, fmt.Errorf("load master for crew board: %w", err)
+	}
+	if err := decodeStoredVibeBoard(&board, baseTiles, expansionTiles); err != nil {
 		return VibeBoard{}, err
 	}
-	ctx, cancel := withDatabaseTimeout(ctx)
-	defer cancel()
-
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return VibeBoard{}, fmt.Errorf("begin crew board freeze: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var lockedCrewID string
-	if err := tx.QueryRowContext(ctx,
-		`select id from crews where id = $1 for update`, crewID,
-	).Scan(&lockedCrewID); errors.Is(err, sql.ErrNoRows) {
-		return VibeBoard{}, ErrCrewNotFound
-	} else if err != nil {
-		return VibeBoard{}, fmt.Errorf("lock crew for board freeze: %w", err)
-	}
-
 	var memberCount int
-	if err := tx.QueryRowContext(ctx,
-		`select count(*) from crew_members where crew_id = $1 and session_id = $2`,
-		crewID, sessionID,
-	).Scan(&memberCount); err != nil {
-		return VibeBoard{}, fmt.Errorf("authorize crew board freeze: %w", err)
-	}
-	if memberCount != 1 {
-		return VibeBoard{}, ErrNotCrewMember
-	}
 	if err := tx.QueryRowContext(ctx,
 		`select count(*) from crew_members where crew_id = $1`, crewID,
 	).Scan(&memberCount); err != nil {
@@ -330,9 +315,6 @@ func (store *PostgresVibeRoundStore) EnsureCrewBoard(ctx context.Context, crewID
 	}
 	if !validVibeBoardTileCount(tileCount) || tileCount > len(board.Tiles) {
 		return VibeBoard{}, fmt.Errorf("frozen crew board: %w", ErrVibeBoardInvalid)
-	}
-	if err := tx.Commit(); err != nil {
-		return VibeBoard{}, fmt.Errorf("commit crew board freeze: %w", err)
 	}
 	return projectVibeBoard(board, tileCount), nil
 }
@@ -436,12 +418,28 @@ func (store *PostgresVibeRoundStore) CrewSnapshot(ctx context.Context, crewID st
 func (store *PostgresVibeRoundStore) SubmitVibe(ctx context.Context, crewID, sessionID string, request VibeSubmissionRequest, now time.Time) (VibeSubmission, error) {
 	ctx, cancel := withDatabaseTimeout(ctx)
 	defer cancel()
+	title, err := normalizeVibeTitle(request.Title)
+	if err != nil || !validateVibeClientID(request.ClientSubmissionID) {
+		return VibeSubmission{}, ErrVibeRequestInvalid
+	}
+	request.Title = title
 
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return VibeSubmission{}, fmt.Errorf("begin vibe submission: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Acquire the same lock as join/leave/remove before reading membership.
+	// Keep it until both the first valid card and its size snapshot commit.
+	var lockedCrewID string
+	if err := tx.QueryRowContext(ctx,
+		`select id from crews where id = $1 for update`, crewID,
+	).Scan(&lockedCrewID); errors.Is(err, sql.ErrNoRows) {
+		return VibeSubmission{}, ErrCrewNotFound
+	} else if err != nil {
+		return VibeSubmission{}, fmt.Errorf("lock crew for submission: %w", err)
+	}
 
 	var memberID, displayName string
 	if err := tx.QueryRowContext(ctx,
@@ -486,9 +484,11 @@ func (store *PostgresVibeRoundStore) SubmitVibe(ctx context.Context, crewID, ses
 		return VibeSubmission{}, ErrVibeAlreadySubmitted
 	}
 
-	if valid, err := frozenCrewBoardContainsSelection(ctx, tx, crewID, request.BoardID, request.SelectedTileIDs); err != nil {
+	board, err := freezeCrewBoard(ctx, tx, crewID, request.BoardID)
+	if err != nil {
 		return VibeSubmission{}, err
-	} else if !valid {
+	}
+	if !validateVibeSelection(board, request.SelectedTileIDs) {
 		return VibeSubmission{}, ErrVibeRequestInvalid
 	}
 
@@ -720,35 +720,6 @@ type submissionScanner interface {
 
 type vibeQueryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-func frozenCrewBoardContainsSelection(ctx context.Context, queryer vibeQueryer, crewID, boardID string, selected []string) (bool, error) {
-	var rawBaseTiles, rawExpansionTiles []byte
-	var tileCount int
-	if err := queryer.QueryRowContext(ctx,
-		`select b.tiles, coalesce(e.tiles, '[]'::jsonb), cb.tile_count
-		 from vibe_crew_boards cb
-		 join vibe_daily_boards b on b.id = cb.board_id
-		 left join vibe_board_expansions e on e.board_id = b.id
-		 where cb.crew_id = $1 and cb.board_id = $2`,
-		crewID, boardID,
-	).Scan(&rawBaseTiles, &rawExpansionTiles, &tileCount); errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("load frozen crew board selection: %w", err)
-	}
-	var baseTiles, expansionTiles []Tile
-	if err := json.Unmarshal(rawBaseTiles, &baseTiles); err != nil {
-		return false, fmt.Errorf("decode frozen crew board selection: %w", err)
-	}
-	if err := json.Unmarshal(rawExpansionTiles, &expansionTiles); err != nil {
-		return false, fmt.Errorf("decode frozen crew board expansion selection: %w", err)
-	}
-	tiles := append(baseTiles, expansionTiles...)
-	if !validVibeBoardTileCount(tileCount) || tileCount > len(tiles) {
-		return false, fmt.Errorf("frozen crew board selection: %w", ErrVibeBoardInvalid)
-	}
-	return validateVibeTileIDs(tiles[:tileCount], selected), nil
 }
 
 func marshalStoredVibeBoard(board VibeBoard) ([]byte, []byte, error) {

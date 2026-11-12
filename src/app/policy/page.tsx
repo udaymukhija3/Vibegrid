@@ -25,7 +25,8 @@ export default function CrewPolicyPage() {
           body: [
             "Vote for the card, not against its eventual author. The ballot hides authors for a reason, and self-votes are blocked.",
             "Inside jokes are welcome when everyone in the room can laugh. A private reference designed to humiliate one member is not.",
-            "Public-practice house cards are tutorial fixtures, not people. Daily and Unlimited practice reveals never represent real participation or social proof."
+            "Public-practice house cards are tutorial fixtures, not people. Daily and Unlimited practice reveals never represent real participation or social proof.",
+            "A card is its title and four chosen fragments. Picking those same fragments in another order does not change the practice house votes. In crews, the first accepted card locks the palette size; rejected attempts do not."
           ]
         },
         {

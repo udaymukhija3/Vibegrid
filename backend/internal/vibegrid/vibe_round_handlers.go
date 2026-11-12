@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -76,13 +77,8 @@ func (server *Server) handleTodayVibeBoard(w http.ResponseWriter, r *http.Reques
 	// extended in-memory from the canonical bank; durable crew history remains
 	// untouched and continues to use its original frozen palette.
 	board = practiceVibeBoard(board)
-	templateIndex, err := VibeTemplateIndexForDate(board.PublishDate)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not load today's fragments.")
-		return
-	}
 	w.Header().Set("Cache-Control", server.dailyCacheControl())
-	writeJSON(w, http.StatusOK, VibePracticeBoard{VibeBoard: board, HouseCards: vibeHouseCardsFor(templateIndex)})
+	writeJSON(w, http.StatusOK, VibePracticeBoard{VibeBoard: board, HouseCards: vibeHouseCardsForPrompt(board.Prompt)})
 }
 
 func (server *Server) handleUnlimitedVibeBoard(w http.ResponseWriter, r *http.Request) {
@@ -102,10 +98,7 @@ func (server *Server) handleUnlimitedVibeBoard(w http.ResponseWriter, r *http.Re
 	// A sequence always maps to the same local-practice deal. It contains no
 	// identity or crew state and is safe for shared immutable caching.
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	writeJSON(w, http.StatusOK, VibePracticeBoard{
-		VibeBoard:  board,
-		HouseCards: vibeHouseCardsFor(vibeTemplateIndex(int(sequence % uint64(len(vibeBoardTemplates))))),
-	})
+	writeJSON(w, http.StatusOK, VibePracticeBoard{VibeBoard: board, HouseCards: vibeHouseCardsForPrompt(board.Prompt)})
 }
 
 func (server *Server) handleCrewDaily(w http.ResponseWriter, r *http.Request) {
@@ -198,13 +191,20 @@ func (server *Server) handleSubmitVibe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not load today's fragments.")
 		return
 	}
-	board, err = server.vibeRounds.EnsureCrewBoard(r.Context(), crew.ID, sessionID, board)
-	if err != nil {
-		writeVibeRoundError(w, err)
+	// A card for any other board is not an attempt at today's board, so it must
+	// not be the thing that freezes today's size. It used to: a tab left open past
+	// midnight would lock the new round at whatever the membership happened to
+	// be, before anyone had looked at it.
+	if request.BoardID != board.ID {
+		if isVibeBoardID(request.BoardID) {
+			writeError(w, http.StatusConflict, "That board has closed. Today's fragments are ready.")
+			return
+		}
+		writeError(w, http.StatusUnprocessableEntity, "Pick four different fragments and give the vibe a short title.")
 		return
 	}
 	request.Title, err = normalizeVibeTitle(request.Title)
-	if err != nil || request.BoardID != board.ID || !validateVibeSelection(board, request.SelectedTileIDs) || !validateVibeClientID(request.ClientSubmissionID) {
+	if err != nil || !validateVibeSelection(board, request.SelectedTileIDs) || !validateVibeClientID(request.ClientSubmissionID) {
 		writeError(w, http.StatusUnprocessableEntity, "Pick four different fragments and give the vibe a short title.")
 		return
 	}
@@ -213,6 +213,8 @@ func (server *Server) handleSubmitVibe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SubmitVibe freezes the membership-sized projection and validates against
+	// it in the same transaction as the card. A rejected card starts nothing.
 	submission, err := server.vibeRounds.SubmitVibe(r.Context(), crew.ID, sessionID, request, server.clock())
 	if err != nil {
 		writeVibeRoundError(w, err)
@@ -235,6 +237,10 @@ func (server *Server) handleCastVibeVote(w http.ResponseWriter, r *http.Request)
 	board, err := server.vibeBoardForDate(r.Context(), judgeDate)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load yesterday's ballot.")
+		return
+	}
+	if request.BoardID != board.ID && isVibeBoardID(request.BoardID) {
+		writeError(w, http.StatusConflict, "That ballot has closed. Today's is ready.")
 		return
 	}
 	if request.BoardID != board.ID || !validCrewID(request.SubmissionID) || !validateVibeClientID(request.ClientVoteID) {
@@ -300,6 +306,18 @@ func practiceVibeBoard(stored VibeBoard) VibeBoard {
 		}
 	}
 	return projectVibeBoard(canonical, VibePracticeTileCount)
+}
+
+// isVibeBoardID reports whether id names a dated board at all. That is what
+// tells a card or ballot drafted on a board that has since closed apart from a
+// malformed request.
+func isVibeBoardID(id string) bool {
+	date, ok := strings.CutPrefix(id, "vibe-")
+	if !ok {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", date)
+	return err == nil
 }
 
 func (server *Server) vibeRoundDates() (today, judge, result string) {
